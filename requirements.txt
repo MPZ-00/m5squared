@@ -1,0 +1,8 @@
+# wheelchair.py - M25 Protocol Toolkit
+# Required dependencies
+
+pycryptodome>=3.15.0
+
+# Optional: for Bluetooth scanning (m25_bluetooth.py scan)
+# Install via apt on Ubuntu/Debian: sudo apt install python3-bluez
+# pybluez is NOT pip-installable on most systems
