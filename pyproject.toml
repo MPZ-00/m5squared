@@ -1,0 +1,23 @@
+[project]
+name = "m5squared"
+version = "0.1.0"
+description = "M25 wheelchair drive toolkit"
+readme = "README.md"
+requires-python = ">=3.8"
+license = "AGPL-3.0-or-later"
+dependencies = [
+    "pycryptodome>=3.15.0",
+]
+
+[project.urls]
+Repository = "https://github.com/roll2own/m5squared"
+Documentation = "https://github.com/roll2own/m5squared/tree/main/doc"
+
+[project.scripts]
+m25-ecs = "m25_ecs:main"
+m25-qr-to-key = "m25_qr_to_key:main"
+m25-decrypt = "m25_decrypt:main"
+m25-encrypt = "m25_encrypt:main"
+m25-analyzer = "m25_analyzer:main"
+m25-bluetooth = "m25_bluetooth:main"
+m25-parking = "m25_parking:main"

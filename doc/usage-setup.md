@@ -20,7 +20,7 @@ which rfcomm hcitool bluetoothctl
 python3 -m venv .venv --system-site-packages
 
 # Install the rest
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -e .
 
 # Activate
 source .venv/bin/activate

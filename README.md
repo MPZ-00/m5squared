@@ -32,7 +32,7 @@ Presented at 39C3 Hamburg: *["Pwn2Roll: Who Needs a 595€ Remote When You Have 
 # Setup (Ubuntu/Debian)
 sudo apt install python3.12-venv python3-bluez
 python3 -m venv .venv --system-site-packages
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -e .
 source .venv/bin/activate
 
 # Get your AES keys (scan the QR codes on your wheel hubs)
