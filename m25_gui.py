@@ -145,6 +145,11 @@ class M25GUI:
                                   command=self.scan_devices, cursor="hand2")
         self.scan_btn.pack(side=tk.LEFT, padx=(0, 10))
         
+        self.filter_m25 = tk.BooleanVar(value=True)
+        self.filter_check = tk.Checkbutton(scan_frame, text="Filter M25 only",
+                                          variable=self.filter_m25)
+        self.filter_check.pack(side=tk.LEFT, padx=(0, 10))
+        
         self.scan_status_lbl = tk.Label(scan_frame, text="")
         self.scan_status_lbl.pack(side=tk.LEFT)
         
@@ -156,9 +161,9 @@ class M25GUI:
         left_device_frame.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=(5, 0), pady=2)
         left_device_frame.columnconfigure(0, weight=1)
         
-        self.left_device_var = tk.StringVar(value="Manual entry")
+        self.left_device_var = tk.StringVar(value="")
         self.left_device_menu = tk.OptionMenu(left_device_frame, self.left_device_var, 
-                                              "Manual entry", command=self.on_left_device_selected)
+                                              "", command=self.on_left_device_selected)
         self.left_device_menu.config(width=35)
         self.left_device_menu.grid(row=0, column=0, sticky=(tk.W, tk.E))
         
@@ -181,9 +186,9 @@ class M25GUI:
         right_device_frame.grid(row=4, column=1, sticky=(tk.W, tk.E), padx=(5, 0), pady=2)
         right_device_frame.columnconfigure(0, weight=1)
         
-        self.right_device_var = tk.StringVar(value="Manual entry")
+        self.right_device_var = tk.StringVar(value="")
         self.right_device_menu = tk.OptionMenu(right_device_frame, self.right_device_var,
-                                               "Manual entry", command=self.on_right_device_selected)
+                                               "", command=self.on_right_device_selected)
         self.right_device_menu.config(width=35)
         self.right_device_menu.grid(row=0, column=0, sticky=(tk.W, tk.E))
         
@@ -317,6 +322,10 @@ class M25GUI:
                 self.scan_btn.configure(bg=theme['button_bg'], fg=theme['button_fg'],
                                        activebackground=theme['select_bg'],
                                        activeforeground=theme['select_fg'])
+                self.filter_check.configure(bg=theme['bg'], fg=theme['fg'],
+                                           activebackground=theme['bg'],
+                                           activeforeground=theme['fg'],
+                                           selectcolor=theme['entry_bg'])
                 self.scan_status_lbl.configure(bg=theme['bg'], fg=theme['fg'])
             
             # Device selection widgets
@@ -573,7 +582,9 @@ class M25GUI:
             messagebox.showerror("Error", "Bluetooth support not available.\nInstall bleak: pip install bleak")
             return
         
-        self.log("Scanning for M25 wheels...")
+        filter_enabled = self.filter_m25.get()
+        scan_type = "M25 wheels" if filter_enabled else "all Bluetooth devices"
+        self.log(f"Scanning for {scan_type}...")
         self.scan_status_lbl.config(text="Scanning...")
         self.scan_btn.config(state="disabled")
         self.status_message("Scanning for devices...")
@@ -583,7 +594,7 @@ class M25GUI:
                 bt = M25WindowsBluetooth()
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-                devices = loop.run_until_complete(bt.scan(duration=10, filter_m25=True))
+                devices = loop.run_until_complete(bt.scan(duration=10, filter_m25=filter_enabled))
                 loop.close()
                 
                 self.root.after(0, self.scan_complete, devices)
@@ -603,23 +614,25 @@ class M25GUI:
             self.status_message("Scan complete - no devices found")
             return
         
-        self.log(f"Found {len(devices)} M25 device(s):")
+        device_type = "device(s)" if not self.filter_m25.get() else "M25 device(s)"
+        self.log(f"Found {len(devices)} {device_type}:")
         for addr, name in devices:
             self.log(f"  [{addr}] {name}")
         
         # Update device menus
         device_options = [f"{name} ({addr})" for addr, name in devices]
-        device_options.insert(0, "Manual entry")
         
         # Update left wheel menu
         menu = self.left_device_menu['menu']
         menu.delete(0, 'end')
+        menu.add_command(label="", command=lambda: self.left_device_var.set(""))
         for option in device_options:
             menu.add_command(label=option, command=lambda val=option: self.left_device_var.set(val))
         
         # Update right wheel menu
         menu = self.right_device_menu['menu']
         menu.delete(0, 'end')
+        menu.add_command(label="", command=lambda: self.right_device_var.set(""))
         for option in device_options:
             menu.add_command(label=option, command=lambda val=option: self.right_device_var.set(val))
         
@@ -636,7 +649,7 @@ class M25GUI:
     
     def on_left_device_selected(self, selection):
         """Handle left device selection"""
-        if selection == "Manual entry":
+        if not selection:
             return
         
         # Extract MAC address from selection
@@ -648,7 +661,7 @@ class M25GUI:
     
     def on_right_device_selected(self, selection):
         """Handle right device selection"""
-        if selection == "Manual entry":
+        if not selection:
             return
         
         # Extract MAC address from selection
