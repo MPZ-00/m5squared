@@ -67,6 +67,12 @@ param(
     [switch]$ForceRecreateVenv
 )
 
+# Handle legacy help flags (-help, --help, /?, -?, etc.)
+if ($args -contains '-help' -or $args -contains '--help' -or $args -contains '/?' -or $args -contains '-?' -or $args -contains 'help') {
+    Get-Help $PSCommandPath
+    exit 0
+}
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -95,34 +101,34 @@ function Get-PythonVersion {
     }
 }
 
-function Test-VenvHealthy($venvPath) {
-    $py  = Join-Path $venvPath 'Scripts\python.exe'
-    $cfg = Join-Path $venvPath 'pyvenv.cfg'
-    $act = Join-Path $venvPath 'Scripts\Activate.ps1'
-    return (Test-Path $venvPath) -and (Test-Path $py) -and (Test-Path $cfg) -and (Test-Path $act)
+function Test-VenvHealthy($VenvPath) {
+    $py  = Join-Path $VenvPath 'Scripts\python.exe'
+    $cfg = Join-Path $VenvPath 'pyvenv.cfg'
+    $act = Join-Path $VenvPath 'Scripts\Activate.ps1'
+    return (Test-Path $VenvPath) -and (Test-Path $py) -and (Test-Path $cfg) -and (Test-Path $act)
 }
 
-function Remove-Venv($venvPath) {
-    if (Test-Path $venvPath) {
-        Warn "  Removing broken virtual environment: $venvPath"
-        Remove-Item -Recurse -Force $venvPath
+function Remove-Venv($VenvPath) {
+    if (Test-Path $VenvPath) {
+        Warn "  Removing broken virtual environment: $VenvPath"
+        Remove-Item -Recurse -Force $VenvPath
     }
 }
 
-function Ensure-Venv($venvPath) {
-    if (Test-VenvHealthy $venvPath -and -not $ForceRecreateVenv) {
+function Ensure-Venv($VenvPath) {
+    if (Test-VenvHealthy $VenvPath -and -not $ForceRecreateVenv) {
         Ok "  Virtual environment looks healthy"
         return
     }
 
-    if (Test-Path $venvPath) {
+    if (Test-Path $VenvPath) {
         Warn "  Virtual environment exists but looks broken"
-        Remove-Venv $venvPath
+        Remove-Venv $VenvPath
     }
 
     Step "  Creating virtual environment..."
-    & python -m venv $venvPath
-    if (-not (Test-VenvHealthy $venvPath)) {
+    & python -m venv $VenvPath
+    if (-not (Test-VenvHealthy $VenvPath)) {
         Fail "ERROR: venv creation finished but environment is still invalid"
     }
     Ok "  Virtual environment created"
