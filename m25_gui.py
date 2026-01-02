@@ -414,9 +414,36 @@ class M25GUI:
         )
         self.hill_hold_check.grid(row=2, column=1, sticky=tk.W, padx=(5, 0), pady=5)
 
+        # Max speed controls
+        self.lbl_max_speed = tk.Label(self.control_frame, text="Max Speed (km/h):")
+        self.lbl_max_speed.grid(row=3, column=0, sticky=tk.W, pady=5)
+        
+        # Max speed frame for Level 1 and Level 2
+        self.max_speed_frame = tk.Frame(self.control_frame)
+        self.max_speed_frame.grid(row=3, column=1, columnspan=2, sticky=tk.W, padx=(5, 0), pady=5)
+        
+        tk.Label(self.max_speed_frame, text="Level 1:").grid(row=0, column=0, sticky=tk.W)
+        self.max_speed_level1 = tk.DoubleVar(value=6.0)
+        self.max_speed_level1_spin = tk.Spinbox(
+            self.max_speed_frame, from_=2.0, to=8.5, increment=0.5,
+            textvariable=self.max_speed_level1, width=6, state="disabled"
+        )
+        self.max_speed_level1_spin.grid(row=0, column=1, padx=(5, 10))
+        
+        tk.Label(self.max_speed_frame, text="Level 2:").grid(row=0, column=2, sticky=tk.W)
+        self.max_speed_level2 = tk.DoubleVar(value=6.0)
+        self.max_speed_level2_spin = tk.Spinbox(
+            self.max_speed_frame, from_=2.0, to=8.5, increment=0.5,
+            textvariable=self.max_speed_level2, width=6, state="disabled"
+        )
+        self.max_speed_level2_spin.grid(row=0, column=3, padx=(5, 10))
+        
+        self.set_max_speed_btn = tk.Button(self.max_speed_frame, text="Set Max Speed", command=self.set_max_speed, state="disabled", cursor="hand2")
+        self.set_max_speed_btn.grid(row=0, column=4, padx=(5, 0))
+
         # Status buttons
         self.btn_frame = tk.Frame(self.control_frame)
-        self.btn_frame.grid(row=3, column=0, columnspan=3, pady=(10, 0))
+        self.btn_frame.grid(row=4, column=0, columnspan=3, pady=(10, 0))
 
         self.read_battery_btn = tk.Button(self.btn_frame, text="🔋 Battery", command=self.read_battery, state="disabled", cursor="hand2")
         self.read_battery_btn.pack(side=tk.LEFT, padx=5)
@@ -652,12 +679,35 @@ class M25GUI:
                 selectcolor=theme["entry_bg"],
             )
 
+            # Max speed frame
+            if hasattr(self, "max_speed_frame"):
+                self.max_speed_frame.configure(bg=theme["bg"])
+            
+            if hasattr(self, "lbl_max_speed"):
+                self.lbl_max_speed.configure(bg=theme["bg"], fg=theme["fg"])
+                
+                # Theme labels within max_speed_frame
+                for widget in self.max_speed_frame.winfo_children():
+                    if isinstance(widget, tk.Label):
+                        widget.configure(bg=theme["bg"], fg=theme["fg"])
+                    elif isinstance(widget, tk.Spinbox):
+                        widget.configure(
+                            bg=theme["entry_bg"],
+                            fg=theme["entry_fg"],
+                            buttonbackground=theme["button_bg"],
+                            readonlybackground=theme["entry_bg"],
+                            insertbackground=theme["entry_fg"],
+                            selectbackground=theme["select_bg"],
+                            selectforeground=theme["select_fg"],
+                        )
+
             if hasattr(self, "btn_frame"):
                 self.btn_frame.configure(bg=theme["bg"])
 
             for btn in (
                 self.set_level_btn,
                 self.set_profile_btn,
+                self.set_max_speed_btn,
                 self.read_battery_btn,
                 self.read_status_btn,
                 self.read_version_btn,
@@ -764,6 +814,9 @@ class M25GUI:
         self.set_level_btn.config(state=state)
         self.set_profile_btn.config(state=state)
         self.hill_hold_check.config(state=state)
+        self.max_speed_level1_spin.config(state="normal" if enabled else "disabled")
+        self.max_speed_level2_spin.config(state="normal" if enabled else "disabled")
+        self.set_max_speed_btn.config(state=state)
         self.read_battery_btn.config(state=state)
         self.read_status_btn.config(state=state)
         self.read_version_btn.config(state=state)
@@ -1118,10 +1171,75 @@ class M25GUI:
                         ui_status("success", f"Hill hold set to {state}")
                     else:
                         ui_status("warning", "Hill hold partially set")
+                    # TODO: Verify if both wheels need to succeed for hill hold to be effective
                     
                 except Exception as e:
                     ui_log("error", f"Hill hold change failed: {e}")
                     ui_status("error", "Hill hold change failed")
+            
+            threading.Thread(target=write_thread, daemon=True).start()
+
+    def set_max_speed(self):
+        """Set max speed for Level 1 and Level 2"""
+        level1_speed = self.max_speed_level1.get()
+        level2_speed = self.max_speed_level2.get()
+        self.log("info", f"Setting max speeds: Level 1={level1_speed} km/h, Level 2={level2_speed} km/h")
+        self.status_message("info", "Setting max speeds...")
+
+        if self.demo_mode:
+            self.log("warning", "Demo mode: Max speed change simulated")
+            self.status_message("success", f"Max speeds set")
+        else:
+            # Real hardware command using ECSRemote
+            def write_thread():
+                def ui_log(level_msg: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.log(level_msg, msg))
+
+                def ui_status(level_msg: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.status_message(level_msg, msg))
+
+                try:
+                    if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                        ui_log("error", "Not connected")
+                        return
+                    
+                    builder = ECSPacketBuilder()
+                    results = []
+                    
+                    # Write Level 1 max speed to left wheel
+                    left1_ok = self.ecs_remote.write_max_speed(self.left_conn, builder, 1, level1_speed)
+                    results.append(("Left wheel Level 1", left1_ok))
+                    ui_log("success" if left1_ok else "warning", 
+                           f"Left wheel Level 1: {level1_speed} km/h" if left1_ok else "Left wheel Level 1: Failed")
+                    
+                    # Write Level 2 max speed to left wheel
+                    left2_ok = self.ecs_remote.write_max_speed(self.left_conn, builder, 2, level2_speed)
+                    results.append(("Left wheel Level 2", left2_ok))
+                    ui_log("success" if left2_ok else "warning",
+                           f"Left wheel Level 2: {level2_speed} km/h" if left2_ok else "Left wheel Level 2: Failed")
+                    
+                    # Write Level 1 max speed to right wheel
+                    right1_ok = self.ecs_remote.write_max_speed(self.right_conn, builder, 1, level1_speed)
+                    results.append(("Right wheel Level 1", right1_ok))
+                    ui_log("success" if right1_ok else "warning",
+                           f"Right wheel Level 1: {level1_speed} km/h" if right1_ok else "Right wheel Level 1: Failed")
+                    
+                    # Write Level 2 max speed to right wheel
+                    right2_ok = self.ecs_remote.write_max_speed(self.right_conn, builder, 2, level2_speed)
+                    results.append(("Right wheel Level 2", right2_ok))
+                    ui_log("success" if right2_ok else "warning",
+                           f"Right wheel Level 2: {level2_speed} km/h" if right2_ok else "Right wheel Level 2: Failed")
+                    
+                    all_ok = all(ok for _, ok in results)
+                    if all_ok:
+                        ui_status("success", "Max speeds set successfully")
+                    else:
+                        failed = [name for name, ok in results if not ok]
+                        ui_status("warning", f"Max speed partially set (failed: {', '.join(failed)})")
+                    
+                except Exception as e:
+                    ui_log("error", f"Max speed change failed: {e}")
+                    ui_status("error", "Max speed change failed")
             
             threading.Thread(target=write_thread, daemon=True).start()
 
