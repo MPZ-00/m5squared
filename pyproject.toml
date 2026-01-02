@@ -7,6 +7,8 @@ requires-python = ">=3.8"
 license = "AGPL-3.0-or-later"
 dependencies = [
     "pycryptodome>=3.15.0",
+    "python-dotenv>=1.0.0",
+    "bleak>=0.21.0",
 ]
 
 [project.urls]
@@ -21,3 +23,29 @@ m25-encrypt = "m25_encrypt:main"
 m25-analyzer = "m25_analyzer:main"
 m25-bluetooth = "m25_bluetooth:main"
 m25-parking = "m25_parking:main"
+m25-gui = "m25_gui:main"
+m25-config = "m25_config:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = [
+  "m25_analyzer",
+  "m25_bluetooth",
+  "m25_bluetooth_windows",
+  "m25_config",
+  "m25_crypto",
+  "m25_decrypt",
+  "m25_ecs",
+  "m25_ecs_driveprofiles",
+  "m25_encrypt",
+  "m25_gui",
+  "m25_parking",
+  "m25_protocol",
+  "m25_protocol_data",
+  "m25_qr_to_key",
+  "m25_spp",
+  "m25_utils",
+]
