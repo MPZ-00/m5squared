@@ -237,7 +237,7 @@ class M25GUI:
         self.loop_thread = None
 
         # Theme state
-        self.current_theme = "light"
+        self.current_theme = "dark"
 
         # Create UI first (so status bar exists)
         self.create_widgets()
@@ -414,9 +414,6 @@ class M25GUI:
 
         self.read_profile_btn = tk.Button(self.btn_frame, text="⚙ Profile", command=self.read_profile, state="disabled", cursor="hand2")
         self.read_profile_btn.pack(side=tk.LEFT, padx=5)
-
-        self.read_params_btn = tk.Button(self.btn_frame, text="🔧 Parameters", command=self.read_parameters, state="disabled", cursor="hand2")
-        self.read_params_btn.pack(side=tk.LEFT, padx=5)
         
         self.info_dump_btn = tk.Button(self.btn_frame, text="📋 Info Dump", command=self.info_dump, state="disabled", cursor="hand2")
         self.info_dump_btn.pack(side=tk.LEFT, padx=5)
@@ -628,7 +625,6 @@ class M25GUI:
                 self.read_status_btn,
                 self.read_version_btn,
                 self.read_profile_btn,
-                self.read_params_btn,
                 self.info_dump_btn,
             ):
                 btn.configure(
@@ -734,7 +730,6 @@ class M25GUI:
         self.read_status_btn.config(state=state)
         self.read_version_btn.config(state=state)
         self.read_profile_btn.config(state=state)
-        self.read_params_btn.config(state=state)
         self.info_dump_btn.config(state=state)
 
     def toggle_connection(self):
@@ -1156,22 +1151,52 @@ class M25GUI:
         self.log("info", "Reading drive profile...")
         self.status_message("info", "Reading profile...")
 
-        self.log("muted", "Active Profile: Standard")
-        self.log("muted", "Available: Customized, Standard, Sensitive, Soft, Active, Sensitive+")
-        self.status_message("success", "Profile read complete")
+        if self.demo_mode:
+            self.log("muted", "Active Profile: Standard")
+            self.log("muted", "Available: Customized, Standard, Sensitive, Soft, Active, Sensitive+")
+            self.status_message("success", "Profile read complete")
+        else:
+            # Real hardware reading using ECSRemote
+            def read_thread():
+                def ui_log(level_msg: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.log(level_msg, msg))
 
-    def read_parameters(self):
-        """Read drive parameters"""
-        self.log("info", "Reading drive parameters...")
-        self.status_message("info", "Reading parameters...")
+                def ui_status(level_msg: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.status_message(level_msg, msg))
 
-        self.log("muted", "Level 1 Parameters:")
-        self.log("muted", "  Max Torque: 80%")
-        self.log("muted", "  Max Speed: 2361 mm/s (8.5 km/h)")
-        self.log("muted", "  P-Factor: 500")
-        self.log("muted", "  Speed Bias: 30")
-        self.status_message("success", "Parameters read complete")
-    
+                try:
+                    if not self.ecs_remote or not self.left_conn:
+                        ui_log("error", "Not connected")
+                        return
+                    
+                    builder = ECSPacketBuilder()
+                    
+                    # Read active profile from left wheel
+                    profile = self.ecs_remote.read_value(
+                        self.left_conn,
+                        builder.build_read_drive_profile,
+                        0x24,  # PARAM_ID_STATUS_DRIVE_PROFILE
+                        ResponseParser.parse_drive_profile
+                    )
+                    
+                    if profile:
+                        ui_log("success", f"Active Profile: {profile['name']}")
+                    else:
+                        ui_log("warning", "Active Profile: Unable to read")
+                    
+                    # Show available profiles
+                    from m25_protocol_data import PROFILE_NAMES
+                    available = ", ".join(PROFILE_NAMES.values())
+                    ui_log("muted", f"Available: {available}")
+                    ui_status("success", "Profile read complete")
+                    
+                except Exception as e:
+                    ui_log("error", f"Profile read failed: {e}")
+                    ui_status("error", "Profile read failed")
+            
+            threading.Thread(target=read_thread, daemon=True).start()
+
+
     def info_dump(self):
         """Get comprehensive info dump from both wheels"""
         self.log("info", "=== Starting comprehensive info dump ===")
@@ -1200,137 +1225,87 @@ class M25GUI:
             self.log("success", "=== Info dump complete ===")
             self.status_message("success", "Info dump complete")
         else:
-            # Real hardware comprehensive dump
+            # Real hardware comprehensive dump using ECSRemote
             def dump_thread():
-                import time
-                try:
-                    if not self.event_loop or self.event_loop.is_closed():
-                        self.root.after(0, lambda: self.log("error", "Not connected"))
-                        return
-                    
-                    loop = self.event_loop
+                def ui_log(level_msg: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.log(level_msg, msg))
+
+                def ui_status(level_msg: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.status_message(level_msg, msg))
+
+                def read_from_wheel(conn, wheel_name):
+                    """Read all available info from one wheel using ECSRemote"""
+                    ui_log("success", f"\n=== {wheel_name} ===")
                     builder = ECSPacketBuilder()
                     
-                    def read_from_wheel(bt, encryptor, decryptor, wheel_name):
-                        """Read all available info from one wheel"""
-                        self.root.after(0, lambda: self.log("success", f"\n=== {wheel_name} ==="))
-                        
-                        # Version
-                        packet = builder.build_read_sw_version()
-                        encrypted = encryptor.encrypt_packet(packet)
-                        if loop.run_until_complete(bt.send_packet(encrypted)):
-                            time.sleep(0.2)
-                            response = loop.run_until_complete(bt.receive_packet(timeout=2))
-                            if response:
-                                decrypted = decryptor.decrypt_packet(response)
-                                if decrypted:
-                                    header = ResponseParser.parse_header(decrypted)
-                                    if header:
-                                        version = ResponseParser.parse_sw_version(header['payload'])
-                                        if version:
-                                            self.root.after(0, lambda v=version['version_str']: self.log("muted", f"Firmware: {v}"))
-                        
-                        time.sleep(0.15)
-                        
-                        # Battery
-                        packet = builder.build_read_soc()
-                        encrypted = encryptor.encrypt_packet(packet)
-                        if loop.run_until_complete(bt.send_packet(encrypted)):
-                            time.sleep(0.2)
-                            response = loop.run_until_complete(bt.receive_packet(timeout=2))
-                            if response:
-                                decrypted = decryptor.decrypt_packet(response)
-                                if decrypted:
-                                    header = ResponseParser.parse_header(decrypted)
-                                    if header:
-                                        soc = ResponseParser.parse_soc(header['payload'])
-                                        if soc is not None:
-                                            self.root.after(0, lambda s=soc: self.log("muted", f"Battery: {s}%"))
-                        
-                        time.sleep(0.15)
-                        
-                        # Assist Level
-                        packet = builder.build_read_assist_level()
-                        encrypted = encryptor.encrypt_packet(packet)
-                        if loop.run_until_complete(bt.send_packet(encrypted)):
-                            time.sleep(0.2)
-                            response = loop.run_until_complete(bt.receive_packet(timeout=2))
-                            if response:
-                                decrypted = decryptor.decrypt_packet(response)
-                                if decrypted:
-                                    header = ResponseParser.parse_header(decrypted)
-                                    if header:
-                                        level = ResponseParser.parse_assist_level(header['payload'])
-                                        if level:
-                                            self.root.after(0, lambda l=level: self.log("muted", f"Assist Level: {l['value']} ({l['name']})"))
-                        
-                        time.sleep(0.15)
-                        
-                        # Drive Profile
-                        packet = builder.build_read_drive_profile()
-                        encrypted = encryptor.encrypt_packet(packet)
-                        if loop.run_until_complete(bt.send_packet(encrypted)):
-                            time.sleep(0.2)
-                            response = loop.run_until_complete(bt.receive_packet(timeout=2))
-                            if response:
-                                decrypted = decryptor.decrypt_packet(response)
-                                if decrypted:
-                                    header = ResponseParser.parse_header(decrypted)
-                                    if header:
-                                        profile = ResponseParser.parse_drive_profile(header['payload'])
-                                        if profile:
-                                            self.root.after(0, lambda p=profile: self.log("muted", f"Drive Profile: {p['name']}"))
-                        
-                        time.sleep(0.15)
-                        
-                        # Cruise Values (distance, etc.)
-                        packet = builder.build_read_cruise_values()
-                        encrypted = encryptor.encrypt_packet(packet)
-                        if loop.run_until_complete(bt.send_packet(encrypted)):
-                            time.sleep(0.2)
-                            response = loop.run_until_complete(bt.receive_packet(timeout=2))
-                            if response:
-                                decrypted = decryptor.decrypt_packet(response)
-                                if decrypted:
-                                    header = ResponseParser.parse_header(decrypted)
-                                    if header:
-                                        cruise = ResponseParser.parse_cruise_values(header['payload'])
-                                        if cruise:
-                                            self.root.after(0, lambda c=cruise: self.log("muted", f"Distance: {c['distance_km']:.1f} km"))
-                        
-                        time.sleep(0.15)
-                        
-                        # Drive Parameters for Level 1
-                        packet = builder.build_read_drive_profile_params(0)
-                        encrypted = encryptor.encrypt_packet(packet)
-                        if loop.run_until_complete(bt.send_packet(encrypted)):
-                            time.sleep(0.2)
-                            response = loop.run_until_complete(bt.receive_packet(timeout=2))
-                            if response:
-                                decrypted = decryptor.decrypt_packet(response)
-                                if decrypted:
-                                    header = ResponseParser.parse_header(decrypted)
-                                    if header:
-                                        params = ResponseParser.parse_drive_profile_params(header['payload'])
-                                        if params:
-                                            self.root.after(0, lambda: self.log("muted", "Level 1 Parameters:"))
-                                            self.root.after(0, lambda p=params: self.log("muted", f"  Max Torque: {p['max_torque']}%"))
-                                            self.root.after(0, lambda p=params: self.log("muted", f"  Max Speed: {p['max_speed']:.1f} km/h"))
-                                            self.root.after(0, lambda p=params: self.log("muted", f"  P-Factor: {p['p_factor']}"))
-                                            self.root.after(0, lambda p=params: self.log("muted", f"  Speed Bias: {p['speed_bias']}"))
+                    # Version
+                    version = self.ecs_remote.read_value(
+                        conn, builder.build_read_sw_version, 0x2E, ResponseParser.parse_sw_version
+                    )
+                    if version:
+                        ui_log("muted", f"Firmware: {version['version_str']}")
+                    
+                    # Battery
+                    soc = self.ecs_remote.read_value(
+                        conn, builder.build_read_soc, 0x21, ResponseParser.parse_soc
+                    )
+                    if soc is not None:
+                        ui_log("muted", f"Battery: {soc}%")
+                    
+                    # Assist Level
+                    level = self.ecs_remote.read_value(
+                        conn, builder.build_read_assist_level, 0x22, ResponseParser.parse_assist_level
+                    )
+                    if level:
+                        ui_log("muted", f"Assist Level: {level['value']} ({level['name']})")
+                    
+                    # Drive Mode (for Hill Hold)
+                    mode = self.ecs_remote.read_value(
+                        conn, builder.build_read_drive_mode, 0x23, ResponseParser.parse_drive_mode
+                    )
+                    if mode:
+                        hill_hold = "ON" if mode['auto_hold'] else "OFF"
+                        ui_log("muted", f"Hill Hold: {hill_hold}")
+                    
+                    # Drive Profile
+                    profile = self.ecs_remote.read_value(
+                        conn, builder.build_read_drive_profile, 0x24, ResponseParser.parse_drive_profile
+                    )
+                    if profile:
+                        ui_log("muted", f"Drive Profile: {profile['name']}")
+                    
+                    # Cruise Values (distance)
+                    cruise = self.ecs_remote.read_value(
+                        conn, builder.build_read_cruise_values, 0x2D, ResponseParser.parse_cruise_values
+                    )
+                    if cruise:
+                        ui_log("muted", f"Distance: {cruise['distance_km']:.1f} km")
+                    
+                    # Drive Parameters for Level 1
+                    params = self.ecs_remote.read_profile_params(conn, builder, 0)
+                    if params:
+                        ui_log("muted", "Level 1 Parameters:")
+                        ui_log("muted", f"  Max Torque: {params['max_torque']}%")
+                        ui_log("muted", f"  Max Speed: {params['max_speed']:.1f} km/h")
+                        ui_log("muted", f"  P-Factor: {params['p_factor']}")
+                        ui_log("muted", f"  Speed Bias: {params['speed_bias']}")
+
+                try:
+                    if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                        ui_log("error", "Not connected")
+                        return
                     
                     # Read from both wheels
-                    read_from_wheel(self.left_bt, self.left_encryptor, self.left_decryptor, "LEFT WHEEL")
-                    time.sleep(0.2)
-                    read_from_wheel(self.right_bt, self.right_encryptor, self.right_decryptor, "RIGHT WHEEL")
+                    read_from_wheel(self.left_conn, "LEFT WHEEL")
+                    read_from_wheel(self.right_conn, "RIGHT WHEEL")
                     
-                    self.root.after(0, lambda: self.log("info", ""))
-                    self.root.after(0, lambda: self.log("success", "=== Info dump complete ==="))
-                    self.root.after(0, lambda: self.status_message("success", "Info dump complete"))
+                    ui_log("info", "")
+                    ui_log("success", "=== Info dump complete ===")
+                    ui_status("success", "Info dump complete")
                     
                 except Exception as e:
-                    self.root.after(0, lambda: self.log("error", f"Info dump failed: {e}"))
-                    self.root.after(0, lambda: self.status_message("error", "Info dump failed"))
+                    ui_log("error", f"Info dump failed: {e}")
+                    ui_status("error", "Info dump failed")
             
             threading.Thread(target=dump_thread, daemon=True).start()
 
