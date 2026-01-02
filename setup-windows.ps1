@@ -62,13 +62,15 @@ https://github.com/MPZ-00/m5squared
 https://github.com/roll2own/m5squared
 #>
 
+[CmdletBinding()]
 param(
+    [switch]$Help,
     [string]$VenvPath = ".venv",
     [switch]$ForceRecreateVenv
 )
 
 # Handle legacy help flags (-help, --help, /?, -?, etc.)
-if ($args -contains '-help' -or $args -contains '--help' -or $args -contains '/?' -or $args -contains '-?' -or $args -contains 'help') {
+if ($Help -or $args -match '^(--?help|/\?|-\?)$') {
     Get-Help $PSCommandPath
     exit 0
 }
