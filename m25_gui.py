@@ -386,9 +386,24 @@ class M25GUI:
         self.set_level_btn = tk.Button(self.control_frame, text="Set Level", command=self.set_assist_level, state="disabled", cursor="hand2")
         self.set_level_btn.grid(row=0, column=2, pady=5)
 
+        # Drive profile
+        self.lbl_profile = tk.Label(self.control_frame, text="Drive Profile:")
+        self.lbl_profile.grid(row=1, column=0, sticky=tk.W, pady=5)
+
+        self.profile_frame = tk.Frame(self.control_frame)
+        self.profile_frame.grid(row=1, column=1, padx=(5, 10), sticky=tk.W)
+        self.profile_var = tk.StringVar(value="Standard")
+        self.profiles = ["Standard", "Sensitive", "Soft", "Active", "SensitivePlus"]
+        self.profile_menu = tk.OptionMenu(self.profile_frame, self.profile_var, *self.profiles)
+        self.profile_menu.config(width=18)
+        self.profile_menu.pack()
+
+        self.set_profile_btn = tk.Button(self.control_frame, text="Set Profile", command=self.set_drive_profile, state="disabled", cursor="hand2")
+        self.set_profile_btn.grid(row=1, column=2, pady=5)
+
         # Hill hold
         self.lbl_hill_hold = tk.Label(self.control_frame, text="Hill Hold:")
-        self.lbl_hill_hold.grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.lbl_hill_hold.grid(row=2, column=0, sticky=tk.W, pady=5)
         self.hill_hold = tk.BooleanVar()
         self.hill_hold_check = tk.Checkbutton(
             self.control_frame,
@@ -397,11 +412,11 @@ class M25GUI:
             command=self.toggle_hill_hold,
             state="disabled",
         )
-        self.hill_hold_check.grid(row=1, column=1, sticky=tk.W, padx=(5, 0), pady=5)
+        self.hill_hold_check.grid(row=2, column=1, sticky=tk.W, padx=(5, 0), pady=5)
 
         # Status buttons
         self.btn_frame = tk.Frame(self.control_frame)
-        self.btn_frame.grid(row=2, column=0, columnspan=3, pady=(10, 0))
+        self.btn_frame.grid(row=3, column=0, columnspan=3, pady=(10, 0))
 
         self.read_battery_btn = tk.Button(self.btn_frame, text="🔋 Battery", command=self.read_battery, state="disabled", cursor="hand2")
         self.read_battery_btn.pack(side=tk.LEFT, padx=5)
@@ -592,7 +607,6 @@ class M25GUI:
                 self.assist_frame.configure(bg=theme["bg"])
             
             self.lbl_assist.configure(bg=theme["bg"], fg=theme["fg"])
-            self.lbl_hill_hold.configure(bg=theme["bg"], fg=theme["fg"])
             self.assist_level_menu.configure(
                 bg=theme["button_bg"],
                 fg=theme["button_fg"],
@@ -608,12 +622,32 @@ class M25GUI:
                 activeforeground=theme["select_fg"],
             )
 
-            self.hill_hold_check.configure(
+            # Profile frame
+            if hasattr(self, "profile_frame"):
+                self.profile_frame.configure(bg=theme["bg"])
+            
+            if hasattr(self, "lbl_profile"):
+                self.lbl_profile.configure(bg=theme["bg"], fg=theme["fg"])
+                self.profile_menu.configure(
+                    bg=theme["button_bg"],
+                    fg=theme["button_fg"],
+                    activebackground=theme["select_bg"],
+                    activeforeground=theme["select_fg"],
+                    highlightthickness=0,
+                )
+                profile_menu = self.profile_menu["menu"]
+                profile_menu.configure(
+                    bg=theme["button_bg"],
+                    fg=theme["button_fg"],
+                    activebackground=theme["select_bg"],
+                    activeforeground=theme["select_fg"],
+                )
+
+            self.lbl_hill_hold.configure(
                 bg=theme["bg"],
                 fg=theme["fg"],
                 activebackground=theme["bg"],
                 activeforeground=theme["fg"],
-                selectcolor=theme["entry_bg"],
             )
 
             if hasattr(self, "btn_frame"):
@@ -621,6 +655,7 @@ class M25GUI:
 
             for btn in (
                 self.set_level_btn,
+                self.set_profile_btn,
                 self.read_battery_btn,
                 self.read_status_btn,
                 self.read_version_btn,
@@ -725,6 +760,7 @@ class M25GUI:
         """Enable or disable control buttons"""
         state = "normal" if enabled else "disabled"
         self.set_level_btn.config(state=state)
+        self.set_profile_btn.config(state=state)
         self.hill_hold_check.config(state=state)
         self.read_battery_btn.config(state=state)
         self.read_status_btn.config(state=state)
@@ -960,6 +996,79 @@ class M25GUI:
                 except Exception as e:
                     ui_log("error", f"Assist level change failed: {e}")
                     ui_status("error", "Assist level change failed")
+            
+            threading.Thread(target=write_thread, daemon=True).start()
+
+    def set_drive_profile(self):
+        """Set drive profile"""
+        profile_name = self.profile_var.get()
+        
+        # Map profile name to ID
+        from m25_protocol_data import (
+            PROFILE_ID_STANDARD, PROFILE_ID_SENSITIVE, PROFILE_ID_SOFT,
+            PROFILE_ID_ACTIVE, PROFILE_ID_SENSITIVE_PLUS
+        )
+        
+        profile_map = {
+            "Standard": PROFILE_ID_STANDARD,
+            "Sensitive": PROFILE_ID_SENSITIVE,
+            "Soft": PROFILE_ID_SOFT,
+            "Active": PROFILE_ID_ACTIVE,
+            "SensitivePlus": PROFILE_ID_SENSITIVE_PLUS,
+        }
+        
+        profile_id = profile_map.get(profile_name)
+        if profile_id is None:
+            self.log("error", f"Unknown profile: {profile_name}")
+            return
+        
+        self.log("info", f"Setting drive profile: {profile_name}")
+        self.status_message("info", f"Setting profile to {profile_name}...")
+
+        if self.demo_mode:
+            self.log("warning", "Demo mode: Profile change simulated")
+            self.status_message("success", f"Profile set to {profile_name}")
+        else:
+            # Real hardware command using ECSRemote
+            def write_thread():
+                def ui_log(level_msg: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.log(level_msg, msg))
+
+                def ui_status(level_msg: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.status_message(level_msg, msg))
+
+                try:
+                    if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                        ui_log("error", "Not connected")
+                        return
+                    
+                    builder = ECSPacketBuilder()
+                    
+                    # Build write profile packet
+                    packet = builder.build_write_drive_profile(profile_id)
+                    
+                    # Write to left wheel
+                    left_ok = self.ecs_remote.write_value(self.left_conn, packet, "write_drive_profile")
+                    if left_ok:
+                        ui_log("success", "Left wheel: Profile set")
+                    else:
+                        ui_log("warning", "Left wheel: Failed to set profile")
+                    
+                    # Write to right wheel
+                    right_ok = self.ecs_remote.write_value(self.right_conn, packet, "write_drive_profile")
+                    if right_ok:
+                        ui_log("success", "Right wheel: Profile set")
+                    else:
+                        ui_log("warning", "Right wheel: Failed to set profile")
+                    
+                    if left_ok and right_ok:
+                        ui_status("success", f"Profile set to {profile_name}")
+                    else:
+                        ui_status("warning", "Profile partially set")
+                    
+                except Exception as e:
+                    ui_log("error", f"Profile change failed: {e}")
+                    ui_status("error", "Profile change failed")
             
             threading.Thread(target=write_thread, daemon=True).start()
 
