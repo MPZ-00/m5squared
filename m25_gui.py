@@ -667,24 +667,36 @@ class M25GUI:
             self.status_message("error", "Missing right wheel MAC or key")
             return
 
-        self.log("info", "Connecting to wheels...")
+        # Detect demo mode
+        demo_mode = left_mac.upper() == "AA:BB:CC:DD:EE:FF" or right_mac.upper() == "AA:BB:CC:DD:EE:FF"
+        
+        if demo_mode:
+            self.log("warning", "DEMO MODE detected (MAC: AA:BB:CC:DD:EE:FF)")
+            self.log("info", "Running in simulation mode - no real hardware connection")
+        else:
+            self.log("info", "Connecting to wheels...")
+        
         self.log("muted", f"Left:  {left_mac}")
         self.log("muted", f"Right: {right_mac}")
-        self.status_message("info", "Connecting...")
+        self.status_message("info", "Connecting..." if not demo_mode else "Connecting (Demo Mode)...")
 
         def simulate_connect():
             import time
             time.sleep(2)
-            self.root.after(0, self.connection_complete, True)
+            self.root.after(0, self.connection_complete, True, demo_mode)
 
         threading.Thread(target=simulate_connect, daemon=True).start()
 
-    def connection_complete(self, success):
+    def connection_complete(self, success, demo_mode=False):
         """Handle connection result"""
         if success:
             self.connected = True
-            self.log("success", "Connected successfully.")
-            self.status_message("success", "Connected")
+            if demo_mode:
+                self.log("success", "Connected in DEMO MODE - using simulated hardware")
+                self.status_message("warning", "Connected (Demo Mode)")
+            else:
+                self.log("success", "Connected successfully.")
+                self.status_message("success", "Connected")
             self.connect_btn.config(text="Disconnect")
             self.enable_controls(True)
         else:
