@@ -34,7 +34,7 @@ except ImportError:
 try:
     from m25_bluetooth_windows import M25WindowsBluetooth
     from m25_crypto import M25Encryptor, M25Decryptor
-    from m25_ecs import ECSPacketBuilder
+    from m25_ecs import ECSPacketBuilder, ResponseParser
     from m25_utils import parse_key
     HAS_BLUETOOTH = True
 except ImportError as e:
@@ -344,6 +344,9 @@ class M25GUI:
 
         self.read_params_btn = tk.Button(self.btn_frame, text="🔧 Parameters", command=self.read_parameters, state="disabled", cursor="hand2")
         self.read_params_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.info_dump_btn = tk.Button(self.btn_frame, text="📋 Info Dump", command=self.info_dump, state="disabled", cursor="hand2")
+        self.info_dump_btn.pack(side=tk.LEFT, padx=5)
 
         # Output Section
         self.output_frame = tk.LabelFrame(self.main_frame, text="Output", padx=10, pady=10, font=("", 9, "bold"))
@@ -553,6 +556,7 @@ class M25GUI:
                 self.read_version_btn,
                 self.read_profile_btn,
                 self.read_params_btn,
+                self.info_dump_btn,
             ):
                 btn.configure(
                     bg=theme["button_bg"],
@@ -658,6 +662,7 @@ class M25GUI:
         self.read_version_btn.config(state=state)
         self.read_profile_btn.config(state=state)
         self.read_params_btn.config(state=state)
+        self.info_dump_btn.config(state=state)
 
     def toggle_connection(self):
         """Toggle between connect and disconnect"""
@@ -857,24 +862,90 @@ class M25GUI:
         else:
             # Real hardware command
             def write_thread():
+                import time
+                
+                def ui_log(level: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.log(level, msg))
+
+                def ui_status(level: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.status_message(level, msg))
+
+                def write_wheel_assist(side: str, loop, bt, enc, dec, builder, assist_level) -> bool:
+                    wheel = "Left" if side == "left" else "Right"
+
+                    packet = builder.build_write_assist_level(assist_level)
+                    encrypted = enc.encrypt_packet(packet)
+
+                    ok = loop.run_until_complete(bt.send_packet(encrypted))
+                    if not ok:
+                        ui_log("warning", f"{wheel} wheel: Send failed")
+                        return False
+
+                    time.sleep(0.2)
+
+                    response = loop.run_until_complete(bt.receive_packet(timeout=2))
+                    if not response:
+                        ui_log("warning", f"{wheel} wheel: No response")
+                        return False
+
+                    decrypted = dec.decrypt_packet(response)
+                    if not decrypted:
+                        ui_log("error", f"{wheel} wheel: Decryption failed")
+                        return False
+
+                    header = ResponseParser.parse_header(decrypted)
+                    if not header:
+                        ui_log("warning", f"{wheel} wheel: Invalid header")
+                        return False
+
+                    if ResponseParser.is_ack(header):
+                        ui_log("success", f"{wheel} wheel: Assist level set")
+                        return True
+                    elif ResponseParser.is_nack(header):
+                        ui_log("warning", f"{wheel} wheel: NACK received")
+                        return False
+                    else:
+                        ui_log("warning", f"{wheel} wheel: Unexpected response")
+                        return False
+
                 try:
                     if not self.event_loop or self.event_loop.is_closed():
-                        self.root.after(0, lambda: self.log("error", "Not connected"))
+                        ui_log("error", "Not connected")
                         return
                     
                     loop = self.event_loop
                     builder = ECSPacketBuilder()
                     
-                    # Build write assist level packet
-                    packet = builder.build_write_assist_level(level)
-                    # TODO: Send to both wheels, wait for ACK
-                    
-                    self.root.after(0, lambda: self.log("warning", "Full assist level writing implementation pending"))
-                    self.root.after(0, lambda: self.status_message("success", f"Assist level set to {level + 1}"))
+                    left_ok = write_wheel_assist(
+                        side="left",
+                        loop=loop,
+                        bt=self.left_bt,
+                        enc=self.left_encryptor,
+                        dec=self.left_decryptor,
+                        builder=builder,
+                        assist_level=level,
+                    )
+
+                    time.sleep(0.15)
+
+                    right_ok = write_wheel_assist(
+                        side="right",
+                        loop=loop,
+                        bt=self.right_bt,
+                        enc=self.right_encryptor,
+                        dec=self.right_decryptor,
+                        builder=builder,
+                        assist_level=level,
+                    )
+
+                    if left_ok and right_ok:
+                        ui_status("success", f"Assist level set to {level + 1}")
+                    else:
+                        ui_status("warning", "Assist level partially set")
                     
                 except Exception as e:
-                    self.root.after(0, lambda: self.log("error", f"Assist level change failed: {e}"))
-                    self.root.after(0, lambda: self.status_message("error", "Assist level change failed"))
+                    ui_log("error", f"Assist level change failed: {e}")
+                    ui_status("error", "Assist level change failed")
             
             threading.Thread(target=write_thread, daemon=True).start()
 
@@ -898,30 +969,84 @@ class M25GUI:
         else:
             # Real hardware reading
             def read_thread():
+                import time
+                
+                def ui_log(level: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.log(level, msg))
+
+                def ui_status(level: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.status_message(level, msg))
+
+                def read_wheel_battery(side: str, loop, bt, enc, dec, builder) -> str:
+                    wheel = "Left" if side == "left" else "Right"
+
+                    packet = builder.build_read_soc()
+                    encrypted = enc.encrypt_packet(packet)
+
+                    ok = loop.run_until_complete(bt.send_packet(encrypted))
+                    if not ok:
+                        ui_log("warning", f"{wheel} wheel: Send failed")
+                        return "??%"
+
+                    time.sleep(0.2)
+
+                    response = loop.run_until_complete(bt.receive_packet(timeout=2))
+                    if not response:
+                        ui_log("warning", f"{wheel} wheel: No response")
+                        return "??%"
+
+                    decrypted = dec.decrypt_packet(response)
+                    if not decrypted:
+                        ui_log("error", f"{wheel} wheel: Decryption failed")
+                        return "??%"
+
+                    header = ResponseParser.parse_header(decrypted)
+                    if not header:
+                        ui_log("warning", f"{wheel} wheel: Invalid header")
+                        return "??%"
+
+                    soc = ResponseParser.parse_soc(header['payload'])
+                    if soc is None:
+                        ui_log("warning", f"{wheel} wheel: Unable to parse SOC")
+                        return "??%"
+
+                    return f"{soc}%"
+
                 try:
                     if not self.event_loop or self.event_loop.is_closed():
-                        self.root.after(0, lambda: self.log("error", "Not connected"))
+                        ui_log("error", "Not connected")
                         return
                     
                     loop = self.event_loop
                     builder = ECSPacketBuilder()
                     
-                    # Read left wheel battery
-                    packet = builder.build_read_soc()
-                    # TODO: Send packet, decrypt response, parse battery %
-                    left_battery = "??%"  # Placeholder
+                    left_battery = read_wheel_battery(
+                        side="left",
+                        loop=loop,
+                        bt=self.left_bt,
+                        enc=self.left_encryptor,
+                        dec=self.left_decryptor,
+                        builder=builder,
+                    )
+
+                    time.sleep(0.15)
+
+                    right_battery = read_wheel_battery(
+                        side="right",
+                        loop=loop,
+                        bt=self.right_bt,
+                        enc=self.right_encryptor,
+                        dec=self.right_decryptor,
+                        builder=builder,
+                    )
                     
-                    # Read right wheel battery  
-                    right_battery = "??%"  # Placeholder
-                    
-                    self.root.after(0, lambda: self.log("muted", f"Left wheel:  {left_battery}"))
-                    self.root.after(0, lambda: self.log("muted", f"Right wheel: {right_battery}"))
-                    self.root.after(0, lambda: self.log("warning", "Full battery reading implementation pending"))
-                    self.root.after(0, lambda: self.status_message("success", "Battery read complete"))
+                    ui_log("muted", f"Left wheel:  {left_battery}")
+                    ui_log("muted", f"Right wheel: {right_battery}")
+                    ui_status("success", "Battery read complete")
                     
                 except Exception as e:
-                    self.root.after(0, lambda: self.log("error", f"Battery read failed: {e}"))
-                    self.root.after(0, lambda: self.status_message("error", "Battery read failed"))
+                    ui_log("error", f"Battery read failed: {e}")
+                    ui_status("error", "Battery read failed")
             
             threading.Thread(target=read_thread, daemon=True).start()
 
@@ -938,25 +1063,111 @@ class M25GUI:
         else:
             # Real hardware reading
             def read_thread():
+                import time
+                
+                def ui_log(level: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.log(level, msg))
+
+                def ui_status(level: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.status_message(level, msg))
+
+                def read_wheel_data(side: str, loop, bt, enc, dec, builder, read_func) -> dict:
+                    wheel = "Left" if side == "left" else "Right"
+
+                    packet = read_func()
+                    encrypted = enc.encrypt_packet(packet)
+
+                    ok = loop.run_until_complete(bt.send_packet(encrypted))
+                    if not ok:
+                        return None
+
+                    time.sleep(0.2)
+
+                    response = loop.run_until_complete(bt.receive_packet(timeout=2))
+                    if not response:
+                        return None
+
+                    decrypted = dec.decrypt_packet(response)
+                    if not decrypted:
+                        return None
+
+                    header = ResponseParser.parse_header(decrypted)
+                    if not header:
+                        return None
+
+                    return header
+
                 try:
                     if not self.event_loop or self.event_loop.is_closed():
-                        self.root.after(0, lambda: self.log("error", "Not connected"))
+                        ui_log("error", "Not connected")
                         return
                     
                     loop = self.event_loop
                     builder = ECSPacketBuilder()
                     
-                    # Read assist level, drive profile, etc.
-                    # TODO: Implement full status reading
-                    self.root.after(0, lambda: self.log("muted", "Assist Level: ??"))
-                    self.root.after(0, lambda: self.log("muted", "Hill Hold: ??"))
-                    self.root.after(0, lambda: self.log("muted", "Drive Profile: ??"))
-                    self.root.after(0, lambda: self.log("warning", "Full status reading implementation pending"))
-                    self.root.after(0, lambda: self.status_message("success", "Status read complete"))
+                    # Read assist level from left wheel
+                    header = read_wheel_data(
+                        side="left",
+                        loop=loop,
+                        bt=self.left_bt,
+                        enc=self.left_encryptor,
+                        dec=self.left_decryptor,
+                        builder=builder,
+                        read_func=builder.build_read_assist_level,
+                    )
+                    
+                    assist_info = "??"
+                    if header:
+                        assist = ResponseParser.parse_assist_level(header['payload'])
+                        if assist:
+                            assist_info = f"{assist['value']} ({assist['name']})"
+                    
+                    time.sleep(0.15)
+                    
+                    # Read drive mode from left wheel
+                    header = read_wheel_data(
+                        side="left",
+                        loop=loop,
+                        bt=self.left_bt,
+                        enc=self.left_encryptor,
+                        dec=self.left_decryptor,
+                        builder=builder,
+                        read_func=builder.build_read_drive_mode,
+                    )
+                    
+                    hill_hold = "??"
+                    if header:
+                        mode = ResponseParser.parse_drive_mode(header['payload'])
+                        if mode:
+                            hill_hold = "ON" if mode['auto_hold'] else "OFF"
+                    
+                    time.sleep(0.15)
+                    
+                    # Read drive profile from left wheel
+                    header = read_wheel_data(
+                        side="left",
+                        loop=loop,
+                        bt=self.left_bt,
+                        enc=self.left_encryptor,
+                        dec=self.left_decryptor,
+                        builder=builder,
+                        read_func=builder.build_read_drive_profile,
+                    )
+                    
+                    profile_info = "??"
+                    if header:
+                        profile = ResponseParser.parse_drive_profile(header['payload'])
+                        if profile:
+                            profile_info = profile['name']
+                    
+                    ui_log("muted", f"Assist Level: {assist_info}")
+                    ui_log("muted", f"Hill Hold: {hill_hold}")
+                    ui_log("muted", f"Drive Profile: {profile_info}")
+                    ui_status("success", "Status read complete")
                     
                 except Exception as e:
-                    self.root.after(0, lambda: self.log("error", f"Status read failed: {e}"))
-                    self.root.after(0, lambda: self.status_message("error", "Status read failed"))
+                    ui_log("error", f"Status read failed: {e}")
+                    ui_status("error", "Status read failed")
             
             threading.Thread(target=read_thread, daemon=True).start()
 
@@ -972,25 +1183,85 @@ class M25GUI:
         else:
             # Real hardware reading
             def read_thread():
+                import time
+                
+                # Helper functions
+                def ui_log(level: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.log(level, msg))
+
+                def ui_status(level: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.status_message(level, msg))
+
+                def read_wheel_version(side: str, loop, bt, enc, dec, builder) -> None:
+                    wheel = "Left" if side == "left" else "Right"
+
+                    packet = builder.build_read_sw_version()
+                    encrypted = enc.encrypt_packet(packet)
+
+                    ok = loop.run_until_complete(bt.send_packet(encrypted))
+                    if not ok:
+                        ui_log("warning", f"{wheel} wheel: Send failed")
+                        return
+
+                    time.sleep(0.2)
+
+                    response = loop.run_until_complete(bt.receive_packet(timeout=2))
+                    if not response:
+                        ui_log("warning", f"{wheel} wheel: No response")
+                        return
+
+                    decrypted = dec.decrypt_packet(response)
+                    if not decrypted:
+                        ui_log("error", f"{wheel} wheel: Decryption failed")
+                        return
+
+                    header = ResponseParser.parse_header(decrypted)
+                    if not header:
+                        ui_log("warning", f"{wheel} wheel: Invalid header")
+                        return
+
+                    version = ResponseParser.parse_sw_version(header["payload"])
+                    if not version:
+                        ui_log("warning", f"{wheel} wheel: Unable to parse version")
+                        return
+
+                    ui_log("success", f"{wheel} wheel: {version['version_str']}")
+
                 try:
                     if not self.event_loop or self.event_loop.is_closed():
-                        self.root.after(0, lambda: self.log("error", "Not connected"))
+                        ui_log("error", "Not connected")
                         return
-                    
+
                     loop = self.event_loop
                     builder = ECSPacketBuilder()
-                    
-                    # Read firmware version
-                    # TODO: Implement version reading
-                    self.root.after(0, lambda: self.log("muted", "Firmware: ??"))
-                    self.root.after(0, lambda: self.log("muted", "Hardware: M25V2"))
-                    self.root.after(0, lambda: self.log("warning", "Full version reading implementation pending"))
-                    self.root.after(0, lambda: self.status_message("success", "Version read complete"))
-                    
+
+                    read_wheel_version(
+                        side="left",
+                        loop=loop,
+                        bt=self.left_bt,
+                        enc=self.left_encryptor,
+                        dec=self.left_decryptor,
+                        builder=builder,
+                    )
+
+                    time.sleep(0.15)
+
+                    read_wheel_version(
+                        side="right",
+                        loop=loop,
+                        bt=self.right_bt,
+                        enc=self.right_encryptor,
+                        dec=self.right_decryptor,
+                        builder=builder,
+                    )
+
+                    ui_log("muted", "Hardware: M25V2")
+                    ui_status("success", "Version read complete")
+
                 except Exception as e:
-                    self.root.after(0, lambda: self.log("error", f"Version read failed: {e}"))
-                    self.root.after(0, lambda: self.status_message("error", "Version read failed"))
-            
+                    ui_log("error", f"Version read failed: {e}")
+                    ui_status("error", "Version read failed")
+
             threading.Thread(target=read_thread, daemon=True).start()
 
     def read_profile(self):
@@ -1013,6 +1284,168 @@ class M25GUI:
         self.log("muted", "  P-Factor: 500")
         self.log("muted", "  Speed Bias: 30")
         self.status_message("success", "Parameters read complete")
+    
+    def info_dump(self):
+        """Get comprehensive info dump from both wheels"""
+        self.log("info", "=== Starting comprehensive info dump ===")
+        self.status_message("info", "Reading all available data...")
+        
+        if self.demo_mode:
+            # Demo mode comprehensive dump
+            self.log("warning", "DEMO MODE - Simulated values")
+            self.log("info", "")
+            self.log("success", "=== LEFT WHEEL ===")
+            self.log("muted", "Firmware: V03.005.001")
+            self.log("muted", "Battery: 85%")
+            self.log("muted", "Assist Level: 1 (Normal)")
+            self.log("muted", "Hill Hold: OFF")
+            self.log("muted", "Drive Profile: Standard")
+            self.log("muted", "Distance: 1234.5 km")
+            self.log("info", "")
+            self.log("success", "=== RIGHT WHEEL ===")
+            self.log("muted", "Firmware: V03.005.001")
+            self.log("muted", "Battery: 83%")
+            self.log("muted", "Assist Level: 1 (Normal)")
+            self.log("muted", "Hill Hold: OFF")
+            self.log("muted", "Drive Profile: Standard")
+            self.log("muted", "Distance: 1234.7 km")
+            self.log("info", "")
+            self.log("success", "=== Info dump complete ===")
+            self.status_message("success", "Info dump complete")
+        else:
+            # Real hardware comprehensive dump
+            def dump_thread():
+                import time
+                try:
+                    if not self.event_loop or self.event_loop.is_closed():
+                        self.root.after(0, lambda: self.log("error", "Not connected"))
+                        return
+                    
+                    loop = self.event_loop
+                    builder = ECSPacketBuilder()
+                    
+                    def read_from_wheel(bt, encryptor, decryptor, wheel_name):
+                        """Read all available info from one wheel"""
+                        self.root.after(0, lambda: self.log("success", f"\n=== {wheel_name} ==="))
+                        
+                        # Version
+                        packet = builder.build_read_sw_version()
+                        encrypted = encryptor.encrypt_packet(packet)
+                        if loop.run_until_complete(bt.send_packet(encrypted)):
+                            time.sleep(0.2)
+                            response = loop.run_until_complete(bt.receive_packet(timeout=2))
+                            if response:
+                                decrypted = decryptor.decrypt_packet(response)
+                                if decrypted:
+                                    header = ResponseParser.parse_header(decrypted)
+                                    if header:
+                                        version = ResponseParser.parse_sw_version(header['payload'])
+                                        if version:
+                                            self.root.after(0, lambda v=version['version_str']: self.log("muted", f"Firmware: {v}"))
+                        
+                        time.sleep(0.15)
+                        
+                        # Battery
+                        packet = builder.build_read_soc()
+                        encrypted = encryptor.encrypt_packet(packet)
+                        if loop.run_until_complete(bt.send_packet(encrypted)):
+                            time.sleep(0.2)
+                            response = loop.run_until_complete(bt.receive_packet(timeout=2))
+                            if response:
+                                decrypted = decryptor.decrypt_packet(response)
+                                if decrypted:
+                                    header = ResponseParser.parse_header(decrypted)
+                                    if header:
+                                        soc = ResponseParser.parse_soc(header['payload'])
+                                        if soc is not None:
+                                            self.root.after(0, lambda s=soc: self.log("muted", f"Battery: {s}%"))
+                        
+                        time.sleep(0.15)
+                        
+                        # Assist Level
+                        packet = builder.build_read_assist_level()
+                        encrypted = encryptor.encrypt_packet(packet)
+                        if loop.run_until_complete(bt.send_packet(encrypted)):
+                            time.sleep(0.2)
+                            response = loop.run_until_complete(bt.receive_packet(timeout=2))
+                            if response:
+                                decrypted = decryptor.decrypt_packet(response)
+                                if decrypted:
+                                    header = ResponseParser.parse_header(decrypted)
+                                    if header:
+                                        level = ResponseParser.parse_assist_level(header['payload'])
+                                        if level:
+                                            self.root.after(0, lambda l=level: self.log("muted", f"Assist Level: {l['value']} ({l['name']})"))
+                        
+                        time.sleep(0.15)
+                        
+                        # Drive Profile
+                        packet = builder.build_read_drive_profile()
+                        encrypted = encryptor.encrypt_packet(packet)
+                        if loop.run_until_complete(bt.send_packet(encrypted)):
+                            time.sleep(0.2)
+                            response = loop.run_until_complete(bt.receive_packet(timeout=2))
+                            if response:
+                                decrypted = decryptor.decrypt_packet(response)
+                                if decrypted:
+                                    header = ResponseParser.parse_header(decrypted)
+                                    if header:
+                                        profile = ResponseParser.parse_drive_profile(header['payload'])
+                                        if profile:
+                                            self.root.after(0, lambda p=profile: self.log("muted", f"Drive Profile: {p['name']}"))
+                        
+                        time.sleep(0.15)
+                        
+                        # Cruise Values (distance, etc.)
+                        packet = builder.build_read_cruise_values()
+                        encrypted = encryptor.encrypt_packet(packet)
+                        if loop.run_until_complete(bt.send_packet(encrypted)):
+                            time.sleep(0.2)
+                            response = loop.run_until_complete(bt.receive_packet(timeout=2))
+                            if response:
+                                decrypted = decryptor.decrypt_packet(response)
+                                if decrypted:
+                                    header = ResponseParser.parse_header(decrypted)
+                                    if header:
+                                        cruise = ResponseParser.parse_cruise_values(header['payload'])
+                                        if cruise:
+                                            self.root.after(0, lambda c=cruise: self.log("muted", f"Distance: {c['distance_km']:.1f} km"))
+                        
+                        time.sleep(0.15)
+                        
+                        # Drive Parameters for Level 1
+                        packet = builder.build_read_drive_profile_params(0)
+                        encrypted = encryptor.encrypt_packet(packet)
+                        if loop.run_until_complete(bt.send_packet(encrypted)):
+                            time.sleep(0.2)
+                            response = loop.run_until_complete(bt.receive_packet(timeout=2))
+                            if response:
+                                decrypted = decryptor.decrypt_packet(response)
+                                if decrypted:
+                                    header = ResponseParser.parse_header(decrypted)
+                                    if header:
+                                        params = ResponseParser.parse_drive_profile_params(header['payload'])
+                                        if params:
+                                            self.root.after(0, lambda: self.log("muted", "Level 1 Parameters:"))
+                                            self.root.after(0, lambda p=params: self.log("muted", f"  Max Torque: {p['max_torque']}%"))
+                                            self.root.after(0, lambda p=params: self.log("muted", f"  Max Speed: {p['max_speed']:.1f} km/h"))
+                                            self.root.after(0, lambda p=params: self.log("muted", f"  P-Factor: {p['p_factor']}"))
+                                            self.root.after(0, lambda p=params: self.log("muted", f"  Speed Bias: {p['speed_bias']}"))
+                    
+                    # Read from both wheels
+                    read_from_wheel(self.left_bt, self.left_encryptor, self.left_decryptor, "LEFT WHEEL")
+                    time.sleep(0.2)
+                    read_from_wheel(self.right_bt, self.right_encryptor, self.right_decryptor, "RIGHT WHEEL")
+                    
+                    self.root.after(0, lambda: self.log("info", ""))
+                    self.root.after(0, lambda: self.log("success", "=== Info dump complete ==="))
+                    self.root.after(0, lambda: self.status_message("success", "Info dump complete"))
+                    
+                except Exception as e:
+                    self.root.after(0, lambda: self.log("error", f"Info dump failed: {e}"))
+                    self.root.after(0, lambda: self.status_message("error", "Info dump failed"))
+            
+            threading.Thread(target=dump_thread, daemon=True).start()
 
     def scan_devices(self):
         """Scan for Bluetooth devices"""
