@@ -669,12 +669,32 @@ class M25GUI:
         self.log("info", "Disconnecting from wheels...")
         self.status_message("info", "Disconnecting...")
         
-        def simulate_disconnect():
-            import time
-            time.sleep(1)
-            self.root.after(0, self.disconnection_complete)
+        # Check if we're in demo mode
+        left_mac = self.left_mac.get().strip()
+        right_mac = self.right_mac.get().strip()
+        demo_mode = left_mac.upper() == "AA:BB:CC:DD:EE:FF" or right_mac.upper() == "AA:BB:CC:DD:EE:FF"
         
-        threading.Thread(target=simulate_disconnect, daemon=True).start()
+        def disconnect_thread():
+            import time
+            try:
+                if demo_mode:
+                    # Simulate disconnection in demo mode
+                    time.sleep(1)
+                    self.root.after(0, self.disconnection_complete)
+                else:
+                    # TODO: Actual disconnection implementation
+                    # For now, just complete immediately since connection wasn't real
+                    self.root.after(0, self.disconnection_complete)
+            except Exception as e:
+                self.root.after(0, self.disconnection_error, str(e))
+        
+        threading.Thread(target=disconnect_thread, daemon=True).start()
+    
+    def disconnection_error(self, error_msg):
+        """Handle disconnection error"""
+        self.log("error", f"Disconnection failed: {error_msg}")
+        self.status_message("error", "Disconnection failed")
+        messagebox.showerror("Disconnection Error", f"Failed to disconnect:\n{error_msg}")
     
     def disconnection_complete(self):
         """Handle disconnection completion"""
@@ -716,12 +736,27 @@ class M25GUI:
         self.log("muted", f"Right: {right_mac}")
         self.status_message("info", "Connecting..." if not demo_mode else "Connecting (Demo Mode)...")
 
-        def simulate_connect():
+        def connect_thread():
             import time
-            time.sleep(2)
-            self.root.after(0, self.connection_complete, True, demo_mode)
+            try:
+                if demo_mode:
+                    # Simulate connection in demo mode
+                    time.sleep(2)
+                    self.root.after(0, self.connection_complete, True, demo_mode)
+                else:
+                    # TODO: Actual connection implementation
+                    # For now, show that real connection is not yet implemented
+                    self.root.after(0, self.connection_error, "Real hardware connection not yet implemented. Use AA:BB:CC:DD:EE:FF for demo mode.")
+            except Exception as e:
+                self.root.after(0, self.connection_error, str(e))
 
-        threading.Thread(target=simulate_connect, daemon=True).start()
+        threading.Thread(target=connect_thread, daemon=True).start()
+
+    def connection_error(self, error_msg):
+        """Handle connection error"""
+        self.log("error", f"Connection failed: {error_msg}")
+        self.status_message("error", "Connection failed")
+        messagebox.showerror("Connection Error", f"Failed to connect to wheels:\n{error_msg}")
 
     def connection_complete(self, success, demo_mode=False):
         """Handle connection result"""
