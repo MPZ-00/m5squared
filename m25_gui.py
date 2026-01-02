@@ -291,11 +291,11 @@ class M25GUI:
         self.lbl_assist = tk.Label(self.control_frame, text="Assist Level:")
         self.lbl_assist.grid(row=0, column=0, sticky=tk.W, pady=5)
 
-        assist_frame = tk.Frame(self.control_frame)
-        assist_frame.grid(row=0, column=1, padx=(5, 10), sticky=tk.W)
+        self.assist_frame = tk.Frame(self.control_frame)
+        self.assist_frame.grid(row=0, column=1, padx=(5, 10), sticky=tk.W)
         self.assist_level_var = tk.StringVar(value="Level 1 (Normal)")
         self.assist_levels = ["Level 1 (Normal)", "Level 2 (Outdoor)", "Level 3 (Learning)"]
-        self.assist_level_menu = tk.OptionMenu(assist_frame, self.assist_level_var, *self.assist_levels)
+        self.assist_level_menu = tk.OptionMenu(self.assist_frame, self.assist_level_var, *self.assist_levels)
         self.assist_level_menu.config(width=18)
         self.assist_level_menu.pack()
 
@@ -316,22 +316,22 @@ class M25GUI:
         self.hill_hold_check.grid(row=1, column=1, sticky=tk.W, padx=(5, 0), pady=5)
 
         # Status buttons
-        btn_frame = tk.Frame(self.control_frame)
-        btn_frame.grid(row=2, column=0, columnspan=3, pady=(10, 0))
+        self.btn_frame = tk.Frame(self.control_frame)
+        self.btn_frame.grid(row=2, column=0, columnspan=3, pady=(10, 0))
 
-        self.read_battery_btn = tk.Button(btn_frame, text="🔋 Battery", command=self.read_battery, state="disabled", cursor="hand2")
+        self.read_battery_btn = tk.Button(self.btn_frame, text="🔋 Battery", command=self.read_battery, state="disabled", cursor="hand2")
         self.read_battery_btn.pack(side=tk.LEFT, padx=5)
 
-        self.read_status_btn = tk.Button(btn_frame, text="📊 Status", command=self.read_status, state="disabled", cursor="hand2")
+        self.read_status_btn = tk.Button(self.btn_frame, text="📊 Status", command=self.read_status, state="disabled", cursor="hand2")
         self.read_status_btn.pack(side=tk.LEFT, padx=5)
 
-        self.read_version_btn = tk.Button(btn_frame, text="ℹ Version", command=self.read_version, state="disabled", cursor="hand2")
+        self.read_version_btn = tk.Button(self.btn_frame, text="ℹ Version", command=self.read_version, state="disabled", cursor="hand2")
         self.read_version_btn.pack(side=tk.LEFT, padx=5)
 
-        self.read_profile_btn = tk.Button(btn_frame, text="⚙ Profile", command=self.read_profile, state="disabled", cursor="hand2")
+        self.read_profile_btn = tk.Button(self.btn_frame, text="⚙ Profile", command=self.read_profile, state="disabled", cursor="hand2")
         self.read_profile_btn.pack(side=tk.LEFT, padx=5)
 
-        self.read_params_btn = tk.Button(btn_frame, text="🔧 Parameters", command=self.read_parameters, state="disabled", cursor="hand2")
+        self.read_params_btn = tk.Button(self.btn_frame, text="🔧 Parameters", command=self.read_parameters, state="disabled", cursor="hand2")
         self.read_params_btn.pack(side=tk.LEFT, padx=5)
 
         # Output Section
@@ -502,6 +502,11 @@ class M25GUI:
         # Control frame and widgets
         if hasattr(self, "control_frame"):
             self.control_frame.configure(bg=theme["bg"], fg=theme["fg"])
+            
+            # Assist frame
+            if hasattr(self, "assist_frame"):
+                self.assist_frame.configure(bg=theme["bg"])
+            
             self.lbl_assist.configure(bg=theme["bg"], fg=theme["fg"])
             self.lbl_hill_hold.configure(bg=theme["bg"], fg=theme["fg"])
             self.assist_level_menu.configure(
