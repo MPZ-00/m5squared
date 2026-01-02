@@ -38,14 +38,14 @@ class M25GUI:
         self.root.title("m5squared - Wheelchair Controller")
         self.root.geometry("800x600")
         
-        # Load environment variables
-        self.load_env()
-        
         # Connection state
         self.connected = False
         
-        # Create UI
+        # Create UI first (so status bar exists)
         self.create_widgets()
+        
+        # Load environment variables
+        self.load_env()
         
         # Load saved credentials
         self.load_credentials()
