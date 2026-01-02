@@ -52,11 +52,6 @@ python -m venv .venv
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
-For Command Prompt users:
-```cmd
-.venv\Scripts\activate.bat
-```
-
 ### 3. Upgrade pip and Install Dependencies
 
 ```powershell
