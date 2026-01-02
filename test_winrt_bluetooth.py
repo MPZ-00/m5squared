@@ -16,7 +16,7 @@ except ImportError as e:
     print(f"Error: Missing dependencies: {e}")
     print("\nMake sure you have installed:")
     print("  pip install winrt-Windows.Devices.Bluetooth winrt-Windows.Devices.Bluetooth.Rfcomm")
-    print("  pip install winrt-Windows.Networking winrt-Windows.Storage.Streams")
+    print("  pip install winrt-Windows.Networking winrt-Windows.Networking.Sockets winrt-Windows.Storage.Streams")
     sys.exit(1)
 
 

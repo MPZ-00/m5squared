@@ -7,7 +7,8 @@ This provides proper Serial Port Profile communication like the Linux version.
 
 Requires:
     pip install winrt-Windows.Devices.Bluetooth winrt-Windows.Devices.Bluetooth.Rfcomm 
-                winrt-Windows.Networking winrt-Windows.Storage.Streams
+                winrt-Windows.Networking winrt-Windows.Networking.Sockets 
+                winrt-Windows.Storage.Streams
 """
 
 import asyncio
@@ -24,7 +25,7 @@ try:
 except ImportError:
     HAS_WINRT = False
     print("ERROR: WinRT Bluetooth not installed.", file=sys.stderr)
-    print("Install with: pip install winrt-Windows.Devices.Bluetooth winrt-Windows.Devices.Bluetooth.Rfcomm winrt-Windows.Networking winrt-Windows.Storage.Streams", file=sys.stderr)
+    print("Install with: pip install winrt-Windows.Devices.Bluetooth winrt-Windows.Devices.Bluetooth.Rfcomm winrt-Windows.Networking winrt-Windows.Networking.Sockets winrt-Windows.Storage.Streams", file=sys.stderr)
 
 try:
     from m25_crypto import M25Encryptor, M25Decryptor
