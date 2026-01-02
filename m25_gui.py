@@ -38,79 +38,16 @@ try:
     HAS_BLUETOOTH = True
     IS_WINDOWS = False
 except ImportError:
-    # Windows fallback - use async Bluetooth
+    # Windows fallback - use WinRT RFCOMM Bluetooth
     try:
-        from m25_bluetooth_windows import M25WindowsBluetooth
-        from m25_crypto import M25Encryptor, M25Decryptor
+        from m25_bluetooth_winrt import WinRTBluetoothConnection, connect_parallel
         from m25_ecs import ECSPacketBuilder, ECSRemote, ResponseParser
         from m25_utils import parse_key
         HAS_BLUETOOTH = True
         IS_WINDOWS = True
         
-        # Create adapter to make Windows async Bluetooth work with sync API
-        class BluetoothConnectionAdapter:
-            """Adapter to make M25WindowsBluetooth compatible with BluetoothConnection API"""
-            def __init__(self, address, key, name="wheel", debug=False, loop=None):
-                self.address = address
-                self.key = key
-                self.name = name
-                self.debug = debug
-                self.bt = M25WindowsBluetooth()
-                self.encryptor = M25Encryptor(key)
-                self.decryptor = M25Decryptor(key)
-                self.loop = loop
-                self.connected = False
-            
-            def connect(self, channel=6):
-                """Connect to device"""
-                if self.loop:
-                    import time
-                    success = self.loop.run_until_complete(self.bt.connect(self.address))
-                    if success:
-                        self.connected = True
-                        time.sleep(0.1)  # Brief settling time
-                    return success
-                return False
-            
-            def disconnect(self):
-                """Disconnect from device"""
-                if self.loop and self.connected:
-                    self.loop.run_until_complete(self.bt.disconnect())
-                    self.connected = False
-            
-            def transact(self, spp_data, timeout=1.0):
-                """Send packet and receive decrypted response (sync interface)"""
-                if not self.loop or not self.connected:
-                    return None
-                
-                import time
-                try:
-                    encrypted = self.encryptor.encrypt_packet(spp_data)
-                    if self.debug:
-                        print(f"  TX [{self.name}]: {encrypted.hex()}", file=sys.stderr)
-                    
-                    ok = self.loop.run_until_complete(self.bt.send_packet(encrypted))
-                    if not ok:
-                        return None
-                    
-                    time.sleep(0.2)  # Wait for response
-                    
-                    response = self.loop.run_until_complete(self.bt.receive_packet(timeout=int(timeout)))
-                    if response:
-                        decrypted = self.decryptor.decrypt_packet(response)
-                        if self.debug:
-                            print(f"  RX [{self.name}]: {response.hex()}", file=sys.stderr)
-                            if decrypted:
-                                print(f"      SPP: {decrypted.hex()}", file=sys.stderr)
-                        return decrypted
-                except Exception as e:
-                    if self.debug:
-                        print(f"  transact error: {e}", file=sys.stderr)
-                    return None
-                return None
-        
-        # Replace BluetoothConnection with adapter for Windows
-        BluetoothConnection = BluetoothConnectionAdapter
+        # Use WinRT connection directly - it has compatible API
+        BluetoothConnection = WinRTBluetoothConnection
         
     except ImportError as e:
         HAS_BLUETOOTH = False
@@ -233,8 +170,6 @@ class M25GUI:
         self.right_conn = None
         self.ecs_remote = None
         self.demo_mode = False
-        self.event_loop = None
-        self.loop_thread = None
 
         # Theme state
         self.current_theme = "dark"
@@ -899,11 +834,6 @@ class M25GUI:
                     if self.right_conn:
                         self.right_conn.disconnect()
                     
-                    # Close event loop if Windows
-                    if IS_WINDOWS and self.event_loop and not self.event_loop.is_closed():
-                        self.event_loop.close()
-                        self.event_loop = None
-                    
                     # Clear connection objects
                     self.left_conn = None
                     self.right_conn = None
@@ -982,23 +912,9 @@ class M25GUI:
                         self.root.after(0, self.connection_error, f"Invalid encryption key: {e}")
                         return
                     
-                    # Create event loop for Windows async Bluetooth
-                    if IS_WINDOWS:
-                        if not self.event_loop or self.event_loop.is_closed():
-                            self.event_loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(self.event_loop)
-                        loop = self.event_loop
-                    else:
-                        loop = None
-                    
                     # Create Bluetooth connections
-                    self.left_conn = BluetoothConnection(left_mac, left_key_bytes, name="left", debug=False)
-                    self.right_conn = BluetoothConnection(right_mac, right_key_bytes, name="right", debug=False)
-                    
-                    # Pass event loop to Windows adapter
-                    if IS_WINDOWS:
-                        self.left_conn.loop = loop
-                        self.right_conn.loop = loop
+                    self.left_conn = BluetoothConnection(left_mac, left_key_bytes, name="Left", debug=False)
+                    self.right_conn = BluetoothConnection(right_mac, right_key_bytes, name="Right", debug=False)
                     
                     # Connect to wheels
                     if not self.left_conn.connect():
@@ -1640,7 +1556,7 @@ class M25GUI:
 
         def scan_thread():
             try:
-                bt = M25WindowsBluetooth()
+                bt = 0 # TODO: fix scanner initialization should work on Linux and Windows
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 devices = loop.run_until_complete(bt.scan(duration=10, filter_m25=filter_enabled))
