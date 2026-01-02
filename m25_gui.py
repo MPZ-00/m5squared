@@ -38,6 +38,56 @@ except ImportError:
     print("Warning: m25_bluetooth_windows not available")
 
 
+# Custom Entry widget with placeholder support
+class PlaceholderEntry(tk.Entry):
+    def __init__(self, master=None, placeholder="", placeholder_color="gray", is_password=False, **kwargs):
+        super().__init__(master, **kwargs)
+        
+        self.placeholder = placeholder
+        self.placeholder_color = placeholder_color
+        self.default_fg_color = kwargs.get('fg', 'black')
+        self.is_password = is_password
+        self.has_placeholder = True
+        
+        if self.placeholder:
+            self.put_placeholder()
+        
+        self.bind("<FocusIn>", self.on_focus_in)
+        self.bind("<FocusOut>", self.on_focus_out)
+    
+    def put_placeholder(self):
+        self.has_placeholder = True
+        self.insert(0, self.placeholder)
+        self.config(fg=self.placeholder_color, show="")
+    
+    def on_focus_in(self, event):
+        if self.has_placeholder:
+            self.delete(0, tk.END)
+            self.config(fg=self.default_fg_color)
+            if self.is_password:
+                self.config(show="*")
+            self.has_placeholder = False
+    
+    def on_focus_out(self, event):
+        if not self.get():
+            self.put_placeholder()
+    
+    def get(self):
+        content = super().get()
+        if self.has_placeholder:
+            return ""
+        return content
+    
+    def set_theme_colors(self, fg_color, placeholder_color):
+        """Update theme colors"""
+        self.default_fg_color = fg_color
+        self.placeholder_color = placeholder_color
+        if self.has_placeholder:
+            self.config(fg=placeholder_color)
+        else:
+            self.config(fg=fg_color)
+
+
 class M25GUI:
     """Main GUI application for M25 wheelchair control"""
     
@@ -175,7 +225,9 @@ class M25GUI:
         
         self.lbl_left_key = tk.Label(self.conn_frame, text="Left Key:")
         self.lbl_left_key.grid(row=3, column=0, sticky=tk.W, pady=2, padx=(20, 0))
-        self.left_key = tk.Entry(self.conn_frame, width=30, show="*", relief=tk.FLAT, borderwidth=2)
+        self.left_key = PlaceholderEntry(self.conn_frame, width=30, 
+                                         placeholder="Enter encryption key (32 hex chars)",
+                                         is_password=True, relief=tk.FLAT, borderwidth=2)
         self.left_key.grid(row=3, column=1, sticky=(tk.W, tk.E), padx=(5, 0), pady=2)
         
         # Device selection for right wheel
@@ -200,7 +252,9 @@ class M25GUI:
         
         self.lbl_right_key = tk.Label(self.conn_frame, text="Right Key:")
         self.lbl_right_key.grid(row=6, column=0, sticky=tk.W, pady=2, padx=(20, 0))
-        self.right_key = tk.Entry(self.conn_frame, width=30, show="*", relief=tk.FLAT, borderwidth=2)
+        self.right_key = PlaceholderEntry(self.conn_frame, width=30,
+                                          placeholder="Enter encryption key (32 hex chars)",
+                                          is_password=True, relief=tk.FLAT, borderwidth=2)
         self.right_key.grid(row=6, column=1, sticky=(tk.W, tk.E), padx=(5, 0), pady=2)
         
         # Connect button
@@ -350,18 +404,20 @@ class M25GUI:
                                    insertbackground=theme['entry_fg'],
                                    selectbackground=theme['select_bg'],
                                    selectforeground=theme['select_fg'])
-            self.left_key.configure(bg=theme['entry_bg'], fg=theme['entry_fg'],
-                                   insertbackground=theme['entry_fg'],
-                                   selectbackground=theme['select_bg'],
-                                   selectforeground=theme['select_fg'])
             self.right_mac.configure(bg=theme['entry_bg'], fg=theme['entry_fg'],
                                     insertbackground=theme['entry_fg'],
                                     selectbackground=theme['select_bg'],
                                     selectforeground=theme['select_fg'])
-            self.right_key.configure(bg=theme['entry_bg'], fg=theme['entry_fg'],
-                                    insertbackground=theme['entry_fg'],
-                                    selectbackground=theme['select_bg'],
-                                    selectforeground=theme['select_fg'])
+            
+            # PlaceholderEntry widgets (password fields)
+            placeholder_color = '#888888' if self.current_theme == 'dark' else '#666666'
+            for widget in [self.left_key, self.right_key]:
+                widget.configure(bg=theme['entry_bg'],
+                               insertbackground=theme['entry_fg'],
+                               selectbackground=theme['select_bg'],
+                               selectforeground=theme['select_fg'])
+                widget.set_theme_colors(theme['entry_fg'], placeholder_color)
+            
             self.connect_btn.configure(bg=theme['button_bg'], fg=theme['button_fg'],
                                       activebackground=theme['select_bg'],
                                       activeforeground=theme['select_fg'])
@@ -430,12 +486,35 @@ class M25GUI:
     
     def load_credentials(self):
         """Load credentials from environment variables"""
-        self.left_mac.insert(0, os.getenv("M25_LEFT_MAC", ""))
-        self.left_key.insert(0, os.getenv("M25_LEFT_KEY", ""))
-        self.right_mac.insert(0, os.getenv("M25_RIGHT_MAC", ""))
-        self.right_key.insert(0, os.getenv("M25_RIGHT_KEY", ""))
+        left_mac = os.getenv("M25_LEFT_MAC", "")
+        left_key = os.getenv("M25_LEFT_KEY", "")
+        right_mac = os.getenv("M25_RIGHT_MAC", "")
+        right_key = os.getenv("M25_RIGHT_KEY", "")
         
-        if self.left_mac.get() or self.right_mac.get():
+        # For MAC entries (regular Entry widgets)
+        if left_mac:
+            self.left_mac.insert(0, left_mac)
+        if right_mac:
+            self.right_mac.insert(0, right_mac)
+        
+        # For key entries (PlaceholderEntry widgets), we need to handle placeholders
+        if left_key:
+            if self.left_key.has_placeholder:
+                self.left_key.delete(0, tk.END)
+                self.left_key.has_placeholder = False
+                theme = self.THEMES[self.current_theme]
+                self.left_key.config(fg=theme['entry_fg'], show="*")
+            self.left_key.insert(0, left_key)
+        
+        if right_key:
+            if self.right_key.has_placeholder:
+                self.right_key.delete(0, tk.END)
+                self.right_key.has_placeholder = False
+                theme = self.THEMES[self.current_theme]
+                self.right_key.config(fg=theme['entry_fg'], show="*")
+            self.right_key.insert(0, right_key)
+        
+        if left_mac or right_mac:
             self.log("Credentials loaded from .env file")
     
     def status_message(self, msg):
