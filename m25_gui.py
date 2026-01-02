@@ -383,7 +383,7 @@ class M25GUI:
         self.assist_level_menu.config(width=18)
         self.assist_level_menu.pack()
 
-        self.set_level_btn = tk.Button(self.control_frame, text="Set Level", command=self.set_assist_level, state="disabled", cursor="hand2")
+        self.set_level_btn = tk.Button(self.control_frame, text="Set Level", command=self.set_assist_level, state="disabled", cursor="hand2", width=12)
         self.set_level_btn.grid(row=0, column=2, pady=5)
 
         # Drive profile
@@ -398,7 +398,7 @@ class M25GUI:
         self.profile_menu.config(width=18)
         self.profile_menu.pack()
 
-        self.set_profile_btn = tk.Button(self.control_frame, text="Set Profile", command=self.set_drive_profile, state="disabled", cursor="hand2")
+        self.set_profile_btn = tk.Button(self.control_frame, text="Set Profile", command=self.set_drive_profile, state="disabled", cursor="hand2", width=12)
         self.set_profile_btn.grid(row=1, column=2, pady=5)
 
         # Hill hold
@@ -643,11 +643,13 @@ class M25GUI:
                     activeforeground=theme["select_fg"],
                 )
 
-            self.lbl_hill_hold.configure(
+            self.lbl_hill_hold.configure(bg=theme["bg"], fg=theme["fg"])
+            self.hill_hold_check.configure(
                 bg=theme["bg"],
                 fg=theme["fg"],
                 activebackground=theme["bg"],
                 activeforeground=theme["fg"],
+                selectcolor=theme["entry_bg"],
             )
 
             if hasattr(self, "btn_frame"):
