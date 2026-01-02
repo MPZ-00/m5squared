@@ -422,24 +422,50 @@ class M25GUI:
         self.max_speed_frame = tk.Frame(self.control_frame)
         self.max_speed_frame.grid(row=3, column=1, columnspan=2, sticky=tk.W, padx=(5, 0), pady=5)
         
+        # Level 1 controls
         tk.Label(self.max_speed_frame, text="Level 1:").grid(row=0, column=0, sticky=tk.W)
         self.max_speed_level1 = tk.DoubleVar(value=6.0)
-        self.max_speed_level1_spin = tk.Spinbox(
-            self.max_speed_frame, from_=2.0, to=8.5, increment=0.5,
-            textvariable=self.max_speed_level1, width=6, state="disabled"
+        self.max_speed_level1_minus = tk.Button(
+            self.max_speed_frame, text="-", width=2,
+            command=lambda: self.adjust_speed(self.max_speed_level1, -0.5),
+            state="disabled", cursor="hand2"
         )
-        self.max_speed_level1_spin.grid(row=0, column=1, padx=(5, 10))
+        self.max_speed_level1_minus.grid(row=0, column=1, padx=(5, 2))
+        self.max_speed_level1_entry = tk.Entry(
+            self.max_speed_frame, textvariable=self.max_speed_level1,
+            width=5, justify=tk.CENTER, state="readonly"
+        )
+        self.max_speed_level1_entry.grid(row=0, column=2, padx=2)
+        self.max_speed_level1_plus = tk.Button(
+            self.max_speed_frame, text="+", width=2,
+            command=lambda: self.adjust_speed(self.max_speed_level1, 0.5),
+            state="disabled", cursor="hand2"
+        )
+        self.max_speed_level1_plus.grid(row=0, column=3, padx=(2, 10))
         
-        tk.Label(self.max_speed_frame, text="Level 2:").grid(row=0, column=2, sticky=tk.W)
+        # Level 2 controls
+        tk.Label(self.max_speed_frame, text="Level 2:").grid(row=0, column=4, sticky=tk.W)
         self.max_speed_level2 = tk.DoubleVar(value=6.0)
-        self.max_speed_level2_spin = tk.Spinbox(
-            self.max_speed_frame, from_=2.0, to=8.5, increment=0.5,
-            textvariable=self.max_speed_level2, width=6, state="disabled"
+        self.max_speed_level2_minus = tk.Button(
+            self.max_speed_frame, text="-", width=2,
+            command=lambda: self.adjust_speed(self.max_speed_level2, -0.5),
+            state="disabled", cursor="hand2"
         )
-        self.max_speed_level2_spin.grid(row=0, column=3, padx=(5, 10))
+        self.max_speed_level2_minus.grid(row=0, column=5, padx=(5, 2))
+        self.max_speed_level2_entry = tk.Entry(
+            self.max_speed_frame, textvariable=self.max_speed_level2,
+            width=5, justify=tk.CENTER, state="readonly"
+        )
+        self.max_speed_level2_entry.grid(row=0, column=6, padx=2)
+        self.max_speed_level2_plus = tk.Button(
+            self.max_speed_frame, text="+", width=2,
+            command=lambda: self.adjust_speed(self.max_speed_level2, 0.5),
+            state="disabled", cursor="hand2"
+        )
+        self.max_speed_level2_plus.grid(row=0, column=7, padx=(2, 10))
         
         self.set_max_speed_btn = tk.Button(self.max_speed_frame, text="Set Max Speed", command=self.set_max_speed, state="disabled", cursor="hand2")
-        self.set_max_speed_btn.grid(row=0, column=4, padx=(5, 0))
+        self.set_max_speed_btn.grid(row=0, column=8, padx=(5, 0))
 
         # Status buttons
         self.btn_frame = tk.Frame(self.control_frame)
@@ -686,19 +712,25 @@ class M25GUI:
             if hasattr(self, "lbl_max_speed"):
                 self.lbl_max_speed.configure(bg=theme["bg"], fg=theme["fg"])
                 
-                # Theme labels within max_speed_frame
+                # Theme labels, buttons, and entries within max_speed_frame
                 for widget in self.max_speed_frame.winfo_children():
                     if isinstance(widget, tk.Label):
                         widget.configure(bg=theme["bg"], fg=theme["fg"])
-                    elif isinstance(widget, tk.Spinbox):
+                    elif isinstance(widget, tk.Entry):
                         widget.configure(
                             bg=theme["entry_bg"],
                             fg=theme["entry_fg"],
-                            buttonbackground=theme["button_bg"],
                             readonlybackground=theme["entry_bg"],
                             insertbackground=theme["entry_fg"],
                             selectbackground=theme["select_bg"],
                             selectforeground=theme["select_fg"],
+                        )
+                    elif isinstance(widget, tk.Button):
+                        widget.configure(
+                            bg=theme["button_bg"],
+                            fg=theme["button_fg"],
+                            activebackground=theme["select_bg"],
+                            activeforeground=theme["select_fg"],
                         )
 
             if hasattr(self, "btn_frame"):
@@ -707,7 +739,6 @@ class M25GUI:
             for btn in (
                 self.set_level_btn,
                 self.set_profile_btn,
-                self.set_max_speed_btn,
                 self.read_battery_btn,
                 self.read_status_btn,
                 self.read_version_btn,
@@ -808,14 +839,24 @@ class M25GUI:
         self.output.insert(tk.END, f"{message}\n", (lvl,))
         self.output.see(tk.END)
 
+    def adjust_speed(self, speed_var, delta):
+        """Adjust speed by delta, keeping within 2.0-8.5 km/h range"""
+        current = speed_var.get()
+        new_value = current + delta
+        # Clamp to valid range
+        new_value = max(2.0, min(8.5, new_value))
+        speed_var.set(new_value)
+
     def enable_controls(self, enabled=True):
         """Enable or disable control buttons"""
         state = "normal" if enabled else "disabled"
         self.set_level_btn.config(state=state)
         self.set_profile_btn.config(state=state)
         self.hill_hold_check.config(state=state)
-        self.max_speed_level1_spin.config(state="normal" if enabled else "disabled")
-        self.max_speed_level2_spin.config(state="normal" if enabled else "disabled")
+        self.max_speed_level1_minus.config(state=state)
+        self.max_speed_level1_plus.config(state=state)
+        self.max_speed_level2_minus.config(state=state)
+        self.max_speed_level2_plus.config(state=state)
         self.set_max_speed_btn.config(state=state)
         self.read_battery_btn.config(state=state)
         self.read_status_btn.config(state=state)
