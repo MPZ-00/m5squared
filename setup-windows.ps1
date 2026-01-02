@@ -1,7 +1,65 @@
 <#
 .SYNOPSIS
-m5squared Windows Setup Script
-Automates the initial setup process for Windows users
+m5squared Windows Setup Script - Automates the initial setup process for Windows users.
+
+.DESCRIPTION
+This script automates the complete setup process for the m5squared project on Windows systems.
+It performs the following tasks:
+- Verifies Python 3.8+ installation
+- Creates and configures a Python virtual environment
+- Upgrades pip to the latest version
+- Installs all project dependencies
+- Sets up the .env configuration file from template
+- Validates the installation with pip check
+
+The script includes self-healing capabilities for broken virtual environments and
+automatically handles execution policy requirements for virtual environment activation.
+
+.PARAMETER VenvPath
+Specifies the path where the virtual environment should be created.
+Default: ".venv"
+
+.PARAMETER ForceRecreateVenv
+Forces recreation of the virtual environment even if it appears healthy.
+This is useful when you want to start with a clean environment or if you
+suspect the environment is corrupted despite passing health checks.
+
+.EXAMPLE
+.\setup-windows.ps1
+Runs the setup with default settings, creating a virtual environment in .venv
+
+.EXAMPLE
+.\setup-windows.ps1 -VenvPath "venv"
+Creates the virtual environment in a folder named "venv" instead of ".venv"
+
+.EXAMPLE
+.\setup-windows.ps1 -ForceRecreateVenv
+Forces complete recreation of the virtual environment, even if it exists and is healthy
+
+.EXAMPLE
+.\setup-windows.ps1 -VenvPath "myenv" -ForceRecreateVenv
+Creates a fresh virtual environment in the "myenv" folder
+
+.NOTES
+Requirements:
+- Python 3.8 or higher installed and available in PATH
+- Internet connection for downloading packages
+- Sufficient disk space for virtual environment and dependencies
+
+After successful setup:
+1. Edit .env file with your wheel details
+2. Convert QR code: python m25_qr_to_key.py 'YourQRCodeString'
+3. Launch GUI: python m25_gui.py
+
+For more information, see:
+- doc/windows-setup.md
+- README.md
+
+.LINK
+https://github.com/MPZ-00/m5squared
+
+.LINK
+https://github.com/roll2own/m5squared
 #>
 
 param(
