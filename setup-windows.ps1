@@ -1,114 +1,161 @@
-# m5squared Windows Setup Script
-# Automates the initial setup process for Windows users
+<#
+.SYNOPSIS
+m5squared Windows Setup Script
+Automates the initial setup process for Windows users
+#>
 
-Write-Host "m5squared Windows Setup" -ForegroundColor Cyan
-Write-Host "======================" -ForegroundColor Cyan
-Write-Host ""
+param(
+    [string]$VenvPath = ".venv",
+    [switch]$ForceRecreateVenv
+)
 
-# Check Python installation
-Write-Host "[1/6] Checking Python installation..." -ForegroundColor Yellow
-try {
-    $pythonVersion = python --version 2>&1
-    Write-Host "  Found: $pythonVersion" -ForegroundColor Green
-    
-    # Check if version is 3.8+
-    if ($pythonVersion -match "Python (\d+)\.(\d+)") {
-        $major = [int]$matches[1]
-        $minor = [int]$matches[2]
-        if ($major -lt 3 -or ($major -eq 3 -and $minor -lt 8)) {
-            Write-Error "  ERROR: Python 3.8+ required, found $major.$minor" -ForegroundColor Red
-            exit 1
-        }
-    }
-} catch {
-    Write-Host "  ERROR: Python not found in PATH" -ForegroundColor Red
-    Write-Host "  Please install Python 3.12+ from python.org" -ForegroundColor Red
-    exit 1
-}
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
 
-# Create virtual environment
-Write-Host "[2/6] Creating virtual environment..." -ForegroundColor Yellow
-if (Test-Path ".venv") {
-    Write-Host "  Virtual environment already exists" -ForegroundColor Green
-} else {
-    python -m venv .venv
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "  Virtual environment created" -ForegroundColor Green
-    } else {
-        Write-Host "  ERROR: Failed to create virtual environment" -ForegroundColor Red
-        exit 1
+function Info($msg)    { Write-Host $msg -ForegroundColor Cyan }
+function Step($msg)    { Write-Host $msg -ForegroundColor Yellow }
+function Ok($msg)      { Write-Host $msg -ForegroundColor Green }
+function Warn($msg)    { Write-Host $msg -ForegroundColor Yellow }
+function Fail($msg)    { Write-Host $msg -ForegroundColor Red; exit 1 }
+
+function Assert-Command($name, $hint) {
+    if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
+        Fail "ERROR: '$name' not found. $hint"
     }
 }
 
-# Activate virtual environment
-Write-Host "[3/6] Activating virtual environment..." -ForegroundColor Yellow
-$activateScript = ".\.venv\Scripts\Activate.ps1"
+function Get-PythonVersion {
+    $out = & python --version 2>&1
+    if ($out -notmatch 'Python (\d+)\.(\d+)\.(\d+)') {
+        Fail "ERROR: Could not parse python version: $out"
+    }
+    [pscustomobject]@{
+        Raw   = $out
+        Major = [int]$matches[1]
+        Minor = [int]$matches[2]
+        Patch = [int]$matches[3]
+    }
+}
 
-if (Test-Path $activateScript) {
-    # Check execution policy
+function Test-VenvHealthy($venvPath) {
+    $py  = Join-Path $venvPath 'Scripts\python.exe'
+    $cfg = Join-Path $venvPath 'pyvenv.cfg'
+    $act = Join-Path $venvPath 'Scripts\Activate.ps1'
+    return (Test-Path $venvPath) -and (Test-Path $py) -and (Test-Path $cfg) -and (Test-Path $act)
+}
+
+function Remove-Venv($venvPath) {
+    if (Test-Path $venvPath) {
+        Warn "  Removing broken virtual environment: $venvPath"
+        Remove-Item -Recurse -Force $venvPath
+    }
+}
+
+function Ensure-Venv($venvPath) {
+    if (Test-VenvHealthy $venvPath -and -not $ForceRecreateVenv) {
+        Ok "  Virtual environment looks healthy"
+        return
+    }
+
+    if (Test-Path $venvPath) {
+        Warn "  Virtual environment exists but looks broken"
+        Remove-Venv $venvPath
+    }
+
+    Step "  Creating virtual environment..."
+    & python -m venv $venvPath
+    if (-not (Test-VenvHealthy $venvPath)) {
+        Fail "ERROR: venv creation finished but environment is still invalid"
+    }
+    Ok "  Virtual environment created"
+}
+
+function Ensure-ExecutionPolicyBypassForSession {
     $policy = Get-ExecutionPolicy -Scope Process
-    if ($policy -eq "Restricted" -or $policy -eq "AllSigned") {
-        Write-Host "  Setting execution policy for this session..." -ForegroundColor Yellow
+    if ($policy -eq 'Restricted' -or $policy -eq 'AllSigned') {
+        Warn "  Setting execution policy for this session (Process scope)"
         Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
     }
-    
+}
+
+Info "m5squared Windows Setup"
+Info "======================="
+Write-Host ""
+
+# [1/6] Python
+Step "[1/6] Checking Python installation..."
+Assert-Command python "Install Python 3.12+ from python.org and ensure it is in PATH."
+
+$pyver = Get-PythonVersion
+Ok "  Found: $($pyver.Raw)"
+if ($pyver.Major -lt 3 -or ($pyver.Major -eq 3 -and $pyver.Minor -lt 8)) {
+    Fail "ERROR: Python 3.8+ required. Found: $($pyver.Major).$($pyver.Minor).$($pyver.Patch)"
+}
+
+# [2/6] Venv (self-healing)
+Step "[2/6] Ensuring virtual environment..."
+$venv = ".venv"
+Ensure-Venv $venv
+
+# [3/6] Activation (optional) + execution policy
+Step "[3/6] Activating virtual environment (optional)..."
+$activateScript = Join-Path $venv "Scripts\Activate.ps1"
+Ensure-ExecutionPolicyBypassForSession
+try {
     & $activateScript
-    Write-Host "  Virtual environment activated" -ForegroundColor Green
-} else {
-    Write-Host "  ERROR: Activation script not found" -ForegroundColor Red
-    exit 1
+    Ok "  Virtual environment activated"
+} catch {
+    Warn "  Activation failed. Continuing using venv python directly."
 }
 
-# Upgrade pip
-Write-Host "[4/6] Upgrading pip..." -ForegroundColor Yellow
-python -m pip install --upgrade pip --quiet
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "  pip upgraded" -ForegroundColor Green
-} else {
-    Write-Host "  WARNING: pip upgrade failed (continuing anyway)" -ForegroundColor Yellow
-}
+# Always use venv python for installs to avoid relying on activation
+$VenvPython = Join-Path $venv "Scripts\python.exe"
 
-# Install project dependencies
-Write-Host "[5/6] Installing project dependencies..." -ForegroundColor Yellow
-pip install -e . --quiet
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "  Dependencies installed" -ForegroundColor Green
-} else {
-    Write-Host "  ERROR: Failed to install dependencies" -ForegroundColor Red
-    exit 1
-}
+# [4/6] pip
+Step "[4/6] Upgrading pip..."
+& $VenvPython -m pip install --upgrade pip
+Ok "  pip upgraded"
 
-# Create .env file if it doesn't exist
-Write-Host "[6/6] Setting up .env file..." -ForegroundColor Yellow
+# [5/6] deps
+Step "[5/6] Installing project dependencies..."
+& $VenvPython -m pip install -e .
+Ok "  Dependencies installed"
+
+Step "      Verifying installed packages..."
+& $VenvPython -m pip check
+Ok "  pip check passed"
+
+# [6/6] .env
+Step "[6/6] Setting up .env file..."
 if (Test-Path ".env") {
-    Write-Host "  .env file already exists" -ForegroundColor Green
+    Ok "  .env file already exists"
 } else {
     if (Test-Path ".env.example") {
         Copy-Item ".env.example" ".env"
-        Write-Host "  Created .env from template" -ForegroundColor Green
-        Write-Host "  Please edit .env and fill in your wheel details" -ForegroundColor Yellow
+        Ok "  Created .env from template"
+        Warn "  Edit .env and fill in your wheel details"
     } else {
-        Write-Host "  WARNING: .env.example not found" -ForegroundColor Yellow
+        Warn "  .env.example not found"
     }
 }
 
 Write-Host ""
-Write-Host "Setup complete!" -ForegroundColor Green
+Ok "Setup complete!"
 Write-Host ""
-Write-Host "Next steps:" -ForegroundColor Cyan
-Write-Host "  1. Edit .env file with your wheel MAC addresses and keys:" -ForegroundColor White
+Info "Next steps:"
+Write-Host "  1. Edit .env:" -ForegroundColor White
 Write-Host "     notepad .env" -ForegroundColor Gray
 Write-Host ""
-Write-Host "  2. Convert QR codes to encryption keys:" -ForegroundColor White
-Write-Host "     python m25_qr_to_key.py 'YourQRCodeString'" -ForegroundColor Gray
+Write-Host "  2. Convert QR to key:" -ForegroundColor White
+Write-Host "     $VenvPython m25_qr_to_key.py 'YourQRCodeString'" -ForegroundColor Gray
 Write-Host ""
-Write-Host "  3. Launch the GUI interface:" -ForegroundColor White
-Write-Host "     python m25_gui.py" -ForegroundColor Gray
+Write-Host "  3. Launch GUI:" -ForegroundColor White
+Write-Host "     $VenvPython m25_gui.py" -ForegroundColor Gray
 Write-Host ""
-Write-Host "  Or use command line tools:" -ForegroundColor White
-Write-Host "     python m25_ecs.py --dry-run" -ForegroundColor Gray
+Write-Host "  CLI example:" -ForegroundColor White
+Write-Host "     $VenvPython m25_ecs.py --dry-run" -ForegroundColor Gray
 Write-Host ""
-Write-Host "For detailed documentation, see:" -ForegroundColor Cyan
+Info "Docs:"
 Write-Host "  - doc/windows-setup.md" -ForegroundColor White
 Write-Host "  - README.md" -ForegroundColor White
 Write-Host ""
