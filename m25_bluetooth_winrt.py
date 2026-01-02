@@ -98,21 +98,34 @@ class WinRTBluetoothConnection:
             
             if not self.device:
                 print(f"[{self.name}] Failed to get Bluetooth device", file=sys.stderr)
+                print(f"[{self.name}] Make sure device is paired in Windows Bluetooth settings", file=sys.stderr)
                 return False
+            
+            if self.debug:
+                print(f"[{self.name}] Device found: {self.device.name or 'Unknown'}", file=sys.stderr)
+                print(f"[{self.name}] Connection status: {self.device.connection_status}", file=sys.stderr)
                 
-            # Get RFCOMM services
+            # Get RFCOMM services - use default cache mode
             rfcomm_services = await self.device.get_rfcomm_services_async()
             
-            if not rfcomm_services or not rfcomm_services.services:
+            if self.debug:
+                print(f"[{self.name}] Service query status: {rfcomm_services.error if hasattr(rfcomm_services, 'error') else 'OK'}", file=sys.stderr)
+            
+            if not rfcomm_services or not rfcomm_services.services or len(rfcomm_services.services) == 0:
                 print(f"[{self.name}] No RFCOMM services found", file=sys.stderr)
+                print(f"[{self.name}] Device might need to be 'Connected' (not just paired) in Windows", file=sys.stderr)
+                print(f"[{self.name}] Try: Right-click device in Bluetooth settings → Connect", file=sys.stderr)
                 return False
+            
+            if self.debug:
+                print(f"[{self.name}] Found {len(rfcomm_services.services)} RFCOMM service(s)", file=sys.stderr)
             
             # Use Serial Port service (or first available)
             service = None
             for svc in rfcomm_services.services:
                 if self.debug:
-                    print(f"[{self.name}] Found service: {svc.service_id}", file=sys.stderr)
-                # Try to find SPP service, or use first available
+                    print(f"[{self.name}] Service UUID: {svc.service_id.uuid if hasattr(svc.service_id, 'uuid') else svc.service_id}", file=sys.stderr)
+                # Use first available service (M25 typically has only one SPP service)
                 if service is None:
                     service = svc
             
@@ -121,6 +134,9 @@ class WinRTBluetoothConnection:
                 return False
                 
             # Create socket and connect
+            if self.debug:
+                print(f"[{self.name}] Connecting to RFCOMM service...", file=sys.stderr)
+                
             self.socket = StreamSocket()
             await self.socket.connect_async(
                 service.connection_host_name,
