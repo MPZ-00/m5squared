@@ -32,14 +32,90 @@ except ImportError:
     print("Warning: python-dotenv not installed. Install with: pip install python-dotenv")
 
 try:
-    from m25_bluetooth_windows import M25WindowsBluetooth
-    from m25_crypto import M25Encryptor, M25Decryptor
-    from m25_ecs import ECSPacketBuilder, ResponseParser
+    from m25_spp import BluetoothConnection
+    from m25_ecs import ECSPacketBuilder, ECSRemote, ResponseParser
     from m25_utils import parse_key
     HAS_BLUETOOTH = True
-except ImportError as e:
-    HAS_BLUETOOTH = False
-    print(f"Warning: M25 modules not available: {e}")
+    IS_WINDOWS = False
+except ImportError:
+    # Windows fallback - use async Bluetooth
+    try:
+        from m25_bluetooth_windows import M25WindowsBluetooth
+        from m25_crypto import M25Encryptor, M25Decryptor
+        from m25_ecs import ECSPacketBuilder, ECSRemote, ResponseParser
+        from m25_utils import parse_key
+        HAS_BLUETOOTH = True
+        IS_WINDOWS = True
+        
+        # Create adapter to make Windows async Bluetooth work with sync API
+        class BluetoothConnectionAdapter:
+            """Adapter to make M25WindowsBluetooth compatible with BluetoothConnection API"""
+            def __init__(self, address, key, name="wheel", debug=False, loop=None):
+                self.address = address
+                self.key = key
+                self.name = name
+                self.debug = debug
+                self.bt = M25WindowsBluetooth()
+                self.encryptor = M25Encryptor(key)
+                self.decryptor = M25Decryptor(key)
+                self.loop = loop
+                self.connected = False
+            
+            def connect(self, channel=6):
+                """Connect to device"""
+                if self.loop:
+                    import time
+                    success = self.loop.run_until_complete(self.bt.connect(self.address))
+                    if success:
+                        self.connected = True
+                        time.sleep(0.1)  # Brief settling time
+                    return success
+                return False
+            
+            def disconnect(self):
+                """Disconnect from device"""
+                if self.loop and self.connected:
+                    self.loop.run_until_complete(self.bt.disconnect())
+                    self.connected = False
+            
+            def transact(self, spp_data, timeout=1.0):
+                """Send packet and receive decrypted response (sync interface)"""
+                if not self.loop or not self.connected:
+                    return None
+                
+                import time
+                try:
+                    encrypted = self.encryptor.encrypt_packet(spp_data)
+                    if self.debug:
+                        print(f"  TX [{self.name}]: {encrypted.hex()}", file=sys.stderr)
+                    
+                    ok = self.loop.run_until_complete(self.bt.send_packet(encrypted))
+                    if not ok:
+                        return None
+                    
+                    time.sleep(0.2)  # Wait for response
+                    
+                    response = self.loop.run_until_complete(self.bt.receive_packet(timeout=int(timeout)))
+                    if response:
+                        decrypted = self.decryptor.decrypt_packet(response)
+                        if self.debug:
+                            print(f"  RX [{self.name}]: {response.hex()}", file=sys.stderr)
+                            if decrypted:
+                                print(f"      SPP: {decrypted.hex()}", file=sys.stderr)
+                        return decrypted
+                except Exception as e:
+                    if self.debug:
+                        print(f"  transact error: {e}", file=sys.stderr)
+                    return None
+                return None
+        
+        # Replace BluetoothConnection with adapter for Windows
+        BluetoothConnection = BluetoothConnectionAdapter
+        
+    except ImportError as e:
+        HAS_BLUETOOTH = False
+        IS_WINDOWS = False
+        print(f"Warning: M25 modules not available: {e}")
 
 
 # Custom Entry widget with placeholder support
@@ -153,12 +229,9 @@ class M25GUI:
         # Connection state
         self.connected = False
         self.scanned_devices = []
-        self.left_bt = None
-        self.right_bt = None
-        self.left_encryptor = None
-        self.left_decryptor = None
-        self.right_encryptor = None
-        self.right_decryptor = None
+        self.left_conn = None
+        self.right_conn = None
+        self.ecs_remote = None
         self.demo_mode = False
         self.event_loop = None
         self.loop_thread = None
@@ -694,25 +767,20 @@ class M25GUI:
                     self.root.after(0, self.disconnection_complete)
                 else:
                     # Real hardware disconnection
-                    if self.event_loop and not self.event_loop.is_closed():
-                        loop = self.event_loop
-                        
-                        if self.left_bt:
-                            loop.run_until_complete(self.left_bt.disconnect())
-                        if self.right_bt:
-                            loop.run_until_complete(self.right_bt.disconnect())
-                        
-                        # Close the event loop now
-                        loop.close()
+                    if self.left_conn:
+                        self.left_conn.disconnect()
+                    if self.right_conn:
+                        self.right_conn.disconnect()
+                    
+                    # Close event loop if Windows
+                    if IS_WINDOWS and self.event_loop and not self.event_loop.is_closed():
+                        self.event_loop.close()
                         self.event_loop = None
                     
                     # Clear connection objects
-                    self.left_bt = None
-                    self.right_bt = None
-                    self.left_encryptor = None
-                    self.left_decryptor = None
-                    self.right_encryptor = None
-                    self.right_decryptor = None
+                    self.left_conn = None
+                    self.right_conn = None
+                    self.ecs_remote = None
                     
                     self.root.after(0, self.disconnection_complete)
             except Exception as e:
@@ -779,13 +847,6 @@ class M25GUI:
                     time.sleep(2)
                     self.root.after(0, self.connection_complete, True, self.demo_mode)
                 else:
-                    # Real hardware connection
-                    if not self.event_loop or self.event_loop.is_closed():
-                        self.event_loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(self.event_loop)
-                    
-                    loop = self.event_loop
-                    
                     # Parse encryption keys
                     try:
                         left_key_bytes = parse_key(left_key)
@@ -794,30 +855,37 @@ class M25GUI:
                         self.root.after(0, self.connection_error, f"Invalid encryption key: {e}")
                         return
                     
-                    # Create Bluetooth connections
-                    self.left_bt = M25WindowsBluetooth()
-                    self.right_bt = M25WindowsBluetooth()
+                    # Create event loop for Windows async Bluetooth
+                    if IS_WINDOWS:
+                        if not self.event_loop or self.event_loop.is_closed():
+                            self.event_loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(self.event_loop)
+                        loop = self.event_loop
+                    else:
+                        loop = None
                     
-                    # Connect to left wheel
-                    left_success = loop.run_until_complete(self.left_bt.connect(left_mac))
-                    if not left_success:
+                    # Create Bluetooth connections
+                    self.left_conn = BluetoothConnection(left_mac, left_key_bytes, name="left", debug=False)
+                    self.right_conn = BluetoothConnection(right_mac, right_key_bytes, name="right", debug=False)
+                    
+                    # Pass event loop to Windows adapter
+                    if IS_WINDOWS:
+                        self.left_conn.loop = loop
+                        self.right_conn.loop = loop
+                    
+                    # Connect to wheels
+                    if not self.left_conn.connect():
                         self.root.after(0, self.connection_error, f"Failed to connect to left wheel at {left_mac}")
                         return
                     
-                    # Connect to right wheel
-                    right_success = loop.run_until_complete(self.right_bt.connect(right_mac))
-                    if not right_success:
-                        loop.run_until_complete(self.left_bt.disconnect())
+                    if not self.right_conn.connect():
+                        self.left_conn.disconnect()
                         self.root.after(0, self.connection_error, f"Failed to connect to right wheel at {right_mac}")
                         return
                     
-                    # Setup encryption/decryption
-                    self.left_encryptor = M25Encryptor(left_key_bytes)
-                    self.left_decryptor = M25Decryptor(left_key_bytes)
-                    self.right_encryptor = M25Encryptor(right_key_bytes)
-                    self.right_decryptor = M25Decryptor(right_key_bytes)
+                    # Create ECS Remote helper
+                    self.ecs_remote = ECSRemote(self.left_conn, self.right_conn, verbose=False, retries=2)
                     
-                    # Don't close the loop - keep it alive for operations
                     self.root.after(0, self.connection_complete, True, False)
                     
             except Exception as e:
@@ -860,84 +928,35 @@ class M25GUI:
             self.log("warning", "Demo mode: Assist level change simulated")
             self.status_message("success", f"Assist level set to {level + 1}")
         else:
-            # Real hardware command
+            # Real hardware command using ECSRemote
             def write_thread():
-                import time
-                
-                def ui_log(level: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.log(level, msg))
+                def ui_log(level_msg: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.log(level_msg, msg))
 
-                def ui_status(level: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.status_message(level, msg))
-
-                def write_wheel_assist(side: str, loop, bt, enc, dec, builder, assist_level) -> bool:
-                    wheel = "Left" if side == "left" else "Right"
-
-                    packet = builder.build_write_assist_level(assist_level)
-                    encrypted = enc.encrypt_packet(packet)
-
-                    ok = loop.run_until_complete(bt.send_packet(encrypted))
-                    if not ok:
-                        ui_log("warning", f"{wheel} wheel: Send failed")
-                        return False
-
-                    time.sleep(0.2)
-
-                    response = loop.run_until_complete(bt.receive_packet(timeout=2))
-                    if not response:
-                        ui_log("warning", f"{wheel} wheel: No response")
-                        return False
-
-                    decrypted = dec.decrypt_packet(response)
-                    if not decrypted:
-                        ui_log("error", f"{wheel} wheel: Decryption failed")
-                        return False
-
-                    header = ResponseParser.parse_header(decrypted)
-                    if not header:
-                        ui_log("warning", f"{wheel} wheel: Invalid header")
-                        return False
-
-                    if ResponseParser.is_ack(header):
-                        ui_log("success", f"{wheel} wheel: Assist level set")
-                        return True
-                    elif ResponseParser.is_nack(header):
-                        ui_log("warning", f"{wheel} wheel: NACK received")
-                        return False
-                    else:
-                        ui_log("warning", f"{wheel} wheel: Unexpected response")
-                        return False
+                def ui_status(level_msg: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.status_message(level_msg, msg))
 
                 try:
-                    if not self.event_loop or self.event_loop.is_closed():
+                    if not self.ecs_remote or not self.left_conn or not self.right_conn:
                         ui_log("error", "Not connected")
                         return
                     
-                    loop = self.event_loop
                     builder = ECSPacketBuilder()
                     
-                    left_ok = write_wheel_assist(
-                        side="left",
-                        loop=loop,
-                        bt=self.left_bt,
-                        enc=self.left_encryptor,
-                        dec=self.left_decryptor,
-                        builder=builder,
-                        assist_level=level,
-                    )
-
-                    time.sleep(0.15)
-
-                    right_ok = write_wheel_assist(
-                        side="right",
-                        loop=loop,
-                        bt=self.right_bt,
-                        enc=self.right_encryptor,
-                        dec=self.right_decryptor,
-                        builder=builder,
-                        assist_level=level,
-                    )
-
+                    # Write to left wheel
+                    left_ok = self.ecs_remote.write_assist_level(self.left_conn, builder, level)
+                    if left_ok:
+                        ui_log("success", "Left wheel: Assist level set")
+                    else:
+                        ui_log("warning", "Left wheel: Failed to set assist level")
+                    
+                    # Write to right wheel
+                    right_ok = self.ecs_remote.write_assist_level(self.right_conn, builder, level)
+                    if right_ok:
+                        ui_log("success", "Right wheel: Assist level set")
+                    else:
+                        ui_log("warning", "Right wheel: Failed to set assist level")
+                    
                     if left_ok and right_ok:
                         ui_status("success", f"Assist level set to {level + 1}")
                     else:
@@ -967,78 +986,38 @@ class M25GUI:
             self.log("muted", "Right wheel: 83%")
             self.status_message("success", "Battery read complete")
         else:
-            # Real hardware reading
+            # Real hardware reading using ECSRemote
             def read_thread():
-                import time
-                
-                def ui_log(level: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.log(level, msg))
+                def ui_log(level_msg: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.log(level_msg, msg))
 
-                def ui_status(level: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.status_message(level, msg))
-
-                def read_wheel_battery(side: str, loop, bt, enc, dec, builder) -> str:
-                    wheel = "Left" if side == "left" else "Right"
-
-                    packet = builder.build_read_soc()
-                    encrypted = enc.encrypt_packet(packet)
-
-                    ok = loop.run_until_complete(bt.send_packet(encrypted))
-                    if not ok:
-                        ui_log("warning", f"{wheel} wheel: Send failed")
-                        return "??%"
-
-                    time.sleep(0.2)
-
-                    response = loop.run_until_complete(bt.receive_packet(timeout=2))
-                    if not response:
-                        ui_log("warning", f"{wheel} wheel: No response")
-                        return "??%"
-
-                    decrypted = dec.decrypt_packet(response)
-                    if not decrypted:
-                        ui_log("error", f"{wheel} wheel: Decryption failed")
-                        return "??%"
-
-                    header = ResponseParser.parse_header(decrypted)
-                    if not header:
-                        ui_log("warning", f"{wheel} wheel: Invalid header")
-                        return "??%"
-
-                    soc = ResponseParser.parse_soc(header['payload'])
-                    if soc is None:
-                        ui_log("warning", f"{wheel} wheel: Unable to parse SOC")
-                        return "??%"
-
-                    return f"{soc}%"
+                def ui_status(level_msg: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.status_message(level_msg, msg))
 
                 try:
-                    if not self.event_loop or self.event_loop.is_closed():
+                    if not self.ecs_remote or not self.left_conn or not self.right_conn:
                         ui_log("error", "Not connected")
                         return
                     
-                    loop = self.event_loop
                     builder = ECSPacketBuilder()
                     
-                    left_battery = read_wheel_battery(
-                        side="left",
-                        loop=loop,
-                        bt=self.left_bt,
-                        enc=self.left_encryptor,
-                        dec=self.left_decryptor,
-                        builder=builder,
+                    # Read left wheel battery
+                    left_soc = self.ecs_remote.read_value(
+                        self.left_conn,
+                        builder.build_read_soc,
+                        0x21,  # PARAM_ID_STATUS_SOC
+                        ResponseParser.parse_soc
                     )
-
-                    time.sleep(0.15)
-
-                    right_battery = read_wheel_battery(
-                        side="right",
-                        loop=loop,
-                        bt=self.right_bt,
-                        enc=self.right_encryptor,
-                        dec=self.right_decryptor,
-                        builder=builder,
+                    left_battery = f"{left_soc}%" if left_soc is not None else "??%"
+                    
+                    # Read right wheel battery
+                    right_soc = self.ecs_remote.read_value(
+                        self.right_conn,
+                        builder.build_read_soc,
+                        0x21,  # PARAM_ID_STATUS_SOC
+                        ResponseParser.parse_soc
                     )
+                    right_battery = f"{right_soc}%" if right_soc is not None else "??%"
                     
                     ui_log("muted", f"Left wheel:  {left_battery}")
                     ui_log("muted", f"Right wheel: {right_battery}")
@@ -1061,104 +1040,47 @@ class M25GUI:
             self.log("muted", "Drive Profile: Standard")
             self.status_message("success", "Status read complete")
         else:
-            # Real hardware reading
+            # Real hardware reading using ECSRemote
             def read_thread():
-                import time
-                
-                def ui_log(level: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.log(level, msg))
+                def ui_log(level_msg: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.log(level_msg, msg))
 
-                def ui_status(level: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.status_message(level, msg))
-
-                def read_wheel_data(side: str, loop, bt, enc, dec, builder, read_func) -> dict:
-                    wheel = "Left" if side == "left" else "Right"
-
-                    packet = read_func()
-                    encrypted = enc.encrypt_packet(packet)
-
-                    ok = loop.run_until_complete(bt.send_packet(encrypted))
-                    if not ok:
-                        return None
-
-                    time.sleep(0.2)
-
-                    response = loop.run_until_complete(bt.receive_packet(timeout=2))
-                    if not response:
-                        return None
-
-                    decrypted = dec.decrypt_packet(response)
-                    if not decrypted:
-                        return None
-
-                    header = ResponseParser.parse_header(decrypted)
-                    if not header:
-                        return None
-
-                    return header
+                def ui_status(level_msg: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.status_message(level_msg, msg))
 
                 try:
-                    if not self.event_loop or self.event_loop.is_closed():
+                    if not self.ecs_remote or not self.left_conn:
                         ui_log("error", "Not connected")
                         return
                     
-                    loop = self.event_loop
                     builder = ECSPacketBuilder()
                     
                     # Read assist level from left wheel
-                    header = read_wheel_data(
-                        side="left",
-                        loop=loop,
-                        bt=self.left_bt,
-                        enc=self.left_encryptor,
-                        dec=self.left_decryptor,
-                        builder=builder,
-                        read_func=builder.build_read_assist_level,
+                    assist = self.ecs_remote.read_value(
+                        self.left_conn,
+                        builder.build_read_assist_level,
+                        0x22,  # PARAM_ID_STATUS_ASSIST_LEVEL
+                        ResponseParser.parse_assist_level
                     )
-                    
-                    assist_info = "??"
-                    if header:
-                        assist = ResponseParser.parse_assist_level(header['payload'])
-                        if assist:
-                            assist_info = f"{assist['value']} ({assist['name']})"
-                    
-                    time.sleep(0.15)
+                    assist_info = f"{assist['value']} ({assist['name']})" if assist else "??"
                     
                     # Read drive mode from left wheel
-                    header = read_wheel_data(
-                        side="left",
-                        loop=loop,
-                        bt=self.left_bt,
-                        enc=self.left_encryptor,
-                        dec=self.left_decryptor,
-                        builder=builder,
-                        read_func=builder.build_read_drive_mode,
+                    mode = self.ecs_remote.read_value(
+                        self.left_conn,
+                        builder.build_read_drive_mode,
+                        0x23,  # PARAM_ID_STATUS_DRIVE_MODE
+                        ResponseParser.parse_drive_mode
                     )
-                    
-                    hill_hold = "??"
-                    if header:
-                        mode = ResponseParser.parse_drive_mode(header['payload'])
-                        if mode:
-                            hill_hold = "ON" if mode['auto_hold'] else "OFF"
-                    
-                    time.sleep(0.15)
+                    hill_hold = "ON" if (mode and mode['auto_hold']) else ("OFF" if mode else "??")
                     
                     # Read drive profile from left wheel
-                    header = read_wheel_data(
-                        side="left",
-                        loop=loop,
-                        bt=self.left_bt,
-                        enc=self.left_encryptor,
-                        dec=self.left_decryptor,
-                        builder=builder,
-                        read_func=builder.build_read_drive_profile,
+                    profile = self.ecs_remote.read_value(
+                        self.left_conn,
+                        builder.build_read_drive_profile,
+                        0x24,  # PARAM_ID_STATUS_DRIVE_PROFILE
+                        ResponseParser.parse_drive_profile
                     )
-                    
-                    profile_info = "??"
-                    if header:
-                        profile = ResponseParser.parse_drive_profile(header['payload'])
-                        if profile:
-                            profile_info = profile['name']
+                    profile_info = profile['name'] if profile else "??"
                     
                     ui_log("muted", f"Assist Level: {assist_info}")
                     ui_log("muted", f"Hill Hold: {hill_hold}")
@@ -1181,79 +1103,44 @@ class M25GUI:
             self.log("muted", "Hardware: M25V1")
             self.status_message("success", "Version read complete")
         else:
-            # Real hardware reading
+            # Real hardware reading using ECSRemote
             def read_thread():
-                import time
-                
-                # Helper functions
-                def ui_log(level: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.log(level, msg))
+                def ui_log(level_msg: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.log(level_msg, msg))
 
-                def ui_status(level: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.status_message(level, msg))
-
-                def read_wheel_version(side: str, loop, bt, enc, dec, builder) -> None:
-                    wheel = "Left" if side == "left" else "Right"
-
-                    packet = builder.build_read_sw_version()
-                    encrypted = enc.encrypt_packet(packet)
-
-                    ok = loop.run_until_complete(bt.send_packet(encrypted))
-                    if not ok:
-                        ui_log("warning", f"{wheel} wheel: Send failed")
-                        return
-
-                    time.sleep(0.2)
-
-                    response = loop.run_until_complete(bt.receive_packet(timeout=2))
-                    if not response:
-                        ui_log("warning", f"{wheel} wheel: No response")
-                        return
-
-                    decrypted = dec.decrypt_packet(response)
-                    if not decrypted:
-                        ui_log("error", f"{wheel} wheel: Decryption failed")
-                        return
-
-                    header = ResponseParser.parse_header(decrypted)
-                    if not header:
-                        ui_log("warning", f"{wheel} wheel: Invalid header")
-                        return
-
-                    version = ResponseParser.parse_sw_version(header["payload"])
-                    if not version:
-                        ui_log("warning", f"{wheel} wheel: Unable to parse version")
-                        return
-
-                    ui_log("success", f"{wheel} wheel: {version['version_str']}")
+                def ui_status(level_msg: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.status_message(level_msg, msg))
 
                 try:
-                    if not self.event_loop or self.event_loop.is_closed():
+                    if not self.ecs_remote or not self.left_conn or not self.right_conn:
                         ui_log("error", "Not connected")
                         return
 
-                    loop = self.event_loop
                     builder = ECSPacketBuilder()
 
-                    read_wheel_version(
-                        side="left",
-                        loop=loop,
-                        bt=self.left_bt,
-                        enc=self.left_encryptor,
-                        dec=self.left_decryptor,
-                        builder=builder,
+                    # Read left wheel version
+                    left_ver = self.ecs_remote.read_value(
+                        self.left_conn,
+                        builder.build_read_sw_version,
+                        0x2E,  # PARAM_ID_STATUS_SW_VERSION
+                        ResponseParser.parse_sw_version
                     )
+                    if left_ver:
+                        ui_log("success", f"Left wheel: {left_ver['version_str']}")
+                    else:
+                        ui_log("warning", "Left wheel: Unable to read version")
 
-                    time.sleep(0.15)
-
-                    read_wheel_version(
-                        side="right",
-                        loop=loop,
-                        bt=self.right_bt,
-                        enc=self.right_encryptor,
-                        dec=self.right_decryptor,
-                        builder=builder,
+                    # Read right wheel version
+                    right_ver = self.ecs_remote.read_value(
+                        self.right_conn,
+                        builder.build_read_sw_version,
+                        0x2E,  # PARAM_ID_STATUS_SW_VERSION
+                        ResponseParser.parse_sw_version
                     )
+                    if right_ver:
+                        ui_log("success", f"Right wheel: {right_ver['version_str']}")
+                    else:
+                        ui_log("warning", "Right wheel: Unable to read version")
 
                     ui_log("muted", "Hardware: M25V2")
                     ui_status("success", "Version read complete")
