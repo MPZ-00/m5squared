@@ -33,10 +33,13 @@ except ImportError:
 
 try:
     from m25_bluetooth_windows import M25WindowsBluetooth
+    from m25_crypto import M25Encryptor, M25Decryptor
+    from m25_ecs import ECSPacketBuilder
+    from m25_utils import parse_key
     HAS_BLUETOOTH = True
-except ImportError:
+except ImportError as e:
     HAS_BLUETOOTH = False
-    print("Warning: m25_bluetooth_windows not available")
+    print(f"Warning: M25 modules not available: {e}")
 
 
 # Custom Entry widget with placeholder support
@@ -150,7 +153,13 @@ class M25GUI:
         # Connection state
         self.connected = False
         self.scanned_devices = []
-        self.bt_handler = None
+        self.left_bt = None
+        self.right_bt = None
+        self.left_encryptor = None
+        self.left_decryptor = None
+        self.right_encryptor = None
+        self.right_decryptor = None
+        self.demo_mode = False
 
         # Theme state
         self.current_theme = "light"
@@ -669,21 +678,33 @@ class M25GUI:
         self.log("info", "Disconnecting from wheels...")
         self.status_message("info", "Disconnecting...")
         
-        # Check if we're in demo mode
-        left_mac = self.left_mac.get().strip()
-        right_mac = self.right_mac.get().strip()
-        demo_mode = left_mac.upper() == "AA:BB:CC:DD:EE:FF" or right_mac.upper() == "AA:BB:CC:DD:EE:FF"
-        
         def disconnect_thread():
             import time
             try:
-                if demo_mode:
+                if self.demo_mode:
                     # Simulate disconnection in demo mode
                     time.sleep(1)
                     self.root.after(0, self.disconnection_complete)
                 else:
-                    # TODO: Actual disconnection implementation
-                    # For now, just complete immediately since connection wasn't real
+                    # Real hardware disconnection
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    
+                    if self.left_bt:
+                        loop.run_until_complete(self.left_bt.disconnect())
+                    if self.right_bt:
+                        loop.run_until_complete(self.right_bt.disconnect())
+                    
+                    loop.close()
+                    
+                    # Clear connection objects
+                    self.left_bt = None
+                    self.right_bt = None
+                    self.left_encryptor = None
+                    self.left_decryptor = None
+                    self.right_encryptor = None
+                    self.right_decryptor = None
+                    
                     self.root.after(0, self.disconnection_complete)
             except Exception as e:
                 self.root.after(0, self.disconnection_error, str(e))
@@ -724,29 +745,71 @@ class M25GUI:
             return
 
         # Detect demo mode
-        demo_mode = left_mac.upper() == "AA:BB:CC:DD:EE:FF" or right_mac.upper() == "AA:BB:CC:DD:EE:FF"
+        self.demo_mode = left_mac.upper() == "AA:BB:CC:DD:EE:FF" or right_mac.upper() == "AA:BB:CC:DD:EE:FF"
         
-        if demo_mode:
+        if self.demo_mode:
             self.log("warning", "DEMO MODE detected (MAC: AA:BB:CC:DD:EE:FF)")
             self.log("info", "Running in simulation mode - no real hardware connection")
         else:
+            if not HAS_BLUETOOTH:
+                messagebox.showerror("Error", "Bluetooth modules not available.\nInstall required packages.")
+                self.log("error", "Bluetooth modules not available")
+                self.status_message("error", "Bluetooth modules not available")
+                return
             self.log("info", "Connecting to wheels...")
         
         self.log("muted", f"Left:  {left_mac}")
         self.log("muted", f"Right: {right_mac}")
-        self.status_message("info", "Connecting..." if not demo_mode else "Connecting (Demo Mode)...")
+        self.status_message("info", "Connecting..." if not self.demo_mode else "Connecting (Demo Mode)...")
 
         def connect_thread():
             import time
             try:
-                if demo_mode:
+                if self.demo_mode:
                     # Simulate connection in demo mode
                     time.sleep(2)
-                    self.root.after(0, self.connection_complete, True, demo_mode)
+                    self.root.after(0, self.connection_complete, True, self.demo_mode)
                 else:
-                    # TODO: Actual connection implementation
-                    # For now, show that real connection is not yet implemented
-                    self.root.after(0, self.connection_error, "Real hardware connection not yet implemented. Use AA:BB:CC:DD:EE:FF for demo mode.")
+                    # Real hardware connection
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    
+                    # Parse encryption keys
+                    try:
+                        left_key_bytes = parse_key(left_key)
+                        right_key_bytes = parse_key(right_key)
+                    except Exception as e:
+                        self.root.after(0, self.connection_error, f"Invalid encryption key: {e}")
+                        return
+                    
+                    # Create Bluetooth connections
+                    self.left_bt = M25WindowsBluetooth()
+                    self.right_bt = M25WindowsBluetooth()
+                    
+                    # Connect to left wheel
+                    left_success = loop.run_until_complete(self.left_bt.connect(left_mac))
+                    if not left_success:
+                        loop.close()
+                        self.root.after(0, self.connection_error, f"Failed to connect to left wheel at {left_mac}")
+                        return
+                    
+                    # Connect to right wheel
+                    right_success = loop.run_until_complete(self.right_bt.connect(right_mac))
+                    if not right_success:
+                        loop.run_until_complete(self.left_bt.disconnect())
+                        loop.close()
+                        self.root.after(0, self.connection_error, f"Failed to connect to right wheel at {right_mac}")
+                        return
+                    
+                    # Setup encryption/decryption
+                    self.left_encryptor = M25Encryptor(left_key_bytes)
+                    self.left_decryptor = M25Decryptor(left_key_bytes)
+                    self.right_encryptor = M25Encryptor(right_key_bytes)
+                    self.right_decryptor = M25Decryptor(right_key_bytes)
+                    
+                    loop.close()
+                    self.root.after(0, self.connection_complete, True, False)
+                    
             except Exception as e:
                 self.root.after(0, self.connection_error, str(e))
 
