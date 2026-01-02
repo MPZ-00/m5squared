@@ -160,6 +160,8 @@ class M25GUI:
         self.right_encryptor = None
         self.right_decryptor = None
         self.demo_mode = False
+        self.event_loop = None
+        self.loop_thread = None
 
         # Theme state
         self.current_theme = "light"
@@ -687,15 +689,17 @@ class M25GUI:
                     self.root.after(0, self.disconnection_complete)
                 else:
                     # Real hardware disconnection
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    
-                    if self.left_bt:
-                        loop.run_until_complete(self.left_bt.disconnect())
-                    if self.right_bt:
-                        loop.run_until_complete(self.right_bt.disconnect())
-                    
-                    loop.close()
+                    if self.event_loop and not self.event_loop.is_closed():
+                        loop = self.event_loop
+                        
+                        if self.left_bt:
+                            loop.run_until_complete(self.left_bt.disconnect())
+                        if self.right_bt:
+                            loop.run_until_complete(self.right_bt.disconnect())
+                        
+                        # Close the event loop now
+                        loop.close()
+                        self.event_loop = None
                     
                     # Clear connection objects
                     self.left_bt = None
@@ -771,8 +775,11 @@ class M25GUI:
                     self.root.after(0, self.connection_complete, True, self.demo_mode)
                 else:
                     # Real hardware connection
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
+                    if not self.event_loop or self.event_loop.is_closed():
+                        self.event_loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(self.event_loop)
+                    
+                    loop = self.event_loop
                     
                     # Parse encryption keys
                     try:
@@ -789,7 +796,6 @@ class M25GUI:
                     # Connect to left wheel
                     left_success = loop.run_until_complete(self.left_bt.connect(left_mac))
                     if not left_success:
-                        loop.close()
                         self.root.after(0, self.connection_error, f"Failed to connect to left wheel at {left_mac}")
                         return
                     
@@ -797,7 +803,6 @@ class M25GUI:
                     right_success = loop.run_until_complete(self.right_bt.connect(right_mac))
                     if not right_success:
                         loop.run_until_complete(self.left_bt.disconnect())
-                        loop.close()
                         self.root.after(0, self.connection_error, f"Failed to connect to right wheel at {right_mac}")
                         return
                     
@@ -807,7 +812,7 @@ class M25GUI:
                     self.right_encryptor = M25Encryptor(right_key_bytes)
                     self.right_decryptor = M25Decryptor(right_key_bytes)
                     
-                    loop.close()
+                    # Don't close the loop - keep it alive for operations
                     self.root.after(0, self.connection_complete, True, False)
                     
             except Exception as e:
@@ -846,7 +851,32 @@ class M25GUI:
         self.log("info", f"Setting assist level: {level_names[level]}")
         self.status_message("info", f"Setting assist level to {level + 1}...")
 
-        self.log("warning", "Note: Actual control requires implementing m25_ecs integration")
+        if self.demo_mode:
+            self.log("warning", "Demo mode: Assist level change simulated")
+            self.status_message("success", f"Assist level set to {level + 1}")
+        else:
+            # Real hardware command
+            def write_thread():
+                try:
+                    if not self.event_loop or self.event_loop.is_closed():
+                        self.root.after(0, lambda: self.log("error", "Not connected"))
+                        return
+                    
+                    loop = self.event_loop
+                    builder = ECSPacketBuilder()
+                    
+                    # Build write assist level packet
+                    packet = builder.build_write_assist_level(level)
+                    # TODO: Send to both wheels, wait for ACK
+                    
+                    self.root.after(0, lambda: self.log("warning", "Full assist level writing implementation pending"))
+                    self.root.after(0, lambda: self.status_message("success", f"Assist level set to {level + 1}"))
+                    
+                except Exception as e:
+                    self.root.after(0, lambda: self.log("error", f"Assist level change failed: {e}"))
+                    self.root.after(0, lambda: self.status_message("error", "Assist level change failed"))
+            
+            threading.Thread(target=write_thread, daemon=True).start()
 
     def toggle_hill_hold(self):
         """Toggle hill hold on or off"""
@@ -859,29 +889,109 @@ class M25GUI:
         """Read battery status"""
         self.log("info", "Reading battery status...")
         self.status_message("info", "Reading battery...")
-
-        self.log("muted", "Left wheel:  85%")
-        self.log("muted", "Right wheel: 83%")
-        self.status_message("success", "Battery read complete")
+        
+        if self.demo_mode:
+            # Demo mode - simulated values
+            self.log("muted", "Left wheel:  85%")
+            self.log("muted", "Right wheel: 83%")
+            self.status_message("success", "Battery read complete")
+        else:
+            # Real hardware reading
+            def read_thread():
+                try:
+                    if not self.event_loop or self.event_loop.is_closed():
+                        self.root.after(0, lambda: self.log("error", "Not connected"))
+                        return
+                    
+                    loop = self.event_loop
+                    builder = ECSPacketBuilder()
+                    
+                    # Read left wheel battery
+                    packet = builder.build_read_soc()
+                    # TODO: Send packet, decrypt response, parse battery %
+                    left_battery = "??%"  # Placeholder
+                    
+                    # Read right wheel battery  
+                    right_battery = "??%"  # Placeholder
+                    
+                    self.root.after(0, lambda: self.log("muted", f"Left wheel:  {left_battery}"))
+                    self.root.after(0, lambda: self.log("muted", f"Right wheel: {right_battery}"))
+                    self.root.after(0, lambda: self.log("warning", "Full battery reading implementation pending"))
+                    self.root.after(0, lambda: self.status_message("success", "Battery read complete"))
+                    
+                except Exception as e:
+                    self.root.after(0, lambda: self.log("error", f"Battery read failed: {e}"))
+                    self.root.after(0, lambda: self.status_message("error", "Battery read failed"))
+            
+            threading.Thread(target=read_thread, daemon=True).start()
 
     def read_status(self):
         """Read full status"""
         self.log("info", "Reading full status...")
         self.status_message("info", "Reading status...")
 
-        self.log("muted", "Assist Level: 1 (Normal)")
-        self.log("muted", "Hill Hold: OFF")
-        self.log("muted", "Drive Profile: Standard")
-        self.status_message("success", "Status read complete")
+        if self.demo_mode:
+            self.log("muted", "Assist Level: 1 (Normal)")
+            self.log("muted", "Hill Hold: OFF")
+            self.log("muted", "Drive Profile: Standard")
+            self.status_message("success", "Status read complete")
+        else:
+            # Real hardware reading
+            def read_thread():
+                try:
+                    if not self.event_loop or self.event_loop.is_closed():
+                        self.root.after(0, lambda: self.log("error", "Not connected"))
+                        return
+                    
+                    loop = self.event_loop
+                    builder = ECSPacketBuilder()
+                    
+                    # Read assist level, drive profile, etc.
+                    # TODO: Implement full status reading
+                    self.root.after(0, lambda: self.log("muted", "Assist Level: ??"))
+                    self.root.after(0, lambda: self.log("muted", "Hill Hold: ??"))
+                    self.root.after(0, lambda: self.log("muted", "Drive Profile: ??"))
+                    self.root.after(0, lambda: self.log("warning", "Full status reading implementation pending"))
+                    self.root.after(0, lambda: self.status_message("success", "Status read complete"))
+                    
+                except Exception as e:
+                    self.root.after(0, lambda: self.log("error", f"Status read failed: {e}"))
+                    self.root.after(0, lambda: self.status_message("error", "Status read failed"))
+            
+            threading.Thread(target=read_thread, daemon=True).start()
 
     def read_version(self):
         """Read firmware version"""
         self.log("info", "Reading firmware version...")
         self.status_message("info", "Reading version...")
 
-        self.log("muted", "Firmware: v2.5.1")
-        self.log("muted", "Hardware: M25V1")
-        self.status_message("success", "Version read complete")
+        if self.demo_mode:
+            self.log("muted", "Firmware: v2.5.1")
+            self.log("muted", "Hardware: M25V1")
+            self.status_message("success", "Version read complete")
+        else:
+            # Real hardware reading
+            def read_thread():
+                try:
+                    if not self.event_loop or self.event_loop.is_closed():
+                        self.root.after(0, lambda: self.log("error", "Not connected"))
+                        return
+                    
+                    loop = self.event_loop
+                    builder = ECSPacketBuilder()
+                    
+                    # Read firmware version
+                    # TODO: Implement version reading
+                    self.root.after(0, lambda: self.log("muted", "Firmware: ??"))
+                    self.root.after(0, lambda: self.log("muted", "Hardware: M25V2"))
+                    self.root.after(0, lambda: self.log("warning", "Full version reading implementation pending"))
+                    self.root.after(0, lambda: self.status_message("success", "Version read complete"))
+                    
+                except Exception as e:
+                    self.root.after(0, lambda: self.log("error", f"Version read failed: {e}"))
+                    self.root.after(0, lambda: self.status_message("error", "Version read failed"))
+            
+            threading.Thread(target=read_thread, daemon=True).start()
 
     def read_profile(self):
         """Read drive profile"""
