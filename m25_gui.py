@@ -70,7 +70,7 @@ class PlaceholderEntry(tk.Entry):
             self.has_placeholder = False
     
     def on_focus_out(self, event):
-        if not self.get():
+        if not super().get():  # Check actual entry content, not our overridden get()
             self.put_placeholder()
     
     def get(self):
