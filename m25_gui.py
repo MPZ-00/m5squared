@@ -195,15 +195,15 @@ class M25GUI:
         self.main_frame.columnconfigure(1, weight=1)
 
         # Title
-        title_frame = tk.Frame(self.main_frame)
-        title_frame.grid(row=0, column=0, columnspan=3, pady=(0, 20))
+        self.title_frame = tk.Frame(self.main_frame)
+        self.title_frame.grid(row=0, column=0, columnspan=3, pady=(0, 20))
 
-        title = tk.Label(title_frame, text="m5squared Wheelchair Controller", font=("Arial", 16, "bold"))
-        title.pack(side=tk.LEFT, padx=(0, 20))
+        self.title_label = tk.Label(self.title_frame, text="m5squared Wheelchair Controller", font=("Arial", 16, "bold"))
+        self.title_label.pack(side=tk.LEFT, padx=(0, 20))
 
         # Theme toggle button
         self.theme_btn = tk.Button(
-            title_frame,
+            self.title_frame,
             text="☀ Light Mode",
             command=self.toggle_theme,
             relief=tk.FLAT,
@@ -218,29 +218,29 @@ class M25GUI:
         self.conn_frame.columnconfigure(1, weight=1)
 
         # Scan button
-        scan_frame = tk.Frame(self.conn_frame)
-        scan_frame.grid(row=0, column=0, columnspan=2, pady=(0, 10), sticky=(tk.W, tk.E))
+        self.scan_frame = tk.Frame(self.conn_frame)
+        self.scan_frame.grid(row=0, column=0, columnspan=2, pady=(0, 10), sticky=(tk.W, tk.E))
 
-        self.scan_btn = tk.Button(scan_frame, text="🔍 Scan for Wheels", command=self.scan_devices, cursor="hand2")
+        self.scan_btn = tk.Button(self.scan_frame, text="🔍 Scan for Wheels", command=self.scan_devices, cursor="hand2")
         self.scan_btn.pack(side=tk.LEFT, padx=(0, 10))
 
         self.filter_m25 = tk.BooleanVar(value=True)
-        self.filter_check = tk.Checkbutton(scan_frame, text="Filter M25 only", variable=self.filter_m25)
+        self.filter_check = tk.Checkbutton(self.scan_frame, text="Filter M25 only", variable=self.filter_m25)
         self.filter_check.pack(side=tk.LEFT, padx=(0, 10))
 
-        self.scan_status_lbl = tk.Label(scan_frame, text="")
+        self.scan_status_lbl = tk.Label(self.scan_frame, text="")
         self.scan_status_lbl.pack(side=tk.LEFT)
 
         # Device selection for left wheel
         self.lbl_left_device = tk.Label(self.conn_frame, text="Left Wheel:")
         self.lbl_left_device.grid(row=1, column=0, sticky=tk.W, pady=2)
 
-        left_device_frame = tk.Frame(self.conn_frame)
-        left_device_frame.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=(5, 0), pady=2)
-        left_device_frame.columnconfigure(0, weight=1)
+        self.left_device_frame = tk.Frame(self.conn_frame)
+        self.left_device_frame.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=(5, 0), pady=2)
+        self.left_device_frame.columnconfigure(0, weight=1)
 
         self.left_device_var = tk.StringVar(value="")
-        self.left_device_menu = tk.OptionMenu(left_device_frame, self.left_device_var, "", command=self.on_left_device_selected)
+        self.left_device_menu = tk.OptionMenu(self.left_device_frame, self.left_device_var, "", command=self.on_left_device_selected)
         self.left_device_menu.config(width=35)
         self.left_device_menu.grid(row=0, column=0, sticky=(tk.W, tk.E))
 
@@ -259,12 +259,12 @@ class M25GUI:
         self.lbl_right_device = tk.Label(self.conn_frame, text="Right Wheel:")
         self.lbl_right_device.grid(row=4, column=0, sticky=tk.W, pady=2)
 
-        right_device_frame = tk.Frame(self.conn_frame)
-        right_device_frame.grid(row=4, column=1, sticky=(tk.W, tk.E), padx=(5, 0), pady=2)
-        right_device_frame.columnconfigure(0, weight=1)
+        self.right_device_frame = tk.Frame(self.conn_frame)
+        self.right_device_frame.grid(row=4, column=1, sticky=(tk.W, tk.E), padx=(5, 0), pady=2)
+        self.right_device_frame.columnconfigure(0, weight=1)
 
         self.right_device_var = tk.StringVar(value="")
-        self.right_device_menu = tk.OptionMenu(right_device_frame, self.right_device_var, "", command=self.on_right_device_selected)
+        self.right_device_menu = tk.OptionMenu(self.right_device_frame, self.right_device_var, "", command=self.on_right_device_selected)
         self.right_device_menu.config(width=35)
         self.right_device_menu.grid(row=0, column=0, sticky=(tk.W, tk.E))
 
@@ -354,11 +354,6 @@ class M25GUI:
         self.status = tk.Label(self.main_frame, text="Ready", anchor=tk.W, relief=tk.SUNKEN, padx=5, pady=2)
         self.status.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E))
 
-        # Store title and frame widgets for theming
-        self.title_label = title
-        self.title_frame = title_frame
-        self.btn_frame = btn_frame
-
         # Configure row weights for resizing
         self.main_frame.rowconfigure(3, weight=1)
 
@@ -402,6 +397,10 @@ class M25GUI:
         if hasattr(self, "conn_frame"):
             self.conn_frame.configure(bg=theme["bg"], fg=theme["fg"])
 
+            # Scan frame and its widgets
+            if hasattr(self, "scan_frame"):
+                self.scan_frame.configure(bg=theme["bg"])
+            
             if hasattr(self, "scan_btn"):
                 self.scan_btn.configure(
                     bg=theme["button_bg"],
@@ -418,20 +417,46 @@ class M25GUI:
                 )
                 self.scan_status_lbl.configure(bg=theme["bg"], fg=theme["fg"])
 
+            # Device selection frames and menus
             if hasattr(self, "lbl_left_device"):
                 self.lbl_left_device.configure(bg=theme["bg"], fg=theme["fg"])
                 self.lbl_right_device.configure(bg=theme["bg"], fg=theme["fg"])
+                
+                # Device frames
+                self.left_device_frame.configure(bg=theme["bg"])
+                self.right_device_frame.configure(bg=theme["bg"])
+                
+                # OptionMenu widgets
                 self.left_device_menu.configure(
                     bg=theme["button_bg"],
                     fg=theme["button_fg"],
                     activebackground=theme["select_bg"],
                     activeforeground=theme["select_fg"],
+                    highlightthickness=0
                 )
+                # OptionMenu dropdown menu
+                left_menu = self.left_device_menu['menu']
+                left_menu.configure(
+                    bg=theme["button_bg"],
+                    fg=theme["button_fg"],
+                    activebackground=theme["select_bg"],
+                    activeforeground=theme["select_fg"]
+                )
+                
                 self.right_device_menu.configure(
                     bg=theme["button_bg"],
                     fg=theme["button_fg"],
                     activebackground=theme["select_bg"],
                     activeforeground=theme["select_fg"],
+                    highlightthickness=0
+                )
+                # OptionMenu dropdown menu
+                right_menu = self.right_device_menu['menu']
+                right_menu.configure(
+                    bg=theme["button_bg"],
+                    fg=theme["button_fg"],
+                    activebackground=theme["select_bg"],
+                    activeforeground=theme["select_fg"]
                 )
 
             self.lbl_left_mac.configure(bg=theme["bg"], fg=theme["fg"])
