@@ -280,7 +280,7 @@ class M25GUI:
         self.right_key.grid(row=6, column=1, sticky=(tk.W, tk.E), padx=(5, 0), pady=2)
 
         # Connect button
-        self.connect_btn = tk.Button(self.conn_frame, text="Connect", command=self.connect, cursor="hand2")
+        self.connect_btn = tk.Button(self.conn_frame, text="Connect", command=self.toggle_connection, cursor="hand2")
         self.connect_btn.grid(row=7, column=0, columnspan=2, pady=(10, 0))
 
         # Control Section
@@ -647,6 +647,42 @@ class M25GUI:
         self.read_version_btn.config(state=state)
         self.read_profile_btn.config(state=state)
         self.read_params_btn.config(state=state)
+
+    def toggle_connection(self):
+        """Toggle between connect and disconnect"""
+        if self.connected:
+            self.disconnect()
+        else:
+            self.connect()
+    
+    def disconnect(self):
+        """Disconnect from M25 wheels"""
+        # Confirm disconnection
+        confirm = messagebox.askyesno(
+            "Confirm Disconnect",
+            "Are you sure you want to disconnect from the wheels?"
+        )
+        
+        if not confirm:
+            return
+        
+        self.log("info", "Disconnecting from wheels...")
+        self.status_message("info", "Disconnecting...")
+        
+        def simulate_disconnect():
+            import time
+            time.sleep(1)
+            self.root.after(0, self.disconnection_complete)
+        
+        threading.Thread(target=simulate_disconnect, daemon=True).start()
+    
+    def disconnection_complete(self):
+        """Handle disconnection completion"""
+        self.connected = False
+        self.connect_btn.config(text="Connect")
+        self.enable_controls(False)
+        self.log("success", "Disconnected successfully.")
+        self.status_message("success", "Disconnected")
 
     def connect(self):
         """Connect to M25 wheels"""
