@@ -1079,7 +1079,51 @@ class M25GUI:
         enabled = self.hill_hold.get()
         state = "ON" if enabled else "OFF"
         self.log("info", f"Setting hill hold: {state}")
-        self.status_message("info", f"Hill hold {state}")
+        self.status_message("info", f"Setting hill hold {state}...")
+
+        if self.demo_mode:
+            self.log("warning", "Demo mode: Hill hold change simulated")
+            self.status_message("success", f"Hill hold set to {state}")
+        else:
+            # Real hardware command using ECSRemote
+            def write_thread():
+                def ui_log(level_msg: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.log(level_msg, msg))
+
+                def ui_status(level_msg: str, msg: str) -> None:
+                    self.root.after(0, lambda: self.status_message(level_msg, msg))
+
+                try:
+                    if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                        ui_log("error", "Not connected")
+                        return
+                    
+                    builder = ECSPacketBuilder()
+                    
+                    # Write to left wheel
+                    left_ok = self.ecs_remote.write_auto_hold(self.left_conn, builder, enabled)
+                    if left_ok:
+                        ui_log("success", f"Left wheel: Hill hold {state}")
+                    else:
+                        ui_log("warning", f"Left wheel: Failed to set hill hold")
+                    
+                    # Write to right wheel
+                    right_ok = self.ecs_remote.write_auto_hold(self.right_conn, builder, enabled)
+                    if right_ok:
+                        ui_log("success", f"Right wheel: Hill hold {state}")
+                    else:
+                        ui_log("warning", f"Right wheel: Failed to set hill hold")
+                    
+                    if left_ok and right_ok:
+                        ui_status("success", f"Hill hold set to {state}")
+                    else:
+                        ui_status("warning", "Hill hold partially set")
+                    
+                except Exception as e:
+                    ui_log("error", f"Hill hold change failed: {e}")
+                    ui_status("error", "Hill hold change failed")
+            
+            threading.Thread(target=write_thread, daemon=True).start()
 
     def read_battery(self):
         """Read battery status"""
