@@ -184,7 +184,7 @@ Ok "  pip upgraded"
 
 # [5/6] deps
 Step "[5/6] Installing project dependencies..."
-& $VenvPython -m pip install -e .
+& $VenvPython -m pip install -e ".[windows]"
 Ok "  Dependencies installed"
 
 Step "      Verifying installed packages..."

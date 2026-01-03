@@ -8,7 +8,23 @@ license = "AGPL-3.0-or-later"
 dependencies = [
     "pycryptodome>=3.15.0",
     "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+windows = [
     "bleak>=0.21.0",
+    "winrt-Windows.Devices.Bluetooth>=2.0.0",
+    "winrt-Windows.Devices.Bluetooth.Rfcomm>=2.0.0",
+    "winrt-Windows.Networking>=2.0.0",
+    "winrt-Windows.Networking.Sockets>=2.0.0",
+    "winrt-Windows.Storage.Streams>=2.0.0",
+]
+linux = [
+    "pybluez>=0.23",
+]
+gui = [
+    # tkinter is included with Python on most systems
+    # On Linux, install: python3-tk (Debian/Ubuntu) or python3-tkinter (Fedora/RHEL)
 ]
 
 [project.urls]
