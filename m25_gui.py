@@ -1633,12 +1633,19 @@ class M25GUI:
 
         def scan_thread():
             try:
-                bt = 0 # TODO: fix scanner initialization should work on Linux and Windows
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                devices = loop.run_until_complete(bt.scan(duration=10, filter_m25=filter_enabled))
-                loop.close()
-
+                if IS_WINDOWS:
+                    # Use Windows Bluetooth scanner
+                    from m25_bluetooth_windows import M25WindowsBluetooth
+                    bt = M25WindowsBluetooth()
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    devices = loop.run_until_complete(bt.scan(duration=10, filter_m25=filter_enabled))
+                    loop.close()
+                else:
+                    # Use Linux PyBluez scanner
+                    from m25_bluetooth import scan_devices
+                    devices = scan_devices(duration=10, filter_m25=filter_enabled)
+                
                 self.root.after(0, self.scan_complete, devices)
             except Exception as e:
                 self.root.after(0, self.scan_error, str(e))
