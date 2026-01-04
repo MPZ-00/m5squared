@@ -655,9 +655,9 @@ Examples:
                         help='Left wheel Bluetooth address (XX:XX:XX:XX:XX:XX)')
     parser.add_argument('--right-addr', metavar='ADDR',
                         help='Right wheel Bluetooth address (XX:XX:XX:XX:XX:XX)')
-    parser.add_argument('--left-key', metavar='HEX', required=True,
+    parser.add_argument('--left-key', metavar='HEX',
                         help='Left wheel AES key (hex, from m25_qr_to_key.py)')
-    parser.add_argument('--right-key', metavar='HEX', required=True,
+    parser.add_argument('--right-key', metavar='HEX',
                         help='Right wheel AES key (hex, from m25_qr_to_key.py)')
     parser.add_argument('--left-only', action='store_true',
                         help='Only connect to left wheel')
@@ -697,12 +697,10 @@ Examples:
             print(f"ERROR: --set-max-speed must be between 2.0 and 8.5 km/h")
             sys.exit(1)
 
-    # Parse and validate keys
-    left_key = parse_key(args.left_key, "left-key")
-    right_key = parse_key(args.right_key, "right-key")
-
-    # Dry run mode
+    # Dry run mode (needs both keys) --> this should probably fixed someday, but is fine for now.
     if args.dry_run:
+        left_key = parse_key(args.left_key, "left-key")
+        right_key = parse_key(args.right_key, "right-key")
         dry_run_demo(left_key, right_key)
         return
 
@@ -721,6 +719,18 @@ Examples:
     if connect_right and not args.right_addr:
         print("ERROR: Must specify --right-addr (or use --left-only)")
         sys.exit(1)
+
+    # Validate keys
+    if connect_left and not args.left_key:
+        print("ERROR: Must specify --left-key (or use --right-only)")
+        sys.exit(1)
+    if connect_right and not args.right_key:
+        print("ERROR: Must specify --right-key (or use --left-only)")
+        sys.exit(1)
+
+    # Parse keys (only the ones we need / specified)
+    left_key = parse_key(args.left_key, "left-key") if connect_left else None
+    right_key = parse_key(args.right_key, "right-key") if connect_right else None
 
     left_conn = None
     right_conn = None
