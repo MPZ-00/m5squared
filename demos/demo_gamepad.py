@@ -80,8 +80,19 @@ async def main():
             config=SupervisorConfig()
         )
         
-        # Run until interrupted
-        await supervisor.run()
+        # Start supervisor in background
+        supervisor_task = asyncio.create_task(supervisor.run())
+        
+        # Wait a bit for initialization
+        await asyncio.sleep(0.5)
+        
+        # Request connection and arming
+        supervisor.request_connect("mock_left", "mock_right", b"key", b"key")
+        await asyncio.sleep(0.5)
+        supervisor.request_arm()
+        
+        # Wait for task to complete (user interrupt)
+        await supervisor_task
         
     except KeyboardInterrupt:
         logger.info("")
