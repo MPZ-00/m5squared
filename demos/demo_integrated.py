@@ -10,7 +10,12 @@ Demonstrates the pluggable core architecture:
 
 import asyncio
 import logging
+import sys
+from pathlib import Path
 from typing import Optional
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.types import ControlState, DriveMode, MapperConfig, SupervisorConfig
 from core.supervisor import Supervisor
@@ -39,10 +44,9 @@ class IntegratedDemo:
         # Create mapper with safety settings
         mapper_config = MapperConfig(
             deadzone=0.05,
-            max_speed=100,
-            expo=0.3,
-            max_rotation=0.8,
-            ramp_time=0.5
+            max_speed_normal=100,
+            curve=2.0,
+            ramp_rate=50.0
         )
         self.mapper = Mapper(mapper_config)
         
@@ -55,8 +59,7 @@ class IntegratedDemo:
         # Create supervisor
         supervisor_config = SupervisorConfig(
             input_timeout=1.0,
-            command_timeout=0.5,
-            state_timeout=2.0
+            link_timeout=2.0
         )
         self.supervisor = Supervisor(
             input_provider=self.input_provider,
@@ -139,7 +142,7 @@ async def demo_scripted_movement() -> None:
         logger.info("Script completed")
     
     finally:
-        await supervisor.stop()
+        supervisor.stop()
 
 
 async def demo_with_m25_parking() -> None:
