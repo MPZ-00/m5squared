@@ -1,17 +1,25 @@
 """
 Bluetooth Transport - Wraps existing m25_ Bluetooth code.
 
-Uses the original m25_spp.BluetoothConnection and m25_parking functionality
-to integrate with the new core architecture.
+Uses BLE (Bleak) on Windows since RFCOMM has connection issues.
+Uses SPP (socket-based) on Linux.
 """
 
 import asyncio
 import logging
 from typing import Optional
 import struct
+import sys
 
 from core.types import CommandFrame, VehicleState
-from m25_spp import BluetoothConnection, PacketBuilder
+
+# Use BLE on Windows, SPP on Linux
+if sys.platform == "win32":
+    from m25_ble import M25BLEConnection as BluetoothConnection
+else:
+    from m25_spp import BluetoothConnection
+
+from m25_spp import PacketBuilder
 from m25_protocol_data import (
     SYSTEM_MODE_CONNECT,
     DRIVE_MODE_NORMAL,
@@ -74,15 +82,29 @@ class BluetoothTransport:
                 left_addr, left_key, name="left", debug=self._debug
             )
             
-            # Run blocking connect in executor
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._left_conn.connect, 6)
+            # Use async connect for WinRT
+            if sys.platform == "win32":
+                success = await self._left_conn.connect_async(6)
+                if not success:
+                    logger.error("Left wheel connection failed")
+                    return False
+            else:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._left_conn.connect, 6)
             
             logger.info(f"Connecting to right wheel: {right_addr}")
             self._right_conn = BluetoothConnection(
                 right_addr, right_key, name="right", debug=self._debug
             )
-            await loop.run_in_executor(None, self._right_conn.connect, 6)
+            
+            if sys.platform == "win32":
+                success = await self._right_conn.connect_async(6)
+                if not success:
+                    logger.error("Right wheel connection failed")
+                    return False
+            else:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._right_conn.connect, 6)
             
             # Initialize packet builders
             self._left_builder = PacketBuilder()
@@ -93,8 +115,13 @@ class BluetoothTransport:
             pkt_left = self._left_builder.build_write_system_mode(SYSTEM_MODE_CONNECT)
             pkt_right = self._right_builder.build_write_system_mode(SYSTEM_MODE_CONNECT)
             
-            self._left_conn.send_packet(pkt_left)
-            self._right_conn.send_packet(pkt_right)
+            # Use async send for WinRT
+            if sys.platform == "win32":
+                await self._left_conn.send_async(self._left_conn.encryptor.encrypt(pkt_left))
+                await self._right_conn.send_async(self._right_conn.encryptor.encrypt(pkt_right))
+            else:
+                self._left_conn.send_packet(pkt_left)
+                self._right_conn.send_packet(pkt_right)
             
             await asyncio.sleep(0.3)  # Wait for ACK
             
@@ -103,8 +130,12 @@ class BluetoothTransport:
             pkt_left = self._left_builder.build_write_drive_mode(DRIVE_MODE_REMOTE)
             pkt_right = self._right_builder.build_write_drive_mode(DRIVE_MODE_REMOTE)
             
-            self._left_conn.send_packet(pkt_left)
-            self._right_conn.send_packet(pkt_right)
+            if sys.platform == "win32":
+                await self._left_conn.send_async(self._left_conn.encryptor.encrypt(pkt_left))
+                await self._right_conn.send_async(self._right_conn.encryptor.encrypt(pkt_right))
+            else:
+                self._left_conn.send_packet(pkt_left)
+                self._right_conn.send_packet(pkt_right)
             
             await asyncio.sleep(0.3)
             
@@ -131,19 +162,31 @@ class BluetoothTransport:
                     pkt_right = self._right_builder.build_write_drive_mode(DRIVE_MODE_NORMAL)
                     
                     if self._left_conn:
-                        self._left_conn.send_packet(pkt_left)
+                        if sys.platform == "win32":
+                            await self._left_conn.send_async(self._left_conn.encryptor.encrypt(pkt_left))
+                        else:
+                            self._left_conn.send_packet(pkt_left)
                     if self._right_conn:
-                        self._right_conn.send_packet(pkt_right)
+                        if sys.platform == "win32":
+                            await self._right_conn.send_async(self._right_conn.encryptor.encrypt(pkt_right))
+                        else:
+                            self._right_conn.send_packet(pkt_right)
                     
                     await asyncio.sleep(0.1)
             
             # Close connections
             if self._left_conn:
-                self._left_conn.disconnect()
+                if sys.platform == "win32":
+                    await self._left_conn.disconnect_async()
+                else:
+                    self._left_conn.disconnect()
                 self._left_conn = None
             
             if self._right_conn:
-                self._right_conn.disconnect()
+                if sys.platform == "win32":
+                    await self._right_conn.disconnect_async()
+                else:
+                    self._right_conn.disconnect()
                 self._right_conn = None
             
             self._connected = False
@@ -175,9 +218,13 @@ class BluetoothTransport:
             pkt_right = self._right_builder.build_write_remote_speed(right_speed)
             
             # Send to both wheels
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._left_conn.send_packet, pkt_left)
-            await loop.run_in_executor(None, self._right_conn.send_packet, pkt_right)
+            if sys.platform == "win32":
+                await self._left_conn.send_async(self._left_conn.encryptor.encrypt(pkt_left))
+                await self._right_conn.send_async(self._right_conn.encryptor.encrypt(pkt_right))
+            else:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._left_conn.send_packet, pkt_left)
+                await loop.run_in_executor(None, self._right_conn.send_packet, pkt_right)
             
             logger.debug(f"Sent command: L={left_speed:+4d} R={right_speed:+4d}")
             return True
