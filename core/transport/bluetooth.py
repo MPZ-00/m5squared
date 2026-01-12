@@ -1,8 +1,8 @@
 """
 Bluetooth Transport - Wraps existing m25_ Bluetooth code.
 
-Uses BLE (Bleak) on Windows since RFCOMM has connection issues.
-Uses SPP (socket-based) on Linux.
+Uses BLE (Bleak) cross-platform - power-efficient with notification support.
+Falls back to SPP/RFCOMM on Linux if BLE not available.
 """
 
 import asyncio
@@ -13,11 +13,18 @@ import sys
 
 from core.types import CommandFrame, VehicleState
 
-# Use BLE on Windows, SPP on Linux
-if sys.platform == "win32":
-    from m25_bluetooth_windows import M25WindowsBluetooth as BluetoothConnection
-else:
-    from m25_spp import BluetoothConnection
+# Try BLE first (cross-platform, power-efficient, supports notifications)
+try:
+    from m25_bluetooth_ble import M25BluetoothBLE as BluetoothConnection
+    BLUETOOTH_TYPE = "BLE"
+except ImportError:
+    # Fallback to platform-specific
+    if sys.platform == "win32":
+        from m25_bluetooth_windows import M25WindowsBluetooth as BluetoothConnection
+        BLUETOOTH_TYPE = "BLE-Legacy"
+    else:
+        from m25_spp import BluetoothConnection
+        BLUETOOTH_TYPE = "RFCOMM"
 
 from m25_spp import PacketBuilder
 from m25_protocol_data import (
