@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 BLE Notifications Demo - Power-Efficient Communication
 
@@ -7,11 +7,15 @@ battery-efficient operation. The wheelchair wheels only wake up to send
 data when they have something to report, rather than staying awake to
 respond to constant read requests.
 
-Power Comparison:
-- Polling (receive_packet): ~2-5 mA continuous drain on wheel battery
-- Notifications: ~0.1-0.5 mA (only wakes to send data)
+Power Efficiency:
+- Polling (receive_packet): Device must wake for every read request
+- Notifications: Device only wakes when it has data to send
 
-This can significantly extend wheelchair battery life during operation.
+This extends wheelchair battery life by minimizing BLE radio usage,
+preserving power for the drive motor (280W) and wheelchair operation.
+
+M25 Battery: Lithium-ion 10ICR19/66-2, 36.5V
+Range: 25 km per charge (ISO 7176-4)
 """
 
 import asyncio
@@ -23,7 +27,7 @@ from dotenv import load_dotenv
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from m25_bluetooth_windows import M25WindowsBluetooth
+from m25_bluetooth_ble import M25BluetoothBLE
 
 
 async def demo_with_callback():
@@ -40,7 +44,7 @@ async def demo_with_callback():
         return
     
     # Create connection
-    bt = M25WindowsBluetooth(
+    bt = M25BluetoothBLE(
         address=left_addr,
         key=left_key if left_key else None,
         name="left_wheel",
@@ -96,7 +100,7 @@ async def demo_with_queue():
         return
     
     # Create connection
-    bt = M25WindowsBluetooth(
+    bt = M25BluetoothBLE(
         address=left_addr,
         key=left_key if left_key else None,
         name="left_wheel",
@@ -153,7 +157,7 @@ async def demo_polling_comparison():
         return
     
     # Create connection
-    bt = M25WindowsBluetooth(
+    bt = M25BluetoothBLE(
         address=left_addr,
         key=left_key if left_key else None,
         name="left_wheel",

@@ -1,29 +1,35 @@
-# BLE Communication on Windows
+# Cross-Platform BLE Communication
 
 ## Overview
 
-The `m25_bluetooth_windows.py` module provides Bluetooth Low Energy (BLE) communication for M25 wheelchair wheels on Windows using the Bleak library. It replaces traditional RFCOMM (Bluetooth Classic) which has reliability issues on Windows, including automatic disconnection after pairing and inability to maintain connections to both wheels simultaneously.
+The `m25_bluetooth_ble.py` module provides Bluetooth Low Energy (BLE) communication for M25 wheelchair wheels on **Windows, Linux, and macOS** using the Bleak library. Bleak has native support for all major operating systems.
+
+This replaces platform-specific implementations:
+- **Windows**: Replaces RFCOMM (fixes auto-disconnect issues)
+- **Linux**: Alternative to PyBluez RFCOMM (when BLE devices available)
+- **macOS**: Native BLE support
 
 ## Why BLE Instead of RFCOMM?
 
-**Windows RFCOMM Issues:**
-- Auto-disconnects after Bluetooth pairing completes
-- Cannot maintain simultaneous connections to both wheels
-- Unreliable connection management in PyBluez
+**RFCOMM/Bluetooth Classic Issues:**
+- Windows: Auto-disconnects after Bluetooth pairing
+- Windows: Cannot maintain simultaneous connections to both wheels
+- Linux: PyBluez dependencies can be complex
+- Cross-platform inconsistencies
 
 **BLE Advantages:**
-- Native Windows support through Bleak library
-- Stable connections without auto-disconnect
-- Can connect to multiple devices simultaneously
-- Cross-platform (Windows, Linux, macOS)
-- No pairing required
-- **Power-efficient notifications** (device pushes data instead of polling)
+- **Cross-platform**: Single codebase works on Windows, Linux, macOS
+- **Native support**: Bleak uses platform-native BLE APIs
+- **Stable connections**: No auto-disconnect issues
+- **Multiple devices**: Can connect to both wheels simultaneously
+- **No pairing required**: Direct BLE connection
+- **Power-efficient notifications**: Device pushes data instead of polling
 
 ## Power Efficiency - Notifications vs Polling
 
-**Critical for battery life:** The M25 wheels run on batteries, so power consumption matters.
+**Critical for battery life:** The M25 wheels run on batteries (Lithium-ion 10ICR19/66-2, 36.5V), so minimizing power consumption is important.
 
-### Polling (Old Way - Bad for Battery)
+### Polling (Old Way - Less Efficient)
 
 ```python
 # Client constantly reads - device must stay awake
@@ -32,18 +38,18 @@ while True:
     await asyncio.sleep(0.1)
 ```
 
-**Power consumption:** ~2-5 mA continuous drain on wheel battery
+**Impact:** Device must wake from sleep for every read request, even when it has no data to send. The BLE radio remains more active, consuming more battery power.
 
-### Notifications (New Way - Battery Friendly)
+### Notifications (New Way - More Efficient)
 
 ```python
 # Device pushes data only when needed - sleeps otherwise
 await bt.start_notifications(callback)  # Device wakes ONLY to send data
 ```
 
-**Power consumption:** ~0.1-0.5 mA (10-50x more efficient!)
+**Impact:** Device sleeps deeply between events and only wakes its BLE radio when it actually has data to send. This significantly reduces battery consumption and extends operating time.
 
-This can extend wheelchair battery life by hours during operation.
+**Result:** Longer wheelchair operation time between charges, preserving battery for the 280W drive motor rather than communication overhead.
 
 ## Nordic UART Service (NUS)
 
@@ -79,12 +85,12 @@ This ensures compatibility with both standard NUS implementations and devices us
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ Application Layer                                            │
+│ Application Layer                                           │
 │ (demos/demo_gamepad_live.py, etc.)                          │
 └──────────────────────┬──────────────────────────────────────┘
                        │
 ┌──────────────────────▼──────────────────────────────────────┐
-│ Transport Layer                                              │
+│ Transport Layer                                             │
 │ (core/transport/bluetooth.py)                               │
 │ - Platform detection (Windows vs Linux)                     │
 │ - Encrypts data before sending                              │
@@ -92,7 +98,7 @@ This ensures compatibility with both standard NUS implementations and devices us
                        │
          ┌─────────────┴─────────────┐
          │                           │
-┌────────▼──────────┐    ┌──────────▼──────────┐
+┌────────▼──────────┐    ┌───────────▼─────────┐
 │ Windows (BLE)     │    │ Linux (RFCOMM)      │
 │ m25_bluetooth_    │    │ m25_spp.py          │
 │   windows.py      │    │                     │
@@ -125,10 +131,10 @@ The transport layer handles encryption externally and uses `send_async()` to avo
 ### Basic Connection (No Encryption)
 
 ```python
-from m25_bluetooth_windows import M25WindowsBluetooth
+from m25_bluetooth_ble import M25BluetoothBLE
 
 # Create instance
-bt = M25WindowsBluetooth(
+bt = M25BluetoothBLE(
     address="AA:BB:CC:DD:EE:FF",
     name="left_wheel",
     debug=True
@@ -147,10 +153,10 @@ await bt.disconnect()
 ### Connection with Encryption
 
 ```python
-from m25_bluetooth_windows import M25WindowsBluetooth
+from m25_bluetooth_ble import M25BluetoothBLE
 
 # Create instance with encryption key
-bt = M25WindowsBluetooth(
+bt = M25BluetoothBLE(
     address="AA:BB:CC:DD:EE:FF",
     key=b"16-byte-key-here",
     name="left_wheel",
@@ -175,9 +181,9 @@ await bt.disconnect()
 Instead of polling, use notifications to save battery power:
 
 ```python
-from m25_bluetooth_windows import M25WindowsBluetooth
+from m25_bluetooth_ble import M25BluetoothBLE
 
-bt = M25WindowsBluetooth(
+bt = M25BluetoothBLE(
     address="AA:BB:CC:DD:EE:FF",
     key=b"16-byte-key-here",
     name="left_wheel",
@@ -211,9 +217,9 @@ await bt.disconnect()
 ### Scanning for Devices
 
 ```python
-from m25_bluetooth_windows import M25WindowsBluetooth
+from m25_bluetooth_ble import M25BluetoothBLE
 
-bt = M25WindowsBluetooth(debug=True)
+bt = M25BluetoothBLE(debug=True)
 
 # Scan for all BLE devices (10 seconds)
 devices = await bt.scan(duration=10)
@@ -231,7 +237,7 @@ for addr, name in devices:
 For backward compatibility and simpler code:
 
 ```python
-from m25_bluetooth_windows import scan_devices, connect_device
+from m25_bluetooth_ble import scan_devices, connect_device
 
 # Scan (blocks until complete)
 devices = scan_devices(duration=10, filter_m25=True)
@@ -248,12 +254,12 @@ if bt:
 
 ## Class Reference
 
-### `M25WindowsBluetooth`
+### `M25BluetoothBLE`
 
 #### Constructor
 
 ```python
-M25WindowsBluetooth(
+M25BluetoothBLE(
     address: str = None,
     key: bytes = None,
     name: str = "wheel",
@@ -419,19 +425,19 @@ The module includes a CLI for testing:
 
 ```bash
 # Scan for all devices
-python m25_bluetooth_windows.py scan
+python m25_bluetooth_ble.py scan
 
 # Scan for M25 wheels only
-python m25_bluetooth_windows.py scan --m25 --duration 20
+python m25_bluetooth_ble.py scan --m25 --duration 20
 
 # Connect to device
-python m25_bluetooth_windows.py connect AA:BB:CC:DD:EE:FF
+python m25_bluetooth_ble.py connect AA:BB:CC:DD:EE:FF
 
 # Disconnect
-python m25_bluetooth_windows.py disconnect
+python m25_bluetooth_ble.py disconnect
 
 # Check status
-python m25_bluetooth_windows.py status
+python m25_bluetooth_ble.py status
 ```
 
 ## Dependencies
@@ -446,8 +452,41 @@ Install dependencies:
 pip install bleak
 ```
 
+### Platform-Specific Notes
+
+**Windows:**
+- Requires Windows 10 version 16299 (Fall Creators Update) or later
+- Built-in Bluetooth support (no drivers needed)
+
+**Linux:**
+- Requires BlueZ (usually pre-installed)
+- May need to run with elevated privileges or add user to `bluetooth` group:
+  ```bash
+  sudo usermod -a -G bluetooth $USER
+  ```
+
+**macOS:**
+- Requires macOS 10.13 (High Sierra) or later
+- Built-in Bluetooth support (no setup needed)
+
 ## See Also
 
 - [M25 Protocol Documentation](m25-protocol.md)
 - [Windows Setup Guide](windows-setup.md)
 - [Usage and Setup](usage-setup.md)
+
+## Migration from Old Modules
+
+If you're using `m25_bluetooth_windows.py` or platform-specific RFCOMM:
+
+```python
+# Old (Windows-only)
+from m25_bluetooth_windows import M25WindowsBluetooth
+bt = M25WindowsBluetooth(...)
+
+# New (cross-platform)
+from m25_bluetooth_ble import M25BluetoothBLE
+bt = M25BluetoothBLE(...)
+```
+
+The API is identical - just change the import and class name.
