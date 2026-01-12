@@ -15,7 +15,7 @@ from core.types import CommandFrame, VehicleState
 
 # Use BLE on Windows, SPP on Linux
 if sys.platform == "win32":
-    from m25_ble import M25BLEConnection as BluetoothConnection
+    from m25_bluetooth_windows import M25WindowsBluetooth as BluetoothConnection
 else:
     from m25_spp import BluetoothConnection
 

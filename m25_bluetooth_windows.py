@@ -24,8 +24,9 @@ except ImportError:
 try:
     from m25_protocol import calculate_crc, remove_delimiters
     from m25_utils import parse_hex
+    from m25_crypto import M25Encryptor, M25Decryptor
 except ImportError:
-    print("ERROR: m25_protocol.py or m25_utils.py not found", file=sys.stderr)
+    print("ERROR: m25_protocol.py, m25_utils.py, or m25_crypto.py not found", file=sys.stderr)
     sys.exit(1)
 
 
@@ -39,9 +40,31 @@ STATE_FILE = Path.home() / ".m5squared" / "windows_state.json"
 class M25WindowsBluetooth:
     """Windows Bluetooth handler for M25 devices using Bleak"""
     
-    def __init__(self):
+    def __init__(self, address: str = None, key: bytes = None, name: str = "wheel", debug: bool = False):
+        """
+        Initialize BLE connection
+        
+        Args:
+            address: Bluetooth address (can be set later)
+            key: Encryption key (16 bytes, can be set later)
+            name: Friendly name for logging
+            debug: Enable debug output
+        """
+        self.address = address
+        self.key = key
+        self.name = name
+        self.debug = debug
+        
         self.client: Optional[BleakClient] = None
         self.connected = False
+        
+        # Encryption (only if key provided)
+        self.encryptor = M25Encryptor(key) if key else None
+        self.decryptor = M25Decryptor(key) if key else None
+        
+        # BLE characteristics
+        self._tx_char = None
+        self._rx_char = None
         
     async def scan(self, duration: int = 10, filter_m25: bool = False) -> List[Tuple[str, str]]:
         """
@@ -66,32 +89,22 @@ class M25WindowsBluetooth:
         for addr, (device, adv_data) in devices.items():
             name = device.name or "Unknown"
             
-            # Filter for M25 devices if requested
+            # Filter if requested
             if filter_m25:
                 if not any(prefix.lower() in name.lower() for prefix in M25_DEVICE_PREFIXES):
                     continue
-                    
-            results.append((addr, name))
-            print(f"  [{addr}] {name}")
-            if adv_data.rssi:
-                print(f"      RSSI: {adv_data.rssi} dBm")
-            print()
-        
-        if not results:
-            print("No devices found.")
-            if filter_m25:
-                print("Tip: Try without --m25 filter to see all devices")
-        else:
-            print(f"Found {len(results)} device(s)")
             
+            results.append((addr, name))
+            print(f"  {addr:20s} {name}")
+        
         return results
     
-    async def connect(self, address: str, timeout: int = 10) -> bool:
+    async def connect(self, address: str = None, timeout: int = 10) -> bool:
         """
         Connect to an M25 device
         
         Args:
-            address: Bluetooth MAC address
+            address: Bluetooth MAC address (uses self.address if not provided)
             timeout: Connection timeout
             
         Returns:
@@ -99,118 +112,205 @@ class M25WindowsBluetooth:
         """
         if not HAS_BLEAK:
             return False
-            
-        print(f"Connecting to {address}...")
+        
+        # Use provided address or instance address
+        addr = address or self.address
+        if not addr:
+            print("No address provided", file=sys.stderr)
+            return False
+        
+        self.address = addr
+        
+        if self.debug:
+            print(f"[{self.name}] Connecting to {addr}...")
         
         try:
-            self.client = BleakClient(address, timeout=timeout)
+            self.client = BleakClient(addr, timeout=timeout)
             await self.client.connect()
             self.connected = self.client.is_connected
             
             if self.connected:
-                print(f"Connected to {address}")
-                self._save_state(address)
-                return True
-            else:
-                print(f"Failed to connect to {address}")
-                return False
+                if self.debug:
+                    print(f"[{self.name}] Connected, discovering characteristics...")
                 
+                # Discover TX/RX characteristics
+                await self._discover_characteristics()
+                
+                if self.debug:
+                    print(f"[{self.name}] Ready (encryption={'enabled' if self.encryptor else 'disabled'})")
+            
+            return self.connected
+            
         except Exception as e:
-            print(f"Connection error: {e}", file=sys.stderr)
+            print(f"[{self.name}] Connection error: {e}", file=sys.stderr)
+            self.connected = False
             return False
     
     async def disconnect(self):
-        """Disconnect from current device"""
+        """Disconnect from the device"""
         if self.client and self.connected:
-            await self.client.disconnect()
-            self.connected = False
-            self._clear_state()
-            print("Disconnected")
+            try:
+                await self.client.disconnect()
+            except Exception as e:
+                if self.debug:
+                    print(f"[{self.name}] Disconnect error: {e}", file=sys.stderr)
+            finally:
+                self.connected = False
+                self.client = None
+                
+            if self.debug:
+                print(f"[{self.name}] Disconnected")
     
     async def send_packet(self, data: bytes) -> bool:
         """
-        Send data packet to connected device
+        Send raw packet data (will be encrypted if encryptor is set)
         
         Args:
-            data: Raw bytes to send
+            data: Raw packet bytes (unencrypted if encryptor exists)
             
         Returns:
             True if sent successfully
         """
-        if not self.connected or not self.client:
-            print("Not connected to any device", file=sys.stderr)
+        if not self.connected or not self.client or not self._tx_char:
+            if self.debug:
+                print(f"[{self.name}] Not connected or no TX char", file=sys.stderr)
             return False
-            
+        
         try:
-            # For M25, we need to find the correct characteristic
-            # This is a simplified version - you may need to adjust based on device
-            services = await self.client.get_services()
+            # Encrypt if encryptor is available
+            send_data = self.encryptor.encrypt(data) if self.encryptor else data
             
-            # Look for Serial Port Profile or similar characteristic
-            for service in services:
-                for char in service.characteristics:
-                    if "write" in char.properties:
-                        await self.client.write_gatt_char(char, data)
-                        return True
-                        
-            print("No writable characteristic found", file=sys.stderr)
-            return False
+            await self.client.write_gatt_char(self._tx_char, send_data, response=False)
+            
+            if self.debug:
+                print(f"[{self.name}] Sent {len(send_data)} bytes (encrypted={self.encryptor is not None})")
+            
+            return True
             
         except Exception as e:
-            print(f"Send error: {e}", file=sys.stderr)
+            print(f"[{self.name}] Send error: {e}", file=sys.stderr)
+            return False
+    
+    async def send_async(self, encrypted_data: bytes) -> bool:
+        """
+        Send already-encrypted data
+        
+        Args:
+            encrypted_data: Pre-encrypted data to send
+            
+        Returns:
+            True if sent successfully
+        """
+        if not self.connected or not self.client or not self._tx_char:
+            if self.debug:
+                print(f"[{self.name}] Not connected or no TX char", file=sys.stderr)
+            return False
+        
+        try:
+            await self.client.write_gatt_char(self._tx_char, encrypted_data, response=False)
+            
+            if self.debug:
+                print(f"[{self.name}] Sent {len(encrypted_data)} bytes (pre-encrypted)")
+            
+            return True
+            
+        except Exception as e:
+            print(f"[{self.name}] Send error: {e}", file=sys.stderr)
             return False
     
     async def receive_packet(self, timeout: int = 5) -> Optional[bytes]:
         """
-        Receive data packet from device
+        Receive raw packet data (decrypts if decryptor is set)
         
         Args:
             timeout: Receive timeout in seconds
             
         Returns:
-            Received bytes or None
+            Received bytes (decrypted if decryptor exists) or None
         """
-        if not self.connected or not self.client:
-            print("Not connected to any device", file=sys.stderr)
+        if not self.connected or not self.client or not self._rx_char:
+            if self.debug:
+                print(f"[{self.name}] Not connected or no RX char", file=sys.stderr)
             return None
-            
+        
         try:
-            # For notifications/indications
-            # This is simplified - proper implementation would set up notification handlers
-            services = await self.client.get_services()
+            # Read from characteristic
+            data = await self.client.read_gatt_char(self._rx_char)
             
-            for service in services:
-                for char in service.characteristics:
-                    if "read" in char.properties:
-                        data = await self.client.read_gatt_char(char)
-                        return bytes(data)
-                        
+            if data:
+                # Decrypt if decryptor is available
+                decrypted = self.decryptor.decrypt(bytes(data)) if self.decryptor else bytes(data)
+                
+                if self.debug:
+                    print(f"[{self.name}] Received {len(data)} bytes (decrypted={self.decryptor is not None})")
+                
+                return decrypted
+            
             return None
             
         except Exception as e:
-            print(f"Receive error: {e}", file=sys.stderr)
+            if self.debug:
+                print(f"[{self.name}] Receive error: {e}", file=sys.stderr)
             return None
     
-    def _save_state(self, address: str):
-        """Save connection state"""
-        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        state = {"address": address, "connected": True}
-        STATE_FILE.write_text(json.dumps(state, indent=2))
+    def is_connected(self) -> bool:
+        """Check if currently connected"""
+        return self.connected and self.client and self.client.is_connected
     
-    def _clear_state(self):
-        """Clear connection state"""
-        if STATE_FILE.exists():
-            STATE_FILE.unlink()
+    # Alias for compatibility
+    async def connect_async(self, timeout: int = 10) -> bool:
+        """Async connect (alias for connect)"""
+        return await self.connect(timeout=timeout)
     
-    @staticmethod
-    def load_state() -> dict:
-        """Load saved connection state"""
-        if STATE_FILE.exists():
-            try:
-                return json.loads(STATE_FILE.read_text())
-            except:
-                pass
-        return {}
+    async def disconnect_async(self):
+        """Async disconnect (alias for disconnect)"""
+        await self.disconnect()
+    
+    async def _discover_characteristics(self):
+        """Discover TX/RX characteristics for Nordic UART service"""
+        if not self.client or not self.client.is_connected:
+            return
+        
+        # Nordic UART UUIDs
+        NUS_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
+        NUS_TX_CHAR = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"  # Write (client -> device)
+        NUS_RX_CHAR = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"  # Notify (device -> client)
+        
+        services = self.client.services
+        
+        # Try Nordic UART first
+        for service in services:
+            if service.uuid.lower() == NUS_SERVICE:
+                for char in service.characteristics:
+                    if char.uuid.lower() == NUS_TX_CHAR:
+                        self._tx_char = char.uuid
+                        if self.debug:
+                            print(f"[{self.name}] TX: {char.uuid}")
+                    elif char.uuid.lower() == NUS_RX_CHAR:
+                        self._rx_char = char.uuid
+                        if self.debug:
+                            print(f"[{self.name}] RX: {char.uuid}")
+        
+        # Fallback: find any write/notify characteristics
+        if not self._tx_char or not self._rx_char:
+            if self.debug:
+                print(f"[{self.name}] Nordic UART not found, searching for write/notify characteristics...")
+            
+            for service in services:
+                for char in service.characteristics:
+                    if not self._tx_char and ("write" in char.properties or "write-without-response" in char.properties):
+                        self._tx_char = char.uuid
+                        if self.debug:
+                            print(f"[{self.name}] TX (fallback): {char.uuid}")
+                    if not self._rx_char and ("notify" in char.properties or "read" in char.properties):
+                        self._rx_char = char.uuid
+                        if self.debug:
+                            print(f"[{self.name}] RX (fallback): {char.uuid}")
+        
+        if not self._tx_char:
+            print(f"[{self.name}] WARNING: No TX characteristic found", file=sys.stderr)
+        if not self._rx_char:
+            print(f"[{self.name}] WARNING: No RX characteristic found", file=sys.stderr)
 
 
 # Synchronous wrappers for backward compatibility
@@ -220,10 +320,10 @@ def scan_devices(duration: int = 10, filter_m25: bool = False) -> List[Tuple[str
     return asyncio.run(bt.scan(duration, filter_m25))
 
 
-def connect_device(address: str, timeout: int = 10) -> M25WindowsBluetooth:
+def connect_device(address: str, key: bytes = None, timeout: int = 10) -> M25WindowsBluetooth:
     """Synchronous wrapper for connect"""
-    bt = M25WindowsBluetooth()
-    success = asyncio.run(bt.connect(address, timeout))
+    bt = M25WindowsBluetooth(address=address, key=key)
+    success = asyncio.run(bt.connect(timeout=timeout))
     return bt if success else None
 
 
