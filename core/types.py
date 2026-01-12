@@ -25,7 +25,7 @@ class SupervisorState(Enum):
     PAIRED = "paired"              # Connected but not ready to drive
     ARMED = "armed"                # Ready to drive, waiting for input
     DRIVING = "driving"            # Actively controlling vehicles
-    FAILSAFE = "failsafe"         # Emergency state, sending stop commands
+    FAILSAFE = "failsafe"          # Emergency state, sending stop commands
 
 
 @dataclass
