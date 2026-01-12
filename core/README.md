@@ -12,8 +12,7 @@ The core module provides a safety-first, pluggable architecture for controlling 
 InputProvider → ControlState → Mapper → CommandFrame → Transport → Vehicle
                                   ↑                          ↓
                             Supervisor ←── VehicleState ─────┘
-                          (State Machine
-                           & Watchdogs)
+                          (State Machine & Watchdogs)
 ```
 
 ## Core Components
