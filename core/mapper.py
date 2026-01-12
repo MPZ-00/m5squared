@@ -70,6 +70,8 @@ class Mapper:
         
         # Apply mode-specific speed limit
         max_speed = self.config.get_max_speed(state.mode)
+        left = left * max_speed  # Scale to actual speed values
+        right = right * max_speed
         left = self._clamp(left, -max_speed, max_speed)
         right = self._clamp(right, -max_speed, max_speed)
         
