@@ -156,27 +156,48 @@ async def demo_with_m25_parking() -> None:
     logger.info("M25 PARKING INTEGRATION DEMO")
     logger.info("=" * 60)
     logger.info("")
-    logger.info("This demo shows how to integrate with existing")
-    logger.info("m25_parking.py code in dry-run mode.")
-    logger.info("")
-    
-    # Note: Actual integration with m25_parking would require
-    # adapting run_remote_test() to work with our Transport interface.
-    # For now, we demonstrate the core architecture separately.
-    
-    from m25_parking import run_remote_test
-    
-    logger.info("Running m25_parking in dry-run mode...")
+    logger.info("Running m25_parking.run_remote_test() in DRY-RUN mode")
     logger.info("(This uses the original author's code)")
     logger.info("")
     
-    # Run the original parking test in dry-run mode
-    # This doesn't actually connect to hardware
     try:
-        # Note: run_remote_test expects certain args
-        # For demo purposes, we'll show how it could be called
-        logger.info("To run m25_parking.run_remote_test():")
-        logger.info("  python m25_parking.py --dry-run")
+        import os
+        from m25_parking import run_remote_test
+        from m25_spp import BluetoothConnection
+        from m25_utils import parse_key
+        
+        # Try to load from .env or use mock values
+        left_addr = os.getenv("M25_LEFT_ADDR", "AA:BB:CC:DD:EE:FF")
+        right_addr = os.getenv("M25_RIGHT_ADDR", "FF:EE:DD:CC:BB:AA")
+        left_key_str = os.getenv("M25_LEFT_KEY", "0123456789ABCDEF0123456789ABCDEF")
+        right_key_str = os.getenv("M25_RIGHT_KEY", "FEDCBA9876543210FEDCBA9876543210")
+        
+        logger.info(f"Using addresses: L={left_addr}, R={right_addr}")
+        logger.info(f"Using mock keys (dry-run, won't actually connect)")
+        logger.info("")
+        
+        # Parse keys
+        left_key = parse_key(left_key_str)
+        right_key = parse_key(right_key_str)
+        
+        # Create connection objects (won't actually connect in dry-run mode)
+        left_conn = BluetoothConnection(left_addr, left_key)
+        right_conn = BluetoothConnection(right_addr, right_key)
+        
+        # Run the parking test in dry-run mode
+        logger.info("Executing parking sequence...")
+        logger.info("")
+        run_remote_test(
+            left_conn=left_conn,
+            right_conn=right_conn,
+            speed=80,  # Slow speed
+            duration_ms=500,
+            dry_run=True  # Won't send actual Bluetooth packets
+        )
+        
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("Dry-run completed successfully!")
         logger.info("")
         logger.info("Our core architecture complements this by providing:")
         logger.info("  - Type-safe interfaces")
@@ -185,7 +206,9 @@ async def demo_with_m25_parking() -> None:
         logger.info("  - State machine supervision")
         
     except Exception as e:
-        logger.error(f"Error: {e}")
+        logger.error(f"Error running parking demo: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 async def main() -> None:
