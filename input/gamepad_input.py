@@ -155,29 +155,26 @@ class GamepadInput:
     
     def _log_controller_state(self, x: float, y: float, deadman: bool, hat: tuple) -> None:
         """Log detailed controller state for debugging"""
-        # Build axes string
-        axes_str = f"Axis 0 (X): {x:+.3f}, Axis 1 (Y): {y:+.3f}"
+        parts = []
         
-        # Add additional axes if present
-        if self._joystick.get_numaxes() > 2:
-            axes_str += f", Axis 2: {self._joystick.get_axis(2):+.3f}"
-        if self._joystick.get_numaxes() > 3:
-            axes_str += f", Axis 3: {self._joystick.get_axis(3):+.3f}"
+        # Show main axes (after deadzone)
+        parts.append(f"Stick: X={x:+.2f} Y={y:+.2f}")
         
-        # Build buttons string - show which buttons are pressed
-        pressed_buttons = []
+        # Show ALL buttons pressed
+        pressed = []
         for i in range(self._joystick.get_numbuttons()):
             if self._joystick.get_button(i):
-                pressed_buttons.append(str(i))
-        buttons_str = f"Buttons: [{', '.join(pressed_buttons)}]" if pressed_buttons else "Buttons: []"
+                pressed.append(str(i))
+        parts.append(f"Buttons: [{', '.join(pressed) if pressed else 'none'}]")
         
-        # Hat (D-pad) state
-        hat_str = f"Hat: {hat}"
+        # Show hat if present
+        if self._joystick.get_numhats() > 0:
+            parts.append(f"Hat: {hat}")
         
-        # Final control state
-        control_str = f"vx={y:+.2f}, vy={x:+.2f}, deadman={deadman}, mode={self._mode.name}"
+        # Show result
+        parts.append(f"→ vx={y:+.2f} vy={x:+.2f} deadman={deadman} mode={self._mode.name}")
         
-        logger.info(f"{axes_str} | {buttons_str} | {hat_str} | → {control_str}")
+        logger.info(" | ".join(parts))
     
     def _cycle_mode_up(self) -> None:
         """Cycle to faster drive mode"""
