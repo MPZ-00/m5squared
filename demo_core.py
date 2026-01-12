@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-M5Squared Core Demo - Simple example application.
+m5Squared Core Demo - Simple example application.
 
 Demonstrates the new core architecture with mock components.
 """
@@ -30,7 +30,7 @@ async def run_demo():
     """Run a simple demo with mock components"""
     
     logger.info("=" * 60)
-    logger.info("M5Squared Core Architecture Demo")
+    logger.info("m5Squared Core Architecture Demo")
     logger.info("=" * 60)
     
     # Create components

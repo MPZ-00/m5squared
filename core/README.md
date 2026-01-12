@@ -1,4 +1,4 @@
-# M5Squared Core Architecture
+# m5Squared Core Architecture
 
 **Clean, typed, testable wheelchair control system.**
 
