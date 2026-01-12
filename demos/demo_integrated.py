@@ -113,36 +113,93 @@ async def demo_scripted_movement() -> None:
     """
     Demo with scripted movement sequence.
     
-    Shows how to use test scripts instead of keyboard input.
+    Shows how to use test scripts and displays what protocol
+    commands would be sent to the hardware.
     """
     logger.info("=" * 60)
     logger.info("SCRIPTED MOVEMENT DEMO")
     logger.info("=" * 60)
+    logger.info("")
+    logger.info("Running scripted movement sequence with protocol preview")
+    logger.info("")
     
     # Create input with scripted sequence
     input_provider = MockInput()
     input_provider.load_script("forward_turn_stop")
     
-    # Create other components
+    # Create mapper and transport
     mapper = Mapper(MapperConfig())
     transport = MockTransport()
     
-    supervisor = Supervisor(
-        input_provider=input_provider,
-        mapper=mapper,
-        transport=transport,
-        config=SupervisorConfig()
-    )
+    # Import protocol builder to show what would be sent
+    from m25_spp import PacketBuilder
+    from m25_protocol_data import SYSTEM_MODE_CONNECT, DRIVE_MODE_REMOTE, DRIVE_MODE_NORMAL
     
-    try:
-        # Run for limited time (script will auto-complete)
-        await asyncio.wait_for(supervisor.run(), timeout=10.0)
+    builder = PacketBuilder()
     
-    except asyncio.TimeoutError:
-        logger.info("Script completed")
+    # Start input provider
+    await input_provider.start()
     
-    finally:
-        supervisor.stop()
+    logger.info("Script sequence: forward_turn_stop (12 steps)")
+    logger.info("")
+    logger.info("Protocol commands that would be sent:")
+    logger.info("-" * 60)
+    
+    # Show connection initialization
+    pkt_init = builder.build_write_system_mode(SYSTEM_MODE_CONNECT)
+    logger.info(f"[INIT] WRITE_SYSTEM_MODE = 0x01 (connect)")
+    logger.info(f"       Packet: {pkt_init.hex()}")
+    
+    pkt_mode = builder.build_write_drive_mode(DRIVE_MODE_REMOTE)
+    logger.info(f"[MODE] WRITE_DRIVE_MODE = 0x04 (remote)")
+    logger.info(f"       Packet: {pkt_mode.hex()}")
+    logger.info("")
+    
+    # Process script states and show commands
+    step = 0
+    while step < 12:  # Process all 12 script steps
+        control = await input_provider.read_control_state()
+        if control is None:
+            break
+        
+        # Map to command
+        command = mapper.map(control)
+        
+        # Build actual protocol packet (needs single speed value, left is negated)
+        # The m25 protocol uses one value, with left wheel getting the negative
+        avg_speed = (command.left_speed + command.right_speed) // 2
+        pkt = builder.build_write_remote_speed(avg_speed)
+        
+        # Show the command
+        logger.info(
+            f"[{step:2d}] vx={control.vx:+.2f} vy={control.vy:+.2f} deadman={control.deadman} "
+            f"-> L={command.left_speed:+4d} R={command.right_speed:+4d} (avg={avg_speed})"
+        )
+        logger.info(f"     Packet: {pkt.hex()}")
+        
+        step += 1
+        await asyncio.sleep(0.1)  # Small delay between steps
+    
+    # Show cleanup
+    logger.info("")
+    pkt_stop = builder.build_write_remote_speed(0)
+    logger.info(f"[STOP] WRITE_REMOTE_SPEED = 0 (stop)")
+    logger.info(f"       Packet: {pkt_stop.hex()}")
+    
+    pkt_normal = builder.build_write_drive_mode(DRIVE_MODE_NORMAL)
+    logger.info(f"[MODE] WRITE_DRIVE_MODE = 0x00 (normal)")
+    logger.info(f"       Packet: {pkt_normal.hex()}")
+    
+    await input_provider.stop()
+    
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("SCRIPTED DEMO COMPLETE")
+    logger.info("")
+    logger.info("This shows the exact protocol packets that would be sent")
+    logger.info("to the wheelchair hardware. In dry-run mode, no actual")
+    logger.info("Bluetooth communication occurs.")
+    logger.info("=" * 60)
 
 
 async def demo_with_m25_parking() -> None:
