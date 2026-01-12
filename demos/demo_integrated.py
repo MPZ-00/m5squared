@@ -162,13 +162,24 @@ async def demo_with_m25_parking() -> None:
     
     try:
         import os
+        from pathlib import Path
         from m25_parking import run_remote_test
         from m25_spp import BluetoothConnection
         from m25_utils import parse_key
         
+        # Try to load .env file if it exists
+        try:
+            from dotenv import load_dotenv
+            env_path = Path(__file__).parent.parent / '.env'
+            if env_path.exists():
+                load_dotenv(env_path)
+                logger.info(f"Loaded environment from {env_path}")
+        except ImportError:
+            logger.debug("python-dotenv not installed, using environment variables only")
+        
         # Try to load from .env or use mock values
-        left_addr = os.getenv("M25_LEFT_ADDR", "AA:BB:CC:DD:EE:FF")
-        right_addr = os.getenv("M25_RIGHT_ADDR", "FF:EE:DD:CC:BB:AA")
+        left_addr = os.getenv("M25_LEFT_MAC", "AA:BB:CC:DD:EE:FF")
+        right_addr = os.getenv("M25_RIGHT_MAC", "FF:EE:DD:CC:BB:AA")
         left_key_str = os.getenv("M25_LEFT_KEY", "0123456789ABCDEF0123456789ABCDEF")
         right_key_str = os.getenv("M25_RIGHT_KEY", "FEDCBA9876543210FEDCBA9876543210")
         
