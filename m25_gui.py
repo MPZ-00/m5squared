@@ -234,7 +234,18 @@ class M25GUI:
     def __init__(self, root):
         self.root = root
         self.root.title("m5squared - Wheelchair Controller")
-        self.root.geometry("800x600")
+        
+        # Set window size to use max screen height
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        window_width = min(800, screen_width - 100)  # Leave some margin
+        window_height = screen_height - 100  # Leave space for taskbar
+        
+        # Center the window
+        x_position = (screen_width - window_width) // 2
+        y_position = 0  # Start at top (leaving space for title bar)
+        
+        self.root.geometry(f"{window_width}x{window_height}+{x_position}+{y_position}")
 
         # Connection state
         self.connected = False
