@@ -424,10 +424,15 @@ class M25GUI:
         # Control Section
         self.control_frame = tk.LabelFrame(self.main_frame, text="Controls", padx=10, pady=10, font=("", 9, "bold"))
         self.control_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+        
+        # Prevent column 2 from affecting columns 0 and 1
+        self.control_frame.columnconfigure(0, weight=0, minsize=100)
+        self.control_frame.columnconfigure(1, weight=0, minsize=350)
+        self.control_frame.columnconfigure(2, weight=1)
 
         # Assist level
         self.lbl_assist = tk.Label(self.control_frame, text="Assist Level:")
-        self.lbl_assist.grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.lbl_assist.grid(row=0, column=0, sticky=tk.W, pady=(5, 2))
 
         self.assist_frame = tk.Frame(self.control_frame)
         self.assist_frame.grid(row=0, column=1, padx=(5, 5), sticky=tk.W)
@@ -442,7 +447,7 @@ class M25GUI:
 
         # Drive profile
         self.lbl_profile = tk.Label(self.control_frame, text="Drive Profile:")
-        self.lbl_profile.grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.lbl_profile.grid(row=1, column=0, sticky=tk.W, pady=(2, 5))
 
         self.profile_frame = tk.Frame(self.control_frame)
         self.profile_frame.grid(row=1, column=1, padx=(5, 5), sticky=tk.W)
@@ -457,10 +462,11 @@ class M25GUI:
         self.set_profile_btn.pack(side=tk.LEFT, padx=(5, 0))
 
         # Profile description (multi-line) - spans both rows independently
-        self.profile_desc_frame = tk.Frame(self.control_frame)
-        self.profile_desc_frame.grid(row=0, column=2, rowspan=2, sticky=(tk.W, tk.E, tk.N), padx=(15, 0), pady=5)
-        self.profile_desc_lbl = tk.Label(self.profile_desc_frame, text="", font=("TkDefaultFont", 8), anchor=tk.W, justify=tk.LEFT)
-        self.profile_desc_lbl.pack(fill=tk.BOTH, expand=True)
+        self.profile_desc_frame = tk.Frame(self.control_frame, relief=tk.SOLID, borderwidth=1)
+        self.profile_desc_frame.grid(row=0, column=2, rowspan=2, sticky=(tk.W, tk.E, tk.N), padx=(20, 0), pady=5)
+        self.profile_desc_text = tk.Text(self.profile_desc_frame, font=("TkDefaultFont", 9), height=6, width=50, wrap=tk.WORD, relief=tk.FLAT, borderwidth=0)
+        self.profile_desc_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.profile_desc_text.config(state=tk.DISABLED)
 
         # Hill hold
         self.lbl_hill_hold = tk.Label(self.control_frame, text="Hill Hold:")
@@ -767,8 +773,17 @@ class M25GUI:
             self._theme_widget(self.enable_mpp_check, "checkbox")
         if hasattr(self, "profile_desc_frame"):
             self._theme_widget(self.profile_desc_frame, "frame")
-        if hasattr(self, "profile_desc_lbl"):
-            self._theme_widget(self.profile_desc_lbl, "label")
+        if hasattr(self, "profile_desc_text"):
+            theme = self.THEMES[self.current_theme]
+            self.profile_desc_text.config(
+                bg=theme["entry_bg"],
+                fg=theme["fg"],
+                insertbackground=theme["fg"]
+            )
+            # Configure text tags with colors
+            self.profile_desc_text.tag_configure('profile_name', foreground=theme["text"]["info"], font=("TkDefaultFont", 10, "bold"))
+            self.profile_desc_text.tag_configure('level_info', foreground=theme["text"]["success"])
+            self.profile_desc_text.tag_configure('best_for', foreground=theme["text"]["warning"], font=("TkDefaultFont", 9, "italic"))
         for widget in self.max_speed_frame.winfo_children():
             if isinstance(widget, tk.Label):
                 self._theme_widget(widget, "label")
@@ -873,8 +888,25 @@ class M25GUI:
         }
         profile = self.profile_var.get()
         description = profile_descriptions.get(profile, "")
-        if hasattr(self, 'profile_desc_lbl'):
-            self.profile_desc_lbl.config(text=description)
+        if hasattr(self, 'profile_desc_text'):
+            self.profile_desc_text.config(state=tk.NORMAL)
+            self.profile_desc_text.delete(1.0, tk.END)
+            
+            # Add formatted text with colors
+            lines = description.split('\n')
+            if lines:
+                # First line - profile name (bold and colored)
+                self.profile_desc_text.insert(tk.END, lines[0] + '\n', 'profile_name')
+                # Remaining lines
+                for line in lines[1:]:
+                    if 'Best for:' in line:
+                        self.profile_desc_text.insert(tk.END, line + '\n', 'best_for')
+                    elif 'Level' in line:
+                        self.profile_desc_text.insert(tk.END, line + '\n', 'level_info')
+                    else:
+                        self.profile_desc_text.insert(tk.END, line + '\n')
+            
+            self.profile_desc_text.config(state=tk.DISABLED)
     
     def toggle_mpp_mode(self):
         """Toggle M++ mode (8 km/h support)"""
