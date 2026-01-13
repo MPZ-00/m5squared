@@ -392,7 +392,7 @@ class M25GUI:
         
         # Core architecture mode checkbox
         if HAS_CORE:
-            self.core_mode_var = tk.BooleanVar(value=False)
+            self.core_mode_var = tk.BooleanVar(value=True)
             self.core_mode_check = tk.Checkbutton(
                 self.conn_frame,
                 text="Use Core Architecture (Supervisor with safety)",
@@ -698,6 +698,35 @@ class M25GUI:
                 activebackground=theme["select_bg"],
                 activeforeground=theme["select_fg"],
             )
+            
+            # Core architecture checkboxes
+            if HAS_CORE and hasattr(self, "core_mode_check"):
+                self.core_mode_check.configure(
+                    bg=theme["bg"],
+                    fg=theme["fg"],
+                    activebackground=theme["bg"],
+                    activeforeground=theme["fg"],
+                    selectcolor=theme["entry_bg"],
+                )
+                
+                if hasattr(self, "deadman_disable_check"):
+                    # Keep deadman checkbox red when enabled, otherwise use theme colors
+                    if self.deadman_disable_var.get():
+                        self.deadman_disable_check.configure(
+                            bg=theme["bg"],
+                            fg="red",
+                            activebackground=theme["bg"],
+                            activeforeground="red",
+                            selectcolor=theme["entry_bg"],
+                        )
+                    else:
+                        self.deadman_disable_check.configure(
+                            bg=theme["bg"],
+                            fg=theme["fg"],
+                            activebackground=theme["bg"],
+                            activeforeground=theme["fg"],
+                            selectcolor=theme["entry_bg"],
+                        )
 
         # Control frame and widgets
         if hasattr(self, "control_frame"):
@@ -938,7 +967,12 @@ class M25GUI:
             self.status_message("warning", "Deadman disabled")
             # Make checkbox red to indicate danger
             if HAS_CORE:
-                self.deadman_disable_check.config(fg="red", font=("", 9, "bold"))
+                theme = self.THEMES[self.current_theme]
+                self.deadman_disable_check.config(
+                    fg="red",
+                    activeforeground="red",
+                    font=("", 9, "bold")
+                )
         else:
             # Disabling - safe, no confirmation needed
             self.deadman_disabled = False
@@ -947,7 +981,11 @@ class M25GUI:
             if HAS_CORE:
                 # Reset checkbox appearance
                 theme = self.THEMES[self.current_theme]
-                self.deadman_disable_check.config(fg=theme["fg"], font=("", 9, "normal"))
+                self.deadman_disable_check.config(
+                    fg=theme["fg"],
+                    activeforeground=theme["fg"],
+                    font=("", 9, "normal")
+                )
 
     def toggle_connection(self):
         """Toggle between connect and disconnect"""
