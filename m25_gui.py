@@ -31,6 +31,17 @@ except ImportError:
     HAS_DOTENV = False
     print("Warning: python-dotenv not installed. Install with: pip install python-dotenv")
 
+# Import core architecture
+try:
+    from core.types import MapperConfig, SupervisorConfig, SupervisorState
+    from core.mapper import Mapper
+    from core.supervisor import Supervisor
+    from core.transport import MockTransport
+    HAS_CORE = True
+except ImportError:
+    HAS_CORE = False
+    print("Warning: Core architecture not available")
+
 try:
     from m25_spp import BluetoothConnection
     from m25_ecs import ECSPacketBuilder, ECSRemote, ResponseParser
@@ -233,6 +244,13 @@ class M25GUI:
         self.ecs_remote = None
         self.demo_mode = False
         self.event_loop = None  # For Windows async Bluetooth
+        
+        # Core architecture components
+        self.use_core_architecture = False
+        self.supervisor = None
+        self.mapper = None
+        self.transport = None
+        self.deadman_disabled = False
 
         # Theme state
         self.current_theme = "dark"
@@ -360,10 +378,31 @@ class M25GUI:
         self.lbl_right_key.grid(row=6, column=0, sticky=tk.W, pady=2, padx=(20, 0))
         self.right_key = tk.Entry(self.conn_frame, width=30, show="*", relief=tk.FLAT, borderwidth=2)
         self.right_key.grid(row=6, column=1, sticky=(tk.W, tk.E), padx=(5, 0), pady=2)
+        
+        # Core architecture mode checkbox
+        if HAS_CORE:
+            self.core_mode_var = tk.BooleanVar(value=False)
+            self.core_mode_check = tk.Checkbutton(
+                self.conn_frame,
+                text="Use Core Architecture (Supervisor with safety)",
+                variable=self.core_mode_var,
+            )
+            self.core_mode_check.grid(row=7, column=0, columnspan=2, sticky=tk.W, pady=(10, 5))
+            
+            # Deadman disable checkbox
+            self.deadman_disable_var = tk.BooleanVar(value=False)
+            self.deadman_disable_check = tk.Checkbutton(
+                self.conn_frame,
+                text="Disable Deadman Requirement ⚠ (USE WITH CAUTION)",
+                variable=self.deadman_disable_var,
+                command=self.toggle_deadman_disable,
+                fg="red"
+            )
+            self.deadman_disable_check.grid(row=8, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
 
         # Connect button
         self.connect_btn = tk.Button(self.conn_frame, text="Connect", command=self.toggle_connection, cursor="hand2")
-        self.connect_btn.grid(row=7, column=0, columnspan=2, pady=(10, 0))
+        self.connect_btn.grid(row=9, column=0, columnspan=2, pady=(10, 0))
 
         # Control Section
         self.control_frame = tk.LabelFrame(self.main_frame, text="Controls", padx=10, pady=10, font=("", 9, "bold"))
@@ -861,6 +900,43 @@ class M25GUI:
         self.read_version_btn.config(state=state)
         self.read_profile_btn.config(state=state)
         self.info_dump_btn.config(state=state)
+    
+    def toggle_deadman_disable(self):
+        """Toggle deadman requirement with confirmation"""
+        if self.deadman_disable_var.get():
+            # Enabling - show warning
+            confirm = messagebox.askyesno(
+                "SAFETY WARNING",
+                "Disabling the deadman requirement removes a critical safety feature!\n\n"
+                "Without deadman control:\n"
+                "- The wheelchair may move without active control\n"
+                "- You lose the ability to quickly stop by releasing a button\n"
+                "- Risk of unintended movement increases significantly\n\n"
+                "This should ONLY be used for testing in a controlled environment.\n\n"
+                "Are you ABSOLUTELY SURE you want to disable the deadman requirement?",
+                icon='warning'
+            )
+            
+            if not confirm:
+                # User said no, revert the checkbox
+                self.deadman_disable_var.set(False)
+                return
+            
+            self.deadman_disabled = True
+            self.log("warning", "DEADMAN REQUIREMENT DISABLED - USE EXTREME CAUTION")
+            self.status_message("warning", "Deadman disabled")
+            # Make checkbox red to indicate danger
+            if HAS_CORE:
+                self.deadman_disable_check.config(fg="red", font=("", 9, "bold"))
+        else:
+            # Disabling - safe, no confirmation needed
+            self.deadman_disabled = False
+            self.log("success", "Deadman requirement re-enabled")
+            self.status_message("success", "Deadman enabled")
+            if HAS_CORE:
+                # Reset checkbox appearance
+                theme = self.THEMES[self.current_theme]
+                self.deadman_disable_check.config(fg=theme["fg"], font=("", 9, "normal"))
 
     def toggle_connection(self):
         """Toggle between connect and disconnect"""
