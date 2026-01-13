@@ -455,10 +455,10 @@ class M25GUI:
         
         self.set_profile_btn = tk.Button(self.profile_frame, text="Set Profile", command=self.set_drive_profile, state="disabled", cursor="hand2", width=10)
         self.set_profile_btn.pack(side=tk.LEFT, padx=(5, 0))
-        
-        # Profile description (multi-line)
+
+        # Profile description (multi-line) - spans both rows independently
         self.profile_desc_frame = tk.Frame(self.control_frame)
-        self.profile_desc_frame.grid(row=1, column=2, columnspan=2, sticky=(tk.W, tk.E), padx=(10, 0), pady=5)
+        self.profile_desc_frame.grid(row=0, column=2, rowspan=2, sticky=(tk.W, tk.E, tk.N), padx=(15, 0), pady=5)
         self.profile_desc_lbl = tk.Label(self.profile_desc_frame, text="", font=("TkDefaultFont", 8), anchor=tk.W, justify=tk.LEFT)
         self.profile_desc_lbl.pack(fill=tk.BOTH, expand=True)
 
