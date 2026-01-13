@@ -462,10 +462,10 @@ class M25GUI:
         self.set_profile_btn.pack(side=tk.LEFT, padx=(5, 0))
 
         # Profile description (multi-line) - spans both rows independently
-        self.profile_desc_frame = tk.Frame(self.control_frame, relief=tk.SOLID, borderwidth=1)
+        self.profile_desc_frame = tk.Frame(self.control_frame)
         self.profile_desc_frame.grid(row=0, column=2, rowspan=2, sticky=(tk.W, tk.E, tk.N), padx=(20, 0), pady=5)
         self.profile_desc_text = tk.Text(self.profile_desc_frame, font=("TkDefaultFont", 9), height=6, width=50, wrap=tk.WORD, relief=tk.FLAT, borderwidth=0)
-        self.profile_desc_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.profile_desc_text.pack(fill=tk.BOTH, expand=True)
         self.profile_desc_text.config(state=tk.DISABLED)
 
         # Hill hold
@@ -776,7 +776,7 @@ class M25GUI:
         if hasattr(self, "profile_desc_text"):
             theme = self.THEMES[self.current_theme]
             self.profile_desc_text.config(
-                bg=theme["entry_bg"],
+                bg=theme["bg"],
                 fg=theme["fg"],
                 insertbackground=theme["fg"]
             )
