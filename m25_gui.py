@@ -262,6 +262,11 @@ class M25GUI:
         self.mapper = None
         self.transport = None
         self.deadman_disabled = False
+        
+        # System information
+        self.bluetooth_mode = "Unknown"
+        self.input_device = "None"
+        self.input_connected = False
 
         # Theme state
         self.current_theme = "dark"
@@ -553,9 +558,29 @@ class M25GUI:
         # Status bar
         self.status = tk.Label(self.main_frame, text="Ready", anchor=tk.W, relief=tk.SUNKEN, padx=5, pady=2)
         self.status.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E))
+        
+        # System info panel
+        self.info_frame = tk.Frame(self.main_frame, relief=tk.SUNKEN, borderwidth=1, padx=5, pady=3)
+        self.info_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E))
+        
+        self.info_bluetooth_lbl = tk.Label(self.info_frame, text="Bluetooth: Detecting...", anchor=tk.W, font=("TkDefaultFont", 8))
+        self.info_bluetooth_lbl.pack(side=tk.LEFT, padx=5)
+        
+        self.info_input_lbl = tk.Label(self.info_frame, text="Input: None", anchor=tk.W, font=("TkDefaultFont", 8))
+        self.info_input_lbl.pack(side=tk.LEFT, padx=5)
+        
+        self.info_arch_lbl = tk.Label(self.info_frame, text="Mode: Legacy", anchor=tk.W, font=("TkDefaultFont", 8))
+        self.info_arch_lbl.pack(side=tk.LEFT, padx=5)
 
         # Configure row weights for resizing
         self.main_frame.rowconfigure(3, weight=1)
+        
+        # Detect system configuration
+        self.detect_bluetooth_mode()
+        self.detect_input_device()
+        
+        # Start periodic input device check
+        self.check_input_devices_periodically()
 
     def _theme_widget(self, widget, widget_type="label", **kwargs):
         """
@@ -741,6 +766,16 @@ class M25GUI:
         # Status bar
         if hasattr(self, "status"):
             self.status.configure(bg=theme["bg"])
+        
+        # System info panel
+        if hasattr(self, "info_frame"):
+            self._theme_widget(self.info_frame, "frame")
+        if hasattr(self, "info_bluetooth_lbl"):
+            self._theme_widget(self.info_bluetooth_lbl, "label")
+        if hasattr(self, "info_input_lbl"):
+            self._theme_widget(self.info_input_lbl, "label")
+        if hasattr(self, "info_arch_lbl"):
+            self._theme_widget(self.info_arch_lbl, "label")
 
     def _apply_output_tags(self):
         """Apply semantic tags to the output widget for the current theme"""
@@ -764,6 +799,77 @@ class M25GUI:
         self.apply_theme()
         self.log("muted", f"Theme set: {self.current_theme}")
         self.status_message("muted", f"Theme set: {self.current_theme}")
+    
+    def update_system_info(self):
+        """Update system information labels"""
+        # Bluetooth mode
+        bt_text = f"Bluetooth: {self.bluetooth_mode}"
+        if hasattr(self, 'info_bluetooth_lbl'):
+            self.info_bluetooth_lbl.config(text=bt_text)
+        
+        # Input device
+        input_status = "Connected" if self.input_connected else "None"
+        input_text = f"Input: {self.input_device} ({input_status})"
+        if hasattr(self, 'info_input_lbl'):
+            self.info_input_lbl.config(text=input_text)
+        
+        # Architecture mode
+        arch = "Core" if self.use_core_architecture else "Legacy"
+        arch_text = f"Mode: {arch}"
+        if hasattr(self, 'info_arch_lbl'):
+            self.info_arch_lbl.config(text=arch_text)
+    
+    def detect_bluetooth_mode(self):
+        """Detect which Bluetooth implementation is being used"""
+        try:
+            # Try importing from core.transport to get BLUETOOTH_TYPE
+            from core.transport.bluetooth import BLUETOOTH_TYPE
+            self.bluetooth_mode = BLUETOOTH_TYPE
+        except ImportError:
+            # Fallback: check which module can be imported
+            try:
+                import m25_bluetooth_ble
+                self.bluetooth_mode = "BLE"
+            except ImportError:
+                try:
+                    import m25_spp
+                    self.bluetooth_mode = "RFCOMM"
+                except ImportError:
+                    self.bluetooth_mode = "Unknown"
+        self.update_system_info()
+    
+    def detect_input_device(self):
+        """Detect connected input devices (gamepad/joystick)"""
+        try:
+            import pygame
+            pygame.init()
+            pygame.joystick.init()
+            
+            joystick_count = pygame.joystick.get_count()
+            if joystick_count > 0:
+                joystick = pygame.joystick.Joystick(0)
+                joystick.init()
+                self.input_device = joystick.get_name()
+                self.input_connected = True
+            else:
+                self.input_device = "Keyboard"
+                self.input_connected = False
+            
+            pygame.quit()
+        except ImportError:
+            self.input_device = "Keyboard"
+            self.input_connected = False
+        except Exception as e:
+            self.input_device = f"Error: {str(e)[:20]}"
+            self.input_connected = False
+        
+        self.update_system_info()
+    
+    def check_input_devices_periodically(self):
+        """Periodically check for input device changes"""
+        self.detect_input_device()
+        # Check every 5 seconds
+        self.root.after(5000, self.check_input_devices_periodically)
 
     def load_credentials(self):
         """Load credentials from environment variables"""
@@ -1048,6 +1154,9 @@ class M25GUI:
                 self.status_message("success", "Connected")
             self.connect_btn.config(text="Disconnect")
             self.enable_controls(True)
+            
+            # Update system info to reflect connection state
+            self.update_system_info()
         else:
             self.log("error", "Connection failed.")
             self.status_message("error", "Connection failed")
