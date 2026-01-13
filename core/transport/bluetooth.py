@@ -18,13 +18,9 @@ try:
     from m25_bluetooth_ble import M25BluetoothBLE as BluetoothConnection
     BLUETOOTH_TYPE = "BLE"
 except ImportError:
-    # Fallback to platform-specific
-    if sys.platform == "win32":
-        from m25_bluetooth_windows import M25WindowsBluetooth as BluetoothConnection
-        BLUETOOTH_TYPE = "BLE-Legacy"
-    else:
-        from m25_spp import BluetoothConnection
-        BLUETOOTH_TYPE = "RFCOMM"
+    # Fallback to RFCOMM/SPP if BLE not available
+    from m25_spp import BluetoothConnection
+    BLUETOOTH_TYPE = "RFCOMM"
 
 from m25_spp import PacketBuilder
 from m25_protocol_data import (
@@ -47,12 +43,13 @@ class BluetoothTransport:
     the new core architecture interfaces.
     """
     
-    def __init__(self, debug: bool = False) -> None:
+    def __init__(self, debug: bool = False, force_rfcomm: bool = False) -> None:
         """
         Initialize Bluetooth transport.
         
         Args:
             debug: Enable debug logging
+            force_rfcomm: Force RFCOMM/SPP instead of BLE (uses more power, not recommended)
         """
         self._debug = debug
         self._left_conn: Optional[BluetoothConnection] = None
@@ -61,8 +58,18 @@ class BluetoothTransport:
         self._right_builder: Optional[PacketBuilder] = None
         self._connected = False
         
+        # Determine which Bluetooth type to use
+        if force_rfcomm:
+            self._bluetooth_type = "RFCOMM"
+            if BLUETOOTH_TYPE == "BLE":
+                logger.warning("Forcing RFCOMM mode - uses more power than BLE")
+        else:
+            self._bluetooth_type = BLUETOOTH_TYPE
+        
         # Cache for vehicle state
         self._vehicle_state: Optional[VehicleState] = None
+        
+        logger.info(f"Bluetooth transport: {self._bluetooth_type}")
     
     async def connect(
         self,
@@ -89,13 +96,14 @@ class BluetoothTransport:
                 left_addr, left_key, name="left", debug=self._debug
             )
             
-            # Use async connect for WinRT
-            if sys.platform == "win32":
-                success = await self._left_conn.connect_async(6)
+            # Connect based on Bluetooth type
+            if self._bluetooth_type == "BLE":
+                success = await self._left_conn.connect_async(timeout=10)
                 if not success:
                     logger.error("Left wheel connection failed")
                     return False
             else:
+                # RFCOMM
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, self._left_conn.connect, 6)
             
@@ -104,12 +112,13 @@ class BluetoothTransport:
                 right_addr, right_key, name="right", debug=self._debug
             )
             
-            if sys.platform == "win32":
-                success = await self._right_conn.connect_async(6)
+            if self._bluetooth_type == "BLE":
+                success = await self._right_conn.connect_async(timeout=10)
                 if not success:
                     logger.error("Right wheel connection failed")
                     return False
             else:
+                # RFCOMM
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, self._right_conn.connect, 6)
             
@@ -122,11 +131,12 @@ class BluetoothTransport:
             pkt_left = self._left_builder.build_write_system_mode(SYSTEM_MODE_CONNECT)
             pkt_right = self._right_builder.build_write_system_mode(SYSTEM_MODE_CONNECT)
             
-            # Use async send for WinRT
-            if sys.platform == "win32":
+            # Send based on Bluetooth type
+            if self._bluetooth_type == "BLE":
                 await self._left_conn.send_async(self._left_conn.encryptor.encrypt(pkt_left))
                 await self._right_conn.send_async(self._right_conn.encryptor.encrypt(pkt_right))
             else:
+                # RFCOMM
                 self._left_conn.send_packet(pkt_left)
                 self._right_conn.send_packet(pkt_right)
             
@@ -137,10 +147,11 @@ class BluetoothTransport:
             pkt_left = self._left_builder.build_write_drive_mode(DRIVE_MODE_REMOTE)
             pkt_right = self._right_builder.build_write_drive_mode(DRIVE_MODE_REMOTE)
             
-            if sys.platform == "win32":
+            if self._bluetooth_type == "BLE":
                 await self._left_conn.send_async(self._left_conn.encryptor.encrypt(pkt_left))
                 await self._right_conn.send_async(self._right_conn.encryptor.encrypt(pkt_right))
             else:
+                # RFCOMM
                 self._left_conn.send_packet(pkt_left)
                 self._right_conn.send_packet(pkt_right)
             
@@ -169,12 +180,12 @@ class BluetoothTransport:
                     pkt_right = self._right_builder.build_write_drive_mode(DRIVE_MODE_NORMAL)
                     
                     if self._left_conn:
-                        if sys.platform == "win32":
+                        if self._bluetooth_type == "BLE":
                             await self._left_conn.send_async(self._left_conn.encryptor.encrypt(pkt_left))
                         else:
                             self._left_conn.send_packet(pkt_left)
                     if self._right_conn:
-                        if sys.platform == "win32":
+                        if self._bluetooth_type == "BLE":
                             await self._right_conn.send_async(self._right_conn.encryptor.encrypt(pkt_right))
                         else:
                             self._right_conn.send_packet(pkt_right)
@@ -183,14 +194,14 @@ class BluetoothTransport:
             
             # Close connections
             if self._left_conn:
-                if sys.platform == "win32":
+                if self._bluetooth_type == "BLE":
                     await self._left_conn.disconnect_async()
                 else:
                     self._left_conn.disconnect()
                 self._left_conn = None
             
             if self._right_conn:
-                if sys.platform == "win32":
+                if self._bluetooth_type == "BLE":
                     await self._right_conn.disconnect_async()
                 else:
                     self._right_conn.disconnect()
@@ -225,10 +236,11 @@ class BluetoothTransport:
             pkt_right = self._right_builder.build_write_remote_speed(right_speed)
             
             # Send to both wheels
-            if sys.platform == "win32":
+            if self._bluetooth_type == "BLE":
                 await self._left_conn.send_async(self._left_conn.encryptor.encrypt(pkt_left))
                 await self._right_conn.send_async(self._right_conn.encryptor.encrypt(pkt_right))
             else:
+                # RFCOMM - run in executor
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, self._left_conn.send_packet, pkt_left)
                 await loop.run_in_executor(None, self._right_conn.send_packet, pkt_right)
