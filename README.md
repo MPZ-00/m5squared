@@ -28,6 +28,21 @@ Presented at 39C3 Hamburg: *["Pwn2Roll: Who Needs a 595€ Remote When You Have 
 
 ## Quick Start
 
+**Easiest Way (All Platforms):**
+
+```bash
+# Windows: Double-click start.bat
+# Linux/Mac: ./start.sh
+# Or:
+python launch.py
+```
+
+The GUI includes optional core architecture support with safety features, plus an optional (but cautioned) deadman disable mode for controlled testing.
+
+See [QUICKSTART.md](QUICKSTART.md) for more options and details.
+
+**Traditional Setup:**
+
 ```bash
 # Setup (Ubuntu/Debian)
 sudo apt install python3.12-venv python3-bluez
