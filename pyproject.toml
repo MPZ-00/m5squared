@@ -8,11 +8,12 @@ license = "AGPL-3.0-or-later"
 dependencies = [
     "pycryptodome>=3.15.0",
     "python-dotenv>=1.0.0",
+    "bleak>=0.21.0",
+    "pygame>=2.5.0",
 ]
 
 [project.optional-dependencies]
 windows = [
-    "bleak>=0.21.0",
     "winrt-Windows.Devices.Bluetooth>=2.0.0",
     "winrt-Windows.Devices.Bluetooth.Rfcomm>=2.0.0",
     "winrt-Windows.Networking>=2.0.0",
@@ -21,6 +22,9 @@ windows = [
 ]
 linux = [
     "pybluez>=0.23",
+]
+dev = [
+    "pytest>=7.0.0",
 ]
 gui = [
     # tkinter is included with Python on most systems
