@@ -282,6 +282,9 @@ class M25GUI:
 
         # Load saved credentials
         self.load_credentials()
+        
+        # Initialize profile description with default profile
+        self.update_profile_description()
 
         self.log("info", "Ready.")
         self.status_message("info", "Ready")
@@ -429,10 +432,14 @@ class M25GUI:
         self.control_frame.columnconfigure(0, weight=0, minsize=100)
         self.control_frame.columnconfigure(1, weight=0, minsize=350)
         self.control_frame.columnconfigure(2, weight=1)
+        
+        # Keep rows compact (don't expand to fill rowspan height)
+        self.control_frame.rowconfigure(0, weight=0)
+        self.control_frame.rowconfigure(1, weight=0)
 
         # Assist level
         self.lbl_assist = tk.Label(self.control_frame, text="Assist Level:")
-        self.lbl_assist.grid(row=0, column=0, sticky=tk.W, pady=(5, 2))
+        self.lbl_assist.grid(row=0, column=0, sticky=tk.W, pady=(5, 0))
 
         self.assist_frame = tk.Frame(self.control_frame)
         self.assist_frame.grid(row=0, column=1, padx=(5, 5), sticky=tk.W)
@@ -447,7 +454,7 @@ class M25GUI:
 
         # Drive profile
         self.lbl_profile = tk.Label(self.control_frame, text="Drive Profile:")
-        self.lbl_profile.grid(row=1, column=0, sticky=tk.W, pady=(2, 5))
+        self.lbl_profile.grid(row=1, column=0, sticky=tk.W, pady=(0, 5))
 
         self.profile_frame = tk.Frame(self.control_frame)
         self.profile_frame.grid(row=1, column=1, padx=(5, 5), sticky=tk.W)
