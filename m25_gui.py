@@ -430,30 +430,37 @@ class M25GUI:
         self.lbl_assist.grid(row=0, column=0, sticky=tk.W, pady=5)
 
         self.assist_frame = tk.Frame(self.control_frame)
-        self.assist_frame.grid(row=0, column=1, padx=(5, 10), sticky=tk.W)
+        self.assist_frame.grid(row=0, column=1, padx=(5, 5), sticky=tk.W)
         self.assist_level_var = tk.StringVar(value="Level 1 (Normal)")
         self.assist_levels = ["Level 1 (Normal)", "Level 2 (Outdoor)", "Level 3 (Learning)"]
         self.assist_level_menu = tk.OptionMenu(self.assist_frame, self.assist_level_var, *self.assist_levels)
         self.assist_level_menu.config(width=18)
-        self.assist_level_menu.pack()
-
-        self.set_level_btn = tk.Button(self.control_frame, text="Set Level", command=self.set_assist_level, state="disabled", cursor="hand2", width=12)
-        self.set_level_btn.grid(row=0, column=2, pady=5)
+        self.assist_level_menu.pack(side=tk.LEFT)
+        
+        self.set_level_btn = tk.Button(self.assist_frame, text="Set Level", command=self.set_assist_level, state="disabled", cursor="hand2", width=10)
+        self.set_level_btn.pack(side=tk.LEFT, padx=(5, 0))
 
         # Drive profile
         self.lbl_profile = tk.Label(self.control_frame, text="Drive Profile:")
         self.lbl_profile.grid(row=1, column=0, sticky=tk.W, pady=5)
 
         self.profile_frame = tk.Frame(self.control_frame)
-        self.profile_frame.grid(row=1, column=1, padx=(5, 10), sticky=tk.W)
+        self.profile_frame.grid(row=1, column=1, padx=(5, 5), sticky=tk.W)
         self.profile_var = tk.StringVar(value="Standard")
+        self.profile_var.trace_add("write", self.update_profile_description)
         self.profiles = ["Standard", "Sensitive", "Soft", "Active", "SensitivePlus"]
         self.profile_menu = tk.OptionMenu(self.profile_frame, self.profile_var, *self.profiles)
         self.profile_menu.config(width=18)
-        self.profile_menu.pack()
-
-        self.set_profile_btn = tk.Button(self.control_frame, text="Set Profile", command=self.set_drive_profile, state="disabled", cursor="hand2", width=12)
-        self.set_profile_btn.grid(row=1, column=2, pady=5)
+        self.profile_menu.pack(side=tk.LEFT)
+        
+        self.set_profile_btn = tk.Button(self.profile_frame, text="Set Profile", command=self.set_drive_profile, state="disabled", cursor="hand2", width=10)
+        self.set_profile_btn.pack(side=tk.LEFT, padx=(5, 0))
+        
+        # Profile description (multi-line)
+        self.profile_desc_frame = tk.Frame(self.control_frame)
+        self.profile_desc_frame.grid(row=1, column=2, columnspan=2, sticky=(tk.W, tk.E), padx=(10, 0), pady=5)
+        self.profile_desc_lbl = tk.Label(self.profile_desc_frame, text="", font=("TkDefaultFont", 8), anchor=tk.W, justify=tk.LEFT)
+        self.profile_desc_lbl.pack(fill=tk.BOTH, expand=True)
 
         # Hill hold
         self.lbl_hill_hold = tk.Label(self.control_frame, text="Hill Hold:")
@@ -518,29 +525,19 @@ class M25GUI:
         )
         self.max_speed_level2_plus.grid(row=0, column=7, padx=(2, 10))
         
-        # Level 3 controls (Level 3 / Sport mode)
-        tk.Label(self.max_speed_frame, text="Sport:").grid(row=0, column=8, sticky=tk.W, padx=(10, 0))
-        self.max_speed_mpp = tk.DoubleVar(value=8.0)
-        self.max_speed_mpp_minus = tk.Button(
-            self.max_speed_frame, text="-", width=2,
-            command=lambda: self.adjust_speed(self.max_speed_mpp, -0.5),
-            state="disabled", cursor="hand2"
+        # M++ mode enable checkbox (8 km/h support)
+        self.enable_mpp = tk.BooleanVar(value=False)
+        self.enable_mpp_check = tk.Checkbutton(
+            self.max_speed_frame,
+            text="Enable M++ (8.5 km/h)",
+            variable=self.enable_mpp,
+            command=self.toggle_mpp_mode,
+            state="disabled"
         )
-        self.max_speed_mpp_minus.grid(row=0, column=9, padx=(5, 2))
-        self.max_speed_mpp_entry = tk.Entry(
-            self.max_speed_frame, textvariable=self.max_speed_mpp,
-            width=5, justify=tk.CENTER, state="readonly"
-        )
-        self.max_speed_mpp_entry.grid(row=0, column=10, padx=2)
-        self.max_speed_mpp_plus = tk.Button(
-            self.max_speed_frame, text="+", width=2,
-            command=lambda: self.adjust_speed(self.max_speed_mpp, 0.5),
-            state="disabled", cursor="hand2"
-        )
-        self.max_speed_mpp_plus.grid(row=0, column=11, padx=(2, 10))
+        self.enable_mpp_check.grid(row=0, column=8, padx=(10, 10))
         
         self.set_max_speed_btn = tk.Button(self.max_speed_frame, text="Set Max Speed", command=self.set_max_speed, state="disabled", cursor="hand2")
-        self.set_max_speed_btn.grid(row=0, column=12, padx=(5, 0))
+        self.set_max_speed_btn.grid(row=0, column=9, padx=(5, 0))
 
         # Status buttons
         self.btn_frame = tk.Frame(self.control_frame)
@@ -766,8 +763,12 @@ class M25GUI:
             self._theme_widget(self.max_speed_level1_entry, "entry")
         if hasattr(self, "max_speed_level2_entry"):
             self._theme_widget(self.max_speed_level2_entry, "entry")
-        if hasattr(self, "max_speed_mpp_entry"):
-            self._theme_widget(self.max_speed_mpp_entry, "entry")
+        if hasattr(self, "enable_mpp_check"):
+            self._theme_widget(self.enable_mpp_check, "checkbox")
+        if hasattr(self, "profile_desc_frame"):
+            self._theme_widget(self.profile_desc_frame, "frame")
+        if hasattr(self, "profile_desc_lbl"):
+            self._theme_widget(self.profile_desc_lbl, "label")
         for widget in self.max_speed_frame.winfo_children():
             if isinstance(widget, tk.Label):
                 self._theme_widget(widget, "label")
@@ -830,6 +831,62 @@ class M25GUI:
         self.apply_theme()
         self.log("muted", f"Theme set: {self.current_theme}")
         self.status_message("muted", f"Theme set: {self.current_theme}")
+    
+    def update_profile_description(self, *args):
+        """Update the profile description label when profile selection changes"""
+        profile_descriptions = {
+            "Standard": (
+                "Standard (Balanced, general use)\n"
+                "  Level 1: 45% torque, 4.0 km/h, medium sensitivity\n"
+                "  Level 2: 75% torque, 8.5 km/h\n"
+                "  Moderate startup, medium coasting\n"
+                "  Best for: Everyday use, beginners"
+            ),
+            "Active": (
+                "Active (Sporty, responsive)\n"
+                "  Level 1: 45% torque, 4.5 km/h, higher sensitivity\n"
+                "  Level 2: 90% torque, 8.5 km/h\n"
+                "  Fast startup, longer coasting\n"
+                "  Best for: Outdoor use, experienced users"
+            ),
+            "Sensitive": (
+                "Sensitive (High support, easy control)\n"
+                "  Level 1: 60% torque, 4.0 km/h\n"
+                "  Level 2: 95% torque, 8.5 km/h, high sensitivity\n"
+                "  Medium startup, longer coasting\n"
+                "  Best for: Users with limited upper body strength"
+            ),
+            "Soft": (
+                "Soft (Gentle, conservative)\n"
+                "  Level 1: 35% torque, 3.0 km/h, low sensitivity\n"
+                "  Level 2: 50% torque, 8.5 km/h\n"
+                "  Slower startup, requires more push force\n"
+                "  Best for: Beginners, crowded spaces, maximum control"
+            ),
+            "SensitivePlus": (
+                "SensitivePlus (Maximum assistance)\n"
+                "  Level 1: 65% torque, 5.0 km/h, highest sensitivity\n"
+                "  Level 2: 100% torque, 8.5 km/h\n"
+                "  Fastest response, longest coasting\n"
+                "  Best for: Users needing maximum motor support"
+            )
+        }
+        profile = self.profile_var.get()
+        description = profile_descriptions.get(profile, "")
+        if hasattr(self, 'profile_desc_lbl'):
+            self.profile_desc_lbl.config(text=description)
+    
+    def toggle_mpp_mode(self):
+        """Toggle M++ mode (8 km/h support)"""
+        if self.enable_mpp.get():
+            self.log("info", "M++ mode enabled: Speeds up to 8.5 km/h available")
+        else:
+            self.log("info", "M++ mode disabled: Speeds limited to 6.0 km/h")
+            # Adjust current values if they exceed new limit
+            if self.max_speed_level1.get() > 6.0:
+                self.max_speed_level1.set(6.0)
+            if self.max_speed_level2.get() > 6.0:
+                self.max_speed_level2.set(6.0)
     
     def update_system_info(self):
         """Update system information labels"""
@@ -953,17 +1010,24 @@ class M25GUI:
         self.output.insert(tk.END, f"{message}\n", (lvl,))
         self.output.see(tk.END)
 
+    def toggle_mpp_mode(self):
+        """Toggle M++ mode (8 km/h support)"""
+        if self.enable_mpp.get():
+            self.log("info", "M++ mode enabled: Speeds up to 8.5 km/h available")
+            # Adjust current values if they would exceed new limit
+            if self.max_speed_level1.get() > 6.0:
+                self.max_speed_level1.set(6.0)
+            if self.max_speed_level2.get() > 6.0:
+                self.max_speed_level2.set(6.0)
+        else:
+            self.log("info", "M++ mode disabled: Speeds limited to 6.0 km/h")
+    
     def adjust_speed(self, speed_var, delta):
         """Adjust speed by delta, keeping within valid range"""
         current = speed_var.get()
         new_value = current + delta
-        
-        # Determine max limit based on which control this is
-        if speed_var == self.max_speed_mpp:
-            max_limit = 8.5  # M++ can go up to 8.5 km/h
-        else:
-            max_limit = 6.0  # Standard levels limited to 6.0 km/h
-        
+        # Determine max limit based on M++ mode
+        max_limit = 8.5 if self.enable_mpp.get() else 6.0
         # Clamp to valid range
         new_value = max(2.0, min(max_limit, new_value))
         speed_var.set(new_value)
@@ -978,8 +1042,7 @@ class M25GUI:
         self.max_speed_level1_plus.config(state=state)
         self.max_speed_level2_minus.config(state=state)
         self.max_speed_level2_plus.config(state=state)
-        self.max_speed_mpp_minus.config(state=state)
-        self.max_speed_mpp_plus.config(state=state)
+        self.enable_mpp_check.config(state=state)
         self.set_max_speed_btn.config(state=state)
         self.read_battery_btn.config(state=state)
         self.read_status_btn.config(state=state)
@@ -1391,11 +1454,10 @@ class M25GUI:
             threading.Thread(target=write_thread, daemon=True).start()
 
     def set_max_speed(self):
-        """Set max speed for Level 1, Level 2, and M++"""
+        """Set max speed for Level 1 and Level 2"""
         level1_speed = self.max_speed_level1.get()
         level2_speed = self.max_speed_level2.get()
-        mpp_speed = self.max_speed_mpp.get()
-        self.log("info", f"Setting max speeds: Level 1={level1_speed} km/h, Level 2={level2_speed} km/h, M++={mpp_speed} km/h")
+        self.log("info", f"Setting max speeds: Level 1={level1_speed} km/h, Level 2={level2_speed} km/h")
         self.status_message("info", "Setting max speeds...")
 
         if self.demo_mode:
