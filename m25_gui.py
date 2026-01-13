@@ -538,19 +538,8 @@ class M25GUI:
         )
         self.max_speed_level2_plus.grid(row=0, column=7, padx=(2, 10))
         
-        # M++ mode enable checkbox (8 km/h support)
-        self.enable_mpp = tk.BooleanVar(value=False)
-        self.enable_mpp_check = tk.Checkbutton(
-            self.max_speed_frame,
-            text="Enable M++ (8.5 km/h)",
-            variable=self.enable_mpp,
-            command=self.toggle_mpp_mode,
-            state="disabled"
-        )
-        self.enable_mpp_check.grid(row=0, column=8, padx=(10, 10))
-        
         self.set_max_speed_btn = tk.Button(self.max_speed_frame, text="Set Max Speed", command=self.set_max_speed, state="disabled", cursor="hand2")
-        self.set_max_speed_btn.grid(row=0, column=9, padx=(5, 0))
+        self.set_max_speed_btn.grid(row=0, column=8, padx=(10, 0))
 
         # Status buttons
         self.btn_frame = tk.Frame(self.control_frame)
@@ -776,8 +765,6 @@ class M25GUI:
             self._theme_widget(self.max_speed_level1_entry, "entry")
         if hasattr(self, "max_speed_level2_entry"):
             self._theme_widget(self.max_speed_level2_entry, "entry")
-        if hasattr(self, "enable_mpp_check"):
-            self._theme_widget(self.enable_mpp_check, "checkbox")
         if hasattr(self, "profile_desc_frame"):
             self._theme_widget(self.profile_desc_frame, "frame")
         if hasattr(self, "profile_desc_text"):
@@ -893,8 +880,10 @@ class M25GUI:
                 "  Best for: Users needing maximum motor support"
             )
         }
+        
         profile = self.profile_var.get()
         description = profile_descriptions.get(profile, "")
+        
         if hasattr(self, 'profile_desc_text'):
             self.profile_desc_text.config(state=tk.NORMAL)
             self.profile_desc_text.delete(1.0, tk.END)
@@ -914,18 +903,6 @@ class M25GUI:
                         self.profile_desc_text.insert(tk.END, line + '\n')
             
             self.profile_desc_text.config(state=tk.DISABLED)
-    
-    def toggle_mpp_mode(self):
-        """Toggle M++ mode (8 km/h support)"""
-        if self.enable_mpp.get():
-            self.log("info", "M++ mode enabled: Speeds up to 8.5 km/h available")
-        else:
-            self.log("info", "M++ mode disabled: Speeds limited to 6.0 km/h")
-            # Adjust current values if they exceed new limit
-            if self.max_speed_level1.get() > 6.0:
-                self.max_speed_level1.set(6.0)
-            if self.max_speed_level2.get() > 6.0:
-                self.max_speed_level2.set(6.0)
     
     def update_system_info(self):
         """Update system information labels"""
@@ -1065,10 +1042,8 @@ class M25GUI:
         """Adjust speed by delta, keeping within valid range"""
         current = speed_var.get()
         new_value = current + delta
-        # Determine max limit based on M++ mode
-        max_limit = 8.5 if self.enable_mpp.get() else 6.0
-        # Clamp to valid range
-        new_value = max(2.0, min(max_limit, new_value))
+        # Clamp to valid range (2.0 to 8.5 km/h)
+        new_value = max(2.0, min(8.5, new_value))
         speed_var.set(new_value)
 
     def enable_controls(self, enabled=True):
@@ -1081,7 +1056,6 @@ class M25GUI:
         self.max_speed_level1_plus.config(state=state)
         self.max_speed_level2_minus.config(state=state)
         self.max_speed_level2_plus.config(state=state)
-        self.enable_mpp_check.config(state=state)
         self.set_max_speed_btn.config(state=state)
         self.read_battery_btn.config(state=state)
         self.read_status_btn.config(state=state)
