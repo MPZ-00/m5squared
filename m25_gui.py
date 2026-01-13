@@ -402,6 +402,7 @@ class M25GUI:
                 self.conn_frame,
                 text="Use Core Architecture (Supervisor with safety)",
                 variable=self.core_mode_var,
+                command=self.update_system_info,
             )
             self.core_mode_check.grid(row=7, column=0, columnspan=2, sticky=tk.W, pady=(10, 5))
             
@@ -813,8 +814,16 @@ class M25GUI:
         if hasattr(self, 'info_input_lbl'):
             self.info_input_lbl.config(text=input_text)
         
-        # Architecture mode
-        arch = "Core" if self.use_core_architecture else "Legacy"
+        # Architecture mode - check both checkbox state and actual usage
+        if HAS_CORE and hasattr(self, 'core_mode_var'):
+            # When connected, use actual state; otherwise use checkbox state
+            if self.connected:
+                arch = "Core" if self.use_core_architecture else "Legacy"
+            else:
+                arch = "Core (ready)" if self.core_mode_var.get() else "Legacy"
+        else:
+            arch = "Legacy (Core N/A)" if not HAS_CORE else "Legacy"
+        
         arch_text = f"Mode: {arch}"
         if hasattr(self, 'info_arch_lbl'):
             self.info_arch_lbl.config(text=arch_text)
@@ -984,6 +993,9 @@ class M25GUI:
                     activeforeground=theme["fg"],
                     font=("", 9, "normal")
                 )
+        
+        # Update system info display
+        self.update_system_info()
 
     def toggle_connection(self):
         """Toggle between connect and disconnect"""
