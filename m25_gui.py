@@ -881,8 +881,23 @@ class M25GUI:
             )
         }
         
+        # Profile default speeds (Level 1, Level 2)
+        profile_speeds = {
+            "Standard": (4.0, 8.5),
+            "Active": (4.5, 8.5),
+            "Sensitive": (4.0, 8.5),
+            "Soft": (3.0, 8.5),
+            "SensitivePlus": (5.0, 8.5)
+        }
+        
         profile = self.profile_var.get()
         description = profile_descriptions.get(profile, "")
+        
+        # Update max speed values to profile defaults (user can override)
+        if hasattr(self, 'max_speed_level1') and hasattr(self, 'max_speed_level2'):
+            speeds = profile_speeds.get(profile, (4.0, 8.5))
+            self.max_speed_level1.set(speeds[0])
+            self.max_speed_level2.set(speeds[1])
         
         if hasattr(self, 'profile_desc_text'):
             self.profile_desc_text.config(state=tk.NORMAL)
