@@ -186,8 +186,8 @@ class M25GUI:
         "dark": {
             "bg": "#1e1e1e",
             "fg": "#d4d4d4",
-            "entry_bg": "#2d2d2d",
-            "entry_fg": "#d4d4d4",
+            "entry_bg": "#3c3c3c",
+            "entry_fg": "#e8e8e8",
             "button_bg": "#3e3e3e",
             "button_fg": "#d4d4d4",
             "output_bg": "#1e1e1e",
@@ -478,7 +478,7 @@ class M25GUI:
         
         # Level 1 controls
         tk.Label(self.max_speed_frame, text="Level 1:").grid(row=0, column=0, sticky=tk.W)
-        self.max_speed_level1 = tk.DoubleVar(value=6.0)
+        self.max_speed_level1 = tk.DoubleVar(value=4.0)
         self.max_speed_level1_minus = tk.Button(
             self.max_speed_frame, text="-", width=2,
             command=lambda: self.adjust_speed(self.max_speed_level1, -0.5),
@@ -518,8 +518,29 @@ class M25GUI:
         )
         self.max_speed_level2_plus.grid(row=0, column=7, padx=(2, 10))
         
+        # Level 3 controls (Level 3 / Sport mode)
+        tk.Label(self.max_speed_frame, text="Sport:").grid(row=0, column=8, sticky=tk.W, padx=(10, 0))
+        self.max_speed_mpp = tk.DoubleVar(value=8.0)
+        self.max_speed_mpp_minus = tk.Button(
+            self.max_speed_frame, text="-", width=2,
+            command=lambda: self.adjust_speed(self.max_speed_mpp, -0.5),
+            state="disabled", cursor="hand2"
+        )
+        self.max_speed_mpp_minus.grid(row=0, column=9, padx=(5, 2))
+        self.max_speed_mpp_entry = tk.Entry(
+            self.max_speed_frame, textvariable=self.max_speed_mpp,
+            width=5, justify=tk.CENTER, state="readonly"
+        )
+        self.max_speed_mpp_entry.grid(row=0, column=10, padx=2)
+        self.max_speed_mpp_plus = tk.Button(
+            self.max_speed_frame, text="+", width=2,
+            command=lambda: self.adjust_speed(self.max_speed_mpp, 0.5),
+            state="disabled", cursor="hand2"
+        )
+        self.max_speed_mpp_plus.grid(row=0, column=11, padx=(2, 10))
+        
         self.set_max_speed_btn = tk.Button(self.max_speed_frame, text="Set Max Speed", command=self.set_max_speed, state="disabled", cursor="hand2")
-        self.set_max_speed_btn.grid(row=0, column=8, padx=(5, 0))
+        self.set_max_speed_btn.grid(row=0, column=12, padx=(5, 0))
 
         # Status buttons
         self.btn_frame = tk.Frame(self.control_frame)
@@ -617,6 +638,9 @@ class M25GUI:
                 "insertbackground": theme["entry_fg"],
                 "selectbackground": theme["select_bg"],
                 "selectforeground": theme["select_fg"],
+                "readonlybackground": theme["entry_bg"],
+                "disabledbackground": theme["entry_bg"],
+                "disabledforeground": theme["entry_fg"],
             }
         
         elif widget_type == "checkbox":
@@ -738,6 +762,12 @@ class M25GUI:
         # Max speed controls
         self._theme_widget(self.max_speed_frame, "frame")
         self._theme_widget(self.lbl_max_speed, "label")
+        if hasattr(self, "max_speed_level1_entry"):
+            self._theme_widget(self.max_speed_level1_entry, "entry")
+        if hasattr(self, "max_speed_level2_entry"):
+            self._theme_widget(self.max_speed_level2_entry, "entry")
+        if hasattr(self, "max_speed_mpp_entry"):
+            self._theme_widget(self.max_speed_mpp_entry, "entry")
         for widget in self.max_speed_frame.winfo_children():
             if isinstance(widget, tk.Label):
                 self._theme_widget(widget, "label")
@@ -924,11 +954,18 @@ class M25GUI:
         self.output.see(tk.END)
 
     def adjust_speed(self, speed_var, delta):
-        """Adjust speed by delta, keeping within 2.0-8.5 km/h range"""
+        """Adjust speed by delta, keeping within valid range"""
         current = speed_var.get()
         new_value = current + delta
+        
+        # Determine max limit based on which control this is
+        if speed_var == self.max_speed_mpp:
+            max_limit = 8.5  # M++ can go up to 8.5 km/h
+        else:
+            max_limit = 6.0  # Standard levels limited to 6.0 km/h
+        
         # Clamp to valid range
-        new_value = max(2.0, min(8.5, new_value))
+        new_value = max(2.0, min(max_limit, new_value))
         speed_var.set(new_value)
 
     def enable_controls(self, enabled=True):
@@ -941,6 +978,8 @@ class M25GUI:
         self.max_speed_level1_plus.config(state=state)
         self.max_speed_level2_minus.config(state=state)
         self.max_speed_level2_plus.config(state=state)
+        self.max_speed_mpp_minus.config(state=state)
+        self.max_speed_mpp_plus.config(state=state)
         self.set_max_speed_btn.config(state=state)
         self.read_battery_btn.config(state=state)
         self.read_status_btn.config(state=state)
@@ -1352,10 +1391,11 @@ class M25GUI:
             threading.Thread(target=write_thread, daemon=True).start()
 
     def set_max_speed(self):
-        """Set max speed for Level 1 and Level 2"""
+        """Set max speed for Level 1, Level 2, and M++"""
         level1_speed = self.max_speed_level1.get()
         level2_speed = self.max_speed_level2.get()
-        self.log("info", f"Setting max speeds: Level 1={level1_speed} km/h, Level 2={level2_speed} km/h")
+        mpp_speed = self.max_speed_mpp.get()
+        self.log("info", f"Setting max speeds: Level 1={level1_speed} km/h, Level 2={level2_speed} km/h, M++={mpp_speed} km/h")
         self.status_message("info", "Setting max speeds...")
 
         if self.demo_mode:
