@@ -71,6 +71,32 @@ class BluetoothTransport:
         
         logger.info(f"Bluetooth transport: {self._bluetooth_type}")
     
+    async def _connect_wheel(self, conn: BluetoothConnection, channel: int = 6) -> bool:
+        """Connect to a single wheel based on Bluetooth type"""
+        if self._bluetooth_type == "BLE":
+            return await conn.connect_async(timeout=10)
+        else:
+            # RFCOMM
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, conn.connect, channel)
+            return True
+    
+    async def _send_packet(self, conn: BluetoothConnection, packet: bytes) -> None:
+        """Send a packet to a wheel based on Bluetooth type"""
+        if self._bluetooth_type == "BLE":
+            await conn.send_async(conn.encryptor.encrypt(packet))
+        else:
+            # RFCOMM
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, conn.send_packet, packet)
+    
+    async def _disconnect_wheel(self, conn: BluetoothConnection) -> None:
+        """Disconnect from a single wheel based on Bluetooth type"""
+        if self._bluetooth_type == "BLE":
+            await conn.disconnect_async()
+        else:
+            conn.disconnect()
+    
     async def connect(
         self,
         left_addr: str,
@@ -96,31 +122,22 @@ class BluetoothTransport:
                 left_addr, left_key, name="left", debug=self._debug
             )
             
-            # Connect based on Bluetooth type
-            if self._bluetooth_type == "BLE":
-                success = await self._left_conn.connect_async(timeout=10)
-                if not success:
-                    logger.error("Left wheel connection failed")
-                    return False
-            else:
-                # RFCOMM
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, self._left_conn.connect, 6)
+            # Connect to left wheel
+            success = await self._connect_wheel(self._left_conn)
+            if not success:
+                logger.error("Left wheel connection failed")
+                return False
             
             logger.info(f"Connecting to right wheel: {right_addr}")
             self._right_conn = BluetoothConnection(
                 right_addr, right_key, name="right", debug=self._debug
             )
             
-            if self._bluetooth_type == "BLE":
-                success = await self._right_conn.connect_async(timeout=10)
-                if not success:
-                    logger.error("Right wheel connection failed")
-                    return False
-            else:
-                # RFCOMM
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, self._right_conn.connect, 6)
+            # Connect to right wheel
+            success = await self._connect_wheel(self._right_conn)
+            if not success:
+                logger.error("Right wheel connection failed")
+                return False
             
             # Initialize packet builders
             self._left_builder = PacketBuilder()
@@ -131,14 +148,9 @@ class BluetoothTransport:
             pkt_left = self._left_builder.build_write_system_mode(SYSTEM_MODE_CONNECT)
             pkt_right = self._right_builder.build_write_system_mode(SYSTEM_MODE_CONNECT)
             
-            # Send based on Bluetooth type
-            if self._bluetooth_type == "BLE":
-                await self._left_conn.send_async(self._left_conn.encryptor.encrypt(pkt_left))
-                await self._right_conn.send_async(self._right_conn.encryptor.encrypt(pkt_right))
-            else:
-                # RFCOMM
-                self._left_conn.send_packet(pkt_left)
-                self._right_conn.send_packet(pkt_right)
+            # Send initialization packets
+            await self._send_packet(self._left_conn, pkt_left)
+            await self._send_packet(self._right_conn, pkt_right)
             
             await asyncio.sleep(0.3)  # Wait for ACK
             
@@ -147,13 +159,8 @@ class BluetoothTransport:
             pkt_left = self._left_builder.build_write_drive_mode(DRIVE_MODE_REMOTE)
             pkt_right = self._right_builder.build_write_drive_mode(DRIVE_MODE_REMOTE)
             
-            if self._bluetooth_type == "BLE":
-                await self._left_conn.send_async(self._left_conn.encryptor.encrypt(pkt_left))
-                await self._right_conn.send_async(self._right_conn.encryptor.encrypt(pkt_right))
-            else:
-                # RFCOMM
-                self._left_conn.send_packet(pkt_left)
-                self._right_conn.send_packet(pkt_right)
+            await self._send_packet(self._left_conn, pkt_left)
+            await self._send_packet(self._right_conn, pkt_right)
             
             await asyncio.sleep(0.3)
             
@@ -180,31 +187,19 @@ class BluetoothTransport:
                     pkt_right = self._right_builder.build_write_drive_mode(DRIVE_MODE_NORMAL)
                     
                     if self._left_conn:
-                        if self._bluetooth_type == "BLE":
-                            await self._left_conn.send_async(self._left_conn.encryptor.encrypt(pkt_left))
-                        else:
-                            self._left_conn.send_packet(pkt_left)
+                        await self._send_packet(self._left_conn, pkt_left)
                     if self._right_conn:
-                        if self._bluetooth_type == "BLE":
-                            await self._right_conn.send_async(self._right_conn.encryptor.encrypt(pkt_right))
-                        else:
-                            self._right_conn.send_packet(pkt_right)
+                        await self._send_packet(self._right_conn, pkt_right)
                     
                     await asyncio.sleep(0.1)
             
             # Close connections
             if self._left_conn:
-                if self._bluetooth_type == "BLE":
-                    await self._left_conn.disconnect_async()
-                else:
-                    self._left_conn.disconnect()
+                await self._disconnect_wheel(self._left_conn)
                 self._left_conn = None
             
             if self._right_conn:
-                if self._bluetooth_type == "BLE":
-                    await self._right_conn.disconnect_async()
-                else:
-                    self._right_conn.disconnect()
+                await self._disconnect_wheel(self._right_conn)
                 self._right_conn = None
             
             self._connected = False
@@ -236,14 +231,8 @@ class BluetoothTransport:
             pkt_right = self._right_builder.build_write_remote_speed(right_speed)
             
             # Send to both wheels
-            if self._bluetooth_type == "BLE":
-                await self._left_conn.send_async(self._left_conn.encryptor.encrypt(pkt_left))
-                await self._right_conn.send_async(self._right_conn.encryptor.encrypt(pkt_right))
-            else:
-                # RFCOMM - run in executor
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, self._left_conn.send_packet, pkt_left)
-                await loop.run_in_executor(None, self._right_conn.send_packet, pkt_right)
+            await self._send_packet(self._left_conn, pkt_left)
+            await self._send_packet(self._right_conn, pkt_right)
             
             logger.debug(f"Sent command: L={left_speed:+4d} R={right_speed:+4d}")
             return True
