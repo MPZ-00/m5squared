@@ -557,6 +557,86 @@ class M25GUI:
         # Configure row weights for resizing
         self.main_frame.rowconfigure(3, weight=1)
 
+    def _theme_widget(self, widget, widget_type="label", **kwargs):
+        """
+        Helper to apply theme to a widget based on its type.
+        
+        Args:
+            widget: The widget to theme
+            widget_type: Type of widget (label, button, entry, checkbox, optionmenu, frame)
+            **kwargs: Additional custom colors (e.g., fg="red" to override)
+        """
+        if not widget or not hasattr(widget, 'configure'):
+            return
+        
+        theme = self.THEMES[self.current_theme]
+        
+        config = {}
+        
+        if widget_type == "label":
+            config = {"bg": theme["bg"], "fg": theme["fg"]}
+        
+        elif widget_type == "button":
+            config = {
+                "bg": theme["button_bg"],
+                "fg": theme["button_fg"],
+                "activebackground": theme["select_bg"],
+                "activeforeground": theme["select_fg"],
+            }
+        
+        elif widget_type == "entry":
+            config = {
+                "bg": theme["entry_bg"],
+                "fg": theme["entry_fg"],
+                "insertbackground": theme["entry_fg"],
+                "selectbackground": theme["select_bg"],
+                "selectforeground": theme["select_fg"],
+            }
+        
+        elif widget_type == "checkbox":
+            config = {
+                "bg": theme["bg"],
+                "fg": theme["fg"],
+                "activebackground": theme["bg"],
+                "activeforeground": theme["fg"],
+                "selectcolor": theme["entry_bg"],
+            }
+        
+        elif widget_type == "optionmenu":
+            config = {
+                "bg": theme["button_bg"],
+                "fg": theme["button_fg"],
+                "activebackground": theme["select_bg"],
+                "activeforeground": theme["select_fg"],
+                "highlightthickness": 0,
+            }
+            # Also theme the dropdown menu
+            try:
+                menu = widget["menu"]
+                menu.configure(
+                    bg=theme["button_bg"],
+                    fg=theme["button_fg"],
+                    activebackground=theme["select_bg"],
+                    activeforeground=theme["select_fg"]
+                )
+            except:
+                pass
+        
+        elif widget_type == "frame":
+            config = {"bg": theme["bg"]}
+        
+        elif widget_type == "labelframe":
+            config = {"bg": theme["bg"], "fg": theme["fg"]}
+        
+        # Override with any custom kwargs
+        config.update(kwargs)
+        
+        # Apply configuration
+        try:
+            widget.configure(**config)
+        except:
+            pass  # Some widgets don't support all options
+    
     def apply_theme(self):
         """Apply the current theme to all widgets"""
         theme = self.THEMES[self.current_theme]
@@ -565,274 +645,89 @@ class M25GUI:
         self.root.configure(bg=theme["bg"])
 
         # Main frame
-        if hasattr(self, "main_frame"):
-            self.main_frame.configure(bg=theme["bg"])
+        self._theme_widget(self.main_frame, "frame")
 
-        # Title frame and label
-        if hasattr(self, "title_frame"):
-            self.title_frame.configure(bg=theme["bg"])
-        if hasattr(self, "title_label"):
-            self.title_label.configure(bg=theme["bg"], fg=theme["fg"])
+        # Title
+        self._theme_widget(self.title_frame, "frame")
+        self._theme_widget(self.title_label, "label")
 
         # Theme button
         if hasattr(self, "theme_btn"):
-            if self.current_theme == "dark":
-                self.theme_btn.configure(
-                    text="☀ Light Mode",
-                    bg=theme["button_bg"],
-                    fg=theme["button_fg"],
-                    activebackground=theme["select_bg"],
-                    activeforeground=theme["select_fg"],
-                )
-            else:
-                self.theme_btn.configure(
-                    text="🌙 Dark Mode",
-                    bg=theme["button_bg"],
-                    fg=theme["button_fg"],
-                    activebackground=theme["select_bg"],
-                    activeforeground=theme["select_fg"],
-                )
+            text = "☀ Light Mode" if self.current_theme == "dark" else "🌙 Dark Mode"
+            self._theme_widget(self.theme_btn, "button", text=text)
 
-        # Connection frame and widgets
-        if hasattr(self, "conn_frame"):
-            self.conn_frame.configure(bg=theme["bg"], fg=theme["fg"])
-
-            # Scan frame and its widgets
-            if hasattr(self, "scan_frame"):
-                self.scan_frame.configure(bg=theme["bg"])
+        # Connection frame
+        self._theme_widget(self.conn_frame, "labelframe")
+        self._theme_widget(self.scan_frame, "frame")
+        self._theme_widget(self.scan_btn, "button")
+        self._theme_widget(self.filter_check, "checkbox")
+        self._theme_widget(self.scan_status_lbl, "label")
+        
+        # Device selection
+        self._theme_widget(self.lbl_left_device, "label")
+        self._theme_widget(self.lbl_right_device, "label")
+        self._theme_widget(self.left_device_frame, "frame")
+        self._theme_widget(self.right_device_frame, "frame")
+        self._theme_widget(self.left_device_menu, "optionmenu")
+        self._theme_widget(self.right_device_menu, "optionmenu")
+        
+        # MAC and Key entries
+        self._theme_widget(self.lbl_left_mac, "label")
+        self._theme_widget(self.lbl_left_key, "label")
+        self._theme_widget(self.lbl_right_mac, "label")
+        self._theme_widget(self.lbl_right_key, "label")
+        self._theme_widget(self.left_mac, "entry")
+        self._theme_widget(self.left_key, "entry")
+        self._theme_widget(self.right_mac, "entry")
+        self._theme_widget(self.right_key, "entry")
+        
+        # Core architecture checkboxes
+        if HAS_CORE and hasattr(self, "core_mode_check"):
+            self._theme_widget(self.core_mode_check, "checkbox")
             
-            if hasattr(self, "scan_btn"):
-                self.scan_btn.configure(
-                    bg=theme["button_bg"],
-                    fg=theme["button_fg"],
-                    activebackground=theme["select_bg"],
-                    activeforeground=theme["select_fg"],
-                )
-                self.filter_check.configure(
-                    bg=theme["bg"],
-                    fg=theme["fg"],
-                    activebackground=theme["bg"],
-                    activeforeground=theme["fg"],
-                    selectcolor=theme["entry_bg"],
-                )
-                self.scan_status_lbl.configure(bg=theme["bg"], fg=theme["fg"])
-
-            # Device selection frames and menus
-            if hasattr(self, "lbl_left_device"):
-                self.lbl_left_device.configure(bg=theme["bg"], fg=theme["fg"])
-                self.lbl_right_device.configure(bg=theme["bg"], fg=theme["fg"])
-                
-                # Device frames
-                self.left_device_frame.configure(bg=theme["bg"])
-                self.right_device_frame.configure(bg=theme["bg"])
-                
-                # OptionMenu widgets
-                self.left_device_menu.configure(
-                    bg=theme["button_bg"],
-                    fg=theme["button_fg"],
-                    activebackground=theme["select_bg"],
-                    activeforeground=theme["select_fg"],
-                    highlightthickness=0
-                )
-                # OptionMenu dropdown menu
-                left_menu = self.left_device_menu['menu']
-                left_menu.configure(
-                    bg=theme["button_bg"],
-                    fg=theme["button_fg"],
-                    activebackground=theme["select_bg"],
-                    activeforeground=theme["select_fg"]
-                )
-                
-                self.right_device_menu.configure(
-                    bg=theme["button_bg"],
-                    fg=theme["button_fg"],
-                    activebackground=theme["select_bg"],
-                    activeforeground=theme["select_fg"],
-                    highlightthickness=0
-                )
-                # OptionMenu dropdown menu
-                right_menu = self.right_device_menu['menu']
-                right_menu.configure(
-                    bg=theme["button_bg"],
-                    fg=theme["button_fg"],
-                    activebackground=theme["select_bg"],
-                    activeforeground=theme["select_fg"]
-                )
-
-            self.lbl_left_mac.configure(bg=theme["bg"], fg=theme["fg"])
-            self.lbl_left_key.configure(bg=theme["bg"], fg=theme["fg"])
-            self.lbl_right_mac.configure(bg=theme["bg"], fg=theme["fg"])
-            self.lbl_right_key.configure(bg=theme["bg"], fg=theme["fg"])
-
-            self.left_mac.configure(
-                bg=theme["entry_bg"],
-                fg=theme["entry_fg"],
-                insertbackground=theme["entry_fg"],
-                selectbackground=theme["select_bg"],
-                selectforeground=theme["select_fg"],
-            )
-            self.left_key.configure(
-                bg=theme["entry_bg"],
-                fg=theme["entry_fg"],
-                insertbackground=theme["entry_fg"],
-                selectbackground=theme["select_bg"],
-                selectforeground=theme["select_fg"],
-            )
-            self.right_mac.configure(
-                bg=theme["entry_bg"],
-                fg=theme["entry_fg"],
-                insertbackground=theme["entry_fg"],
-                selectbackground=theme["select_bg"],
-                selectforeground=theme["select_fg"],
-            )
-            self.right_key.configure(
-                bg=theme["entry_bg"],
-                fg=theme["entry_fg"],
-                insertbackground=theme["entry_fg"],
-                selectbackground=theme["select_bg"],
-                selectforeground=theme["select_fg"],
-            )
-            self.connect_btn.configure(
-                bg=theme["button_bg"],
-                fg=theme["button_fg"],
-                activebackground=theme["select_bg"],
-                activeforeground=theme["select_fg"],
-            )
-            
-            # Core architecture checkboxes
-            if HAS_CORE and hasattr(self, "core_mode_check"):
-                self.core_mode_check.configure(
-                    bg=theme["bg"],
-                    fg=theme["fg"],
-                    activebackground=theme["bg"],
-                    activeforeground=theme["fg"],
-                    selectcolor=theme["entry_bg"],
-                )
-                
-                if hasattr(self, "deadman_disable_check"):
-                    # Keep deadman checkbox red when enabled, otherwise use theme colors
-                    if self.deadman_disable_var.get():
-                        self.deadman_disable_check.configure(
-                            bg=theme["bg"],
-                            fg="red",
-                            activebackground=theme["bg"],
-                            activeforeground="red",
-                            selectcolor=theme["entry_bg"],
-                        )
-                    else:
-                        self.deadman_disable_check.configure(
-                            bg=theme["bg"],
-                            fg=theme["fg"],
-                            activebackground=theme["bg"],
-                            activeforeground=theme["fg"],
-                            selectcolor=theme["entry_bg"],
-                        )
-
-        # Control frame and widgets
-        if hasattr(self, "control_frame"):
-            self.control_frame.configure(bg=theme["bg"], fg=theme["fg"])
-            
-            # Assist frame
-            if hasattr(self, "assist_frame"):
-                self.assist_frame.configure(bg=theme["bg"])
-            
-            self.lbl_assist.configure(bg=theme["bg"], fg=theme["fg"])
-            self.assist_level_menu.configure(
-                bg=theme["button_bg"],
-                fg=theme["button_fg"],
-                activebackground=theme["select_bg"],
-                activeforeground=theme["select_fg"],
-                highlightthickness=0,
-            )
-            menu = self.assist_level_menu["menu"]
-            menu.configure(
-                bg=theme["button_bg"],
-                fg=theme["button_fg"],
-                activebackground=theme["select_bg"],
-                activeforeground=theme["select_fg"],
-            )
-
-            # Profile frame
-            if hasattr(self, "profile_frame"):
-                self.profile_frame.configure(bg=theme["bg"])
-            
-            if hasattr(self, "lbl_profile"):
-                self.lbl_profile.configure(bg=theme["bg"], fg=theme["fg"])
-                self.profile_menu.configure(
-                    bg=theme["button_bg"],
-                    fg=theme["button_fg"],
-                    activebackground=theme["select_bg"],
-                    activeforeground=theme["select_fg"],
-                    highlightthickness=0,
-                )
-                profile_menu = self.profile_menu["menu"]
-                profile_menu.configure(
-                    bg=theme["button_bg"],
-                    fg=theme["button_fg"],
-                    activebackground=theme["select_bg"],
-                    activeforeground=theme["select_fg"],
-                )
-
-            self.lbl_hill_hold.configure(bg=theme["bg"], fg=theme["fg"])
-            self.hill_hold_check.configure(
-                bg=theme["bg"],
-                fg=theme["fg"],
-                activebackground=theme["bg"],
-                activeforeground=theme["fg"],
-                selectcolor=theme["entry_bg"],
-            )
-
-            # Max speed frame
-            if hasattr(self, "max_speed_frame"):
-                self.max_speed_frame.configure(bg=theme["bg"])
-            
-            if hasattr(self, "lbl_max_speed"):
-                self.lbl_max_speed.configure(bg=theme["bg"], fg=theme["fg"])
-                
-                # Theme labels, buttons, and entries within max_speed_frame
-                for widget in self.max_speed_frame.winfo_children():
-                    if isinstance(widget, tk.Label):
-                        widget.configure(bg=theme["bg"], fg=theme["fg"])
-                    elif isinstance(widget, tk.Entry):
-                        widget.configure(
-                            bg=theme["entry_bg"],
-                            fg=theme["entry_fg"],
-                            readonlybackground=theme["entry_bg"],
-                            insertbackground=theme["entry_fg"],
-                            selectbackground=theme["select_bg"],
-                            selectforeground=theme["select_fg"],
-                        )
-                    elif isinstance(widget, tk.Button):
-                        widget.configure(
-                            bg=theme["button_bg"],
-                            fg=theme["button_fg"],
-                            activebackground=theme["select_bg"],
-                            activeforeground=theme["select_fg"],
-                        )
-
-            if hasattr(self, "btn_frame"):
-                self.btn_frame.configure(bg=theme["bg"])
-
-            for btn in (
-                self.set_level_btn,
-                self.set_profile_btn,
-                self.read_battery_btn,
-                self.read_status_btn,
-                self.read_version_btn,
-                self.read_profile_btn,
-                self.info_dump_btn,
-            ):
-                btn.configure(
-                    bg=theme["button_bg"],
-                    fg=theme["button_fg"],
-                    activebackground=theme["select_bg"],
-                    activeforeground=theme["select_fg"],
-                )
-
-        # Output frame and text widget
-        if hasattr(self, "output_frame"):
-            self.output_frame.configure(bg=theme["bg"], fg=theme["fg"])
-
+            if hasattr(self, "deadman_disable_check"):
+                # Keep deadman checkbox red when enabled
+                if self.deadman_disable_var.get():
+                    self._theme_widget(self.deadman_disable_check, "checkbox", fg="red", activeforeground="red")
+                else:
+                    self._theme_widget(self.deadman_disable_check, "checkbox")
+        
+        self._theme_widget(self.connect_btn, "button")
+        
+        # Controls
+        self._theme_widget(self.control_frame, "labelframe")
+        self._theme_widget(self.assist_frame, "frame")
+        self._theme_widget(self.lbl_assist, "label")
+        self._theme_widget(self.assist_level_menu, "optionmenu")
+        self._theme_widget(self.set_level_btn, "button")
+        
+        self._theme_widget(self.profile_frame, "frame")
+        self._theme_widget(self.lbl_profile, "label")
+        self._theme_widget(self.profile_menu, "optionmenu")
+        self._theme_widget(self.set_profile_btn, "button")
+        
+        self._theme_widget(self.lbl_hill_hold, "label")
+        self._theme_widget(self.hill_hold_check, "checkbox")
+        
+        # Max speed controls
+        self._theme_widget(self.max_speed_frame, "frame")
+        self._theme_widget(self.lbl_max_speed, "label")
+        for widget in self.max_speed_frame.winfo_children():
+            if isinstance(widget, tk.Label):
+                self._theme_widget(widget, "label")
+            elif isinstance(widget, tk.Entry):
+                self._theme_widget(widget, "entry")
+            elif isinstance(widget, tk.Button):
+                self._theme_widget(widget, "button")
+        
+        # Status buttons
+        self._theme_widget(self.btn_frame, "frame")
+        for btn in (self.read_battery_btn, self.read_status_btn, self.read_version_btn, 
+                    self.read_profile_btn, self.info_dump_btn):
+            self._theme_widget(btn, "button")
+        
+        # Output
+        self._theme_widget(self.output_frame, "labelframe")
         if hasattr(self, "output"):
             self.output.configure(
                 bg=theme["output_bg"],
@@ -841,13 +736,10 @@ class M25GUI:
                 selectbackground=theme["select_bg"],
                 selectforeground=theme["select_fg"],
             )
-
-            # Semantic tags for log output
             self._apply_output_tags()
-
+        
         # Status bar
         if hasattr(self, "status"):
-            # Do not force fg here. status_message() sets fg by level.
             self.status.configure(bg=theme["bg"])
 
     def _apply_output_tags(self):
