@@ -118,7 +118,7 @@ check_system_deps() {
     if [ ! -f "/usr/include/bluetooth/bluetooth.h" ] && [ ! -f "/usr/local/include/bluetooth/bluetooth.h" ]; then
         case "$distro" in
             ubuntu|debian|linuxmint)
-                missing_packages+=("libbluetooth-dev" "bluez")
+                missing_packages+=("bluetooth" "bluez" "libbluetooth-dev")
                 ;;
             fedora|rhel|centos|rocky|almalinux)
                 missing_packages+=("bluez-libs-devel" "bluez")
@@ -133,29 +133,53 @@ check_system_deps() {
         esac
     fi
     
+    # Add build essentials and development packages for apt-based systems
+    case "$distro" in
+        ubuntu|debian|linuxmint)
+            if ! dpkg -s python3-dev build-essential pkg-config >/dev/null 2>&1; then
+                missing_packages+=("python3-dev" "build-essential" "pkg-config")
+            fi
+            ;;
+    esac
+    
     if [ ${#missing_packages[@]} -gt 0 ]; then
         warn "  Missing system packages detected: ${missing_packages[*]}"
         warn ""
         case "$distro" in
             ubuntu|debian|linuxmint)
-                warn "  Install with: sudo apt install ${missing_packages[*]}"
+                step "  Installing system packages with apt..."
+                sudo apt update
+                sudo apt install -y "${missing_packages[@]}"
+                ok "  System packages installed"
                 ;;
             fedora|rhel|centos|rocky|almalinux)
                 warn "  Install with: sudo dnf install ${missing_packages[*]}"
+                warn ""
+                read -p "Continue without installing system packages? [y/N] " -n 1 -r
+                echo
+                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                    fail "Setup cancelled"
+                fi
                 ;;
             arch|manjaro)
                 warn "  Install with: sudo pacman -S ${missing_packages[*]}"
+                warn ""
+                read -p "Continue without installing system packages? [y/N] " -n 1 -r
+                echo
+                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                    fail "Setup cancelled"
+                fi
                 ;;
             *)
                 warn "  Please install these packages using your distribution's package manager"
+                warn ""
+                read -p "Continue without installing system packages? [y/N] " -n 1 -r
+                echo
+                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                    fail "Setup cancelled"
+                fi
                 ;;
         esac
-        warn ""
-        read -p "Continue without installing system packages? [y/N] " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            fail "Setup cancelled"
-        fi
     else
         ok "  System dependencies OK"
     fi
@@ -240,9 +264,9 @@ ok "  Virtual environment activated"
 VENV_PYTHON="$VENV_PATH/bin/python"
 
 # [5/7] pip
-step "[5/7] Upgrading pip..."
-"$VENV_PYTHON" -m pip install --upgrade pip
-ok "  pip upgraded"
+step "[5/7] Upgrading pip, setuptools, and wheel..."
+"$VENV_PYTHON" -m pip install --upgrade pip setuptools wheel
+ok "  pip, setuptools, and wheel upgraded"
 
 # [6/7] deps
 step "[6/7] Installing project dependencies..."
