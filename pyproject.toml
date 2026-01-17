@@ -21,7 +21,7 @@ windows = [
     "winrt-Windows.Storage.Streams>=2.0.0",
 ]
 linux = [
-    "pybluez>=0.23",
+    "pybluez2",
 ]
 dev = [
     "pytest>=7.0.0",
