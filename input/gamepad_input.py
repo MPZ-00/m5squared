@@ -172,7 +172,7 @@ class GamepadInput:
             parts.append(f"Hat: {hat}")
         
         # Show result
-        parts.append(f"→ vx={y:+.2f} vy={x:+.2f} deadman={deadman} mode={self._mode.name}")
+        parts.append(f"→ vx={x:+.2f} vy={y:+.2f} deadman={deadman} mode={self._mode.name}")
         
         logger.info(" | ".join(parts))
     
@@ -185,7 +185,7 @@ class GamepadInput:
                 self._mode = modes[idx + 1]
                 logger.info(f"Mode: {self._mode.name}")
         except ValueError:
-            self._mode = DriveMode.NORMAL
+            self._mode = DriveMode.FAST
     
     def _cycle_mode_down(self) -> None:
         """Cycle to slower drive mode"""
@@ -196,4 +196,4 @@ class GamepadInput:
                 self._mode = modes[idx - 1]
                 logger.info(f"Mode: {self._mode.name}")
         except ValueError:
-            self._mode = DriveMode.NORMAL
+            self._mode = DriveMode.SLOW
