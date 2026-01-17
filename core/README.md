@@ -1,13 +1,10 @@
 # m5Squared Core Architecture
-
 **Clean, typed, testable wheelchair control system.**
 
 ## Overview
-
 The core module provides a safety-first, pluggable architecture for controlling M25 wheelchair wheels. It separates concerns cleanly and uses type hints throughout for maintainability.
 
 ## Architecture
-
 ```
 InputProvider → ControlState → Mapper → CommandFrame → Transport → Vehicle
                                   ↑                          ↓
@@ -16,9 +13,7 @@ InputProvider → ControlState → Mapper → CommandFrame → Transport → Veh
 ```
 
 ## Core Components
-
 ### 1. Types (`core/types.py`)
-
 **Data classes that flow through the system:**
 
 - **`ControlState`**: Normalized input from any source
@@ -37,7 +32,6 @@ InputProvider → ControlState → Mapper → CommandFrame → Transport → Veh
   - DISCONNECTED → CONNECTING → PAIRED → ARMED → DRIVING → FAILSAFE
 
 ### 2. Interfaces (`core/interfaces.py`)
-
 **Protocols (interfaces) for pluggable components:**
 
 - **`InputProvider`**: Any input source (joystick, GUI, keyboard, test)
@@ -47,7 +41,6 @@ InputProvider → ControlState → Mapper → CommandFrame → Transport → Veh
   - `connect()`, `disconnect()`, `send_command()`, `read_state()`
 
 ### 3. Mapper (`core/mapper.py`)
-
 **Transforms input into safe commands:**
 
 - ✅ Deadman switch enforcement
@@ -60,7 +53,6 @@ InputProvider → ControlState → Mapper → CommandFrame → Transport → Veh
 **This is safety-critical code - extensively tested.**
 
 ### 4. Supervisor (`core/supervisor.py`)
-
 **Main control loop and state machine:**
 
 **States:**
@@ -82,9 +74,7 @@ InputProvider → ControlState → Mapper → CommandFrame → Transport → Veh
 - All state transitions logged
 
 ## Usage
-
 ### Basic Example
-
 ```python
 import asyncio
 from core import Supervisor, Mapper
@@ -111,7 +101,6 @@ asyncio.run(main())
 ```
 
 ### Running the Demo
-
 ```bash
 # Run the included demo with mock components
 python demo_core.py
@@ -124,9 +113,7 @@ This demonstrates:
 - Safety features
 
 ## Testing
-
 ### Run Tests
-
 ```bash
 # Run all tests
 pytest
@@ -139,16 +126,13 @@ pytest tests/test_mapper.py -v
 ```
 
 ### Type Checking
-
 ```bash
 # Check types
 mypy core/
 ```
 
 ## Configuration
-
 ### Mapper Configuration
-
 ```python
 from core.types import MapperConfig
 
@@ -163,7 +147,6 @@ config = MapperConfig(
 ```
 
 ### Supervisor Configuration
-
 ```python
 from core.types import SupervisorConfig
 
@@ -178,9 +161,7 @@ config = SupervisorConfig(
 ```
 
 ## Safety Features
-
 ### ⚠️ Safety-Critical Components
-
 The following components have **extra scrutiny**:
 
 1. **Mapper** - All safety rules implemented here
@@ -200,7 +181,6 @@ The following components have **extra scrutiny**:
    - Logged for debugging
 
 ### Testing Safety Features
-
 ```python
 # Test deadman requirement
 state = ControlState(vx=0.5, vy=0.0, deadman=False, mode=DriveMode.NORMAL)
@@ -214,9 +194,7 @@ assert abs(frame.left_speed) <= 30  # Enforces SLOW limit
 ```
 
 ## Extending
-
 ### Create a New Input Provider
-
 ```python
 from core.interfaces import InputProvider
 from core.types import ControlState
@@ -237,7 +215,6 @@ class MyInput:
 ```
 
 ### Create a New Transport
-
 ```python
 from core.interfaces import Transport
 from core.types import CommandFrame, VehicleState
@@ -256,7 +233,6 @@ class MyTransport:
 ```
 
 ## Project Structure
-
 ```
 core/
 ├── __init__.py          # Public API exports
@@ -265,28 +241,34 @@ core/
 ├── mapper.py            # Input → Command transformation
 ├── supervisor.py        # State machine and control loop
 └── transport/
-    └── __init__.py      # MockTransport
+    ├── __init__.py      # Transport exports
+    ├── mock.py          # MockTransport for testing
+    └── bluetooth.py     # Real Bluetooth transport
 
 input/
 ├── __init__.py          # Input providers
-└── mock_input.py        # Mock/test input
+├── mock_input.py        # Mock/test input
+└── gamepad_input.py     # Gamepad/joystick input
+
+demос/
+├── demo_core.py         # Core architecture demo
+├── demo_gamepad.py      # Gamepad control demo
+├── demo_gamepad_live.py # Live gamepad testing
+└── demo_integrated.py   # Full system demo
 
 tests/
 ├── __init__.py
 ├── test_types.py        # Type validation tests
-└── test_mapper.py       # Mapper safety tests
+├── test_mapper.py       # Mapper safety tests
+└── test_ble_notifications.py  # BLE tests
 ```
 
 ## Next Steps
-
-See [REFACTOR_ROADMAP.md](../REFACTOR_ROADMAP.md) for the full implementation plan:
-
 - ✅ Phase 1: Core Types & Interfaces (COMPLETE)
-- ⏭️ Phase 2: Transport Layer (wrap existing Bluetooth)
-- ⏭️ Phase 3: Physical Input Providers
-- ⏭️ Phase 4: GUI Integration
+- ✅ Phase 2: Transport Layer (COMPLETE - Bluetooth transport implemented)
+- ✅ Phase 3: Physical Input Providers (COMPLETE - Gamepad input implemented)
+- ✅ Phase 4: GUI Integration (COMPLETE - Multiple demos available)
 - ⏭️ Phase 5: Hardware Testing
 
 ## License
-
 See [LICENSE](../LICENSE) for details.

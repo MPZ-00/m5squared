@@ -70,7 +70,7 @@ ensure_venv() {
     fi
     
     step "  Creating virtual environment..."
-    python3 -m venv "$venv_path"
+    python3 -m venv "$venv_path" --system-site-packages
     
     if ! test_venv_healthy "$venv_path"; then
         fail "ERROR: venv creation finished but environment is still invalid"
