@@ -60,6 +60,15 @@ from m25_protocol_data import (
     SERVICE_NAMES, SOURCE_NAMES, DEST_NAMES
 )
 
+# Try to import Bluetooth RFCOMM server support
+try:
+    from bluetooth_server import RFCOMMServer, HAS_PYBLUEZ
+    HAS_BLUETOOTH = True
+except ImportError:
+    HAS_BLUETOOTH = False
+    HAS_PYBLUEZ = False
+    RFCOMMServer = None
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -381,6 +390,45 @@ class SocketServer:
             await self.server.serve_forever()
 
 
+class BluetoothServer:
+    """Bluetooth RFCOMM server wrapper"""
+    
+    def __init__(self, simulator: MockWheelSimulator, device_name: str = "e-motion M25 Left"):
+        self.simulator = simulator
+        self.device_name = device_name
+        self.server: Optional[RFCOMMServer] = None
+    
+    def start(self):
+        """Start the Bluetooth server (blocking)"""
+        if not HAS_BLUETOOTH:
+            logger.error("Bluetooth RFCOMM support not available")
+            logger.info("Install: pip install pybluez")
+            logger.info("On Linux: sudo apt-get install libbluetooth-dev python3-dev")
+            logger.info("On Windows: pip install pybluez (may need Microsoft C++ Build Tools)")
+            return
+        
+        # Create data handler that processes packets through simulator
+        def handle_bt_data(data: bytes) -> bytes:
+            """Process Bluetooth data through simulator"""
+            response = self.simulator.process_packet(data)
+            return response if response else b''
+        
+        self.server = RFCOMMServer(
+            device_name=self.device_name,
+            data_handler=handle_bt_data,
+            debug=self.simulator.debug
+        )
+        
+        logger.info(f"Starting Bluetooth RFCOMM server: {self.device_name}")
+        logger.info("Clients can discover, pair, and connect via Bluetooth")
+        
+        try:
+            self.server.start()  # Blocking call
+        except Exception as e:
+            logger.error(f"Error starting Bluetooth server: {e}", exc_info=True)
+            raise
+
+
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(
@@ -400,9 +448,15 @@ def main():
     )
     parser.add_argument(
         '--mode',
-        choices=['socket', 'bluetooth'],
+        type=str,
+        choices=['socket', 'bluetooth', 'rfcomm'],
         default='socket',
-        help='Communication mode'
+        help='Communication mode (bluetooth and rfcomm are aliases for RFCOMM/SPP)'
+    )
+    parser.add_argument(
+        '--device-name',
+        type=str,
+        help='Bluetooth device name (default: e-motion M25 [Left/Right/Common])'
     )
     parser.add_argument(
         '--port',
@@ -438,6 +492,14 @@ def main():
     # Create simulator
     simulator = MockWheelSimulator(key=key, wheel_id=args.wheel_id, debug=args.debug)
     
+    # Determine device name for BLE mode
+    wheel_names = {
+        SRC_ID_M25_WHEEL_LEFT: "Left",
+        SRC_ID_M25_WHEEL_RIGHT: "Right",
+        SRC_ID_M25_WHEEL_COMMON: "Common"
+    }
+    device_name = args.device_name or f"e-motion M25 {wheel_names.get(args.wheel_id, 'Wheel')}"
+    
     # Run server
     if args.mode == 'socket':
         server = SocketServer(simulator, port=args.port)
@@ -446,10 +508,22 @@ def main():
         except KeyboardInterrupt:
             logger.info("Server stopped by user")
             return 0
-    elif args.mode == 'bluetooth':
-        logger.error("Bluetooth mode not yet implemented")
-        logger.info("Use socket mode for now: --mode socket")
-        return 1
+    elif args.mode in ['bluetooth', 'rfcomm']:
+        if not HAS_BLUETOOTH:
+            logger.error("Bluetooth RFCOMM support not available")
+            logger.info("Install required library: pip install pybluez")
+            logger.info("On Linux: sudo apt-get install libbluetooth-dev python3-dev")
+            logger.info("On Windows: pip install pybluez (may need Microsoft C++ Build Tools)")
+            logger.info("")
+            logger.info("For now, use socket mode: --mode socket")
+            return 1
+        
+        server = BluetoothServer(simulator, device_name=device_name)
+        try:
+            server.start()  # Blocking call
+        except KeyboardInterrupt:
+            logger.info("Server stopped by user")
+            return 0
     
     return 0
 

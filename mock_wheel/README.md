@@ -5,12 +5,14 @@ A software simulator that emulates an M25 wheelchair wheel for testing purposes.
 - Full AES-128-CBC encryption/decryption support
 - Responds to M25 protocol commands (APP_MGMT service)
 - Simulates wheel state (battery, speed, drive modes, etc.)
-- TCP socket server mode for easy testing
+- **TCP socket server mode** for easy testing
+- **Bluetooth RFCOMM/SPP mode** for realistic testing
 - Configurable encryption keys
 - Debug logging for troubleshooting
 
 ## Quick Start
 ### 1. Start the Simulator
+**Socket Mode (easiest):**
 ```bash
 # Using default settings (USB default key, socket mode on port 5000)
 python mock_wheel_simulator.py
@@ -25,11 +27,33 @@ python mock_wheel_simulator.py --port 8000
 python mock_wheel_simulator.py --debug
 ```
 
+**Bluetooth RFCOMM Mode (realistic):**
+```bash
+# Install PyBluez library first
+pip install pybluez
+
+# On Linux, also install dev packages
+sudo apt-get install libbluetooth-dev python3-dev
+
+# Start as Bluetooth RFCOMM server
+python mock_wheel_simulator.py --mode bluetooth
+
+# With custom device name
+python mock_wheel_simulator.py --mode bluetooth --device-name "My Test Wheel"
+
+# Different wheel ID (shows as different device)
+python mock_wheel_simulator.py --mode bluetooth --wheel-id 3  # Right wheel
+```
+
 ### 2. Run Test Client
 In a separate terminal:
 
 ```bash
+# Test socket mode
 python test_mock_wheel.py
+
+# Test RFCOMM mode with your regular RFCOMM client
+# The simulator will appear as a paired Bluetooth device
 ```
 
 This will run a series of test commands and verify the simulator is working correctly.
@@ -42,14 +66,59 @@ This will run a series of test commands and verify the simulator is working corr
 --wheel-id ID      Wheel ID: 1=COMMON, 2=LEFT, 3=RIGHT
                    Default: 2 (LEFT)
 
---mode MODE        Communication mode: socket or bluetooth
-                   Default: socket (bluetooth not yet implemented)
+--mode MODE        Communication mode: socket, bluetooth, or rfcomm
+                   Default: socket
+
+--device-name NAME Bluetooth device name (for bluetooth mode)
+                   Default: e-motion M25 [Left/Right/Common]
 
 --port PORT        TCP port for socket mode
                    Default: 5000
 
 --debug            Enable debug logging
 ```
+
+## Bluetooth RFCOMM Mode
+The simulator can act as a real Bluetooth RFCOMM/SPP (Serial Port Profile) device, just like the physical M25 wheels in classic Bluetooth mode.
+
+### Requirements
+- **All Platforms**: PyBluez library
+- **Windows**: May need Microsoft C++ Build Tools
+- **Linux**: libbluetooth-dev package
+- **macOS**: Should work with PyBluez
+
+### Installation
+```bash
+# All platforms
+pip install pybluez
+
+# Linux additional requirements
+sudo apt-get install libbluetooth-dev python3-dev
+```
+
+### Using Bluetooth Mode
+Once started in Bluetooth mode, the simulator will:
+1. Advertise as a Bluetooth Serial Port (SPP) device
+2. Use device name like "e-motion M25 Left"
+3. Accept pairing and connections from any Bluetooth client
+4. Handle encrypted communication just like real hardware
+
+You can connect using:
+- Your existing M25 RFCOMM client code (m25_spp.py)
+- Any serial Bluetooth terminal app
+- Standard Bluetooth pairing and connection
+
+### Pairing
+1. Start the simulator with `--mode bluetooth`
+2. On your client device, scan for Bluetooth devices
+3. Pair with "e-motion M25 Left" (or your custom name)
+4. Connect using RFCOMM channel (typically channel 1)
+
+### Service UUID
+The simulator implements standard Serial Port Profile:
+- **Service UUID**: `00001101-0000-1000-8000-00805F9B34FB`
+- **Profile**: Serial Port Profile (SPP)
+- **Protocol**: RFCOMM
 
 ## Supported Commands
 The simulator currently supports these M25 protocol commands:
