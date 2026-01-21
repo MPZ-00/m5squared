@@ -14,6 +14,13 @@ Presented at 39C3 Hamburg: *["Pwn2Roll: Who Needs a 595€ Remote When You Have 
     - Currently we support out-of-the-box: ECS remote, speed increase to 8.5km/h, parking mode. *Cruise* mode and the push counter are possible in theory, but not tested yet. Stay tuned, this will be tested soonish (it's also the ground work for replacing the knob-style remote).
 - **Access dealer-only parameters:** Your wheels, your data
 
+### Legal Stuff Corner aka. *The "We Told You So" Section*
+
+- Warranty and Gewährleistung: Using unofficial tools may void them. The manufacturer or reseller will likely not be thrilled if you mention wheelchair.py during a service appointment.
+- The Speedenings: 8.5 km/h is faster than 6 km/h. Physics applies. In Germany, electric wheelchairs above 6 km/h require registration when using in the public. This is also the case when one's using the paid feature in the official app. But if you want to break the law, you can do it with our tools, for free.
+- Ownership: If your Krankenkasse paid for the device, they technically own it. You're poking at insurance property. They might have opinions, or they might never notice. We don't judge here.
+- Safety: These wheels move a human. Cats have nine lives and always land on their feet, you might not have those features. Misconfigured parameters do things.
+
 ## The €595 Remote vs. This Script
 
 | Feature                 | Official ECS Remote | wheelchair.py |
