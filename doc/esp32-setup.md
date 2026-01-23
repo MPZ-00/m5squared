@@ -1,11 +1,8 @@
 # ESP32 Setup Guide for M5Squared
-
 ## Overview
-
 The ESP32 is a powerful microcontroller with built-in Wi-Fi and Bluetooth Low Energy (BLE), making it ideal for running M5squared wheelchair control. This guide covers setting up an ESP32 to control M25 wheels via BLE, with optional Wi-Fi for remote control.
 
 ## Why ESP32?
-
 **Advantages over PC-based control:**
 - **Portable**: Small form factor, can be integrated into wheelchair
 - **Battery-powered**: Low power consumption (can run on power bank)
@@ -20,9 +17,7 @@ The ESP32 is a powerful microcontroller with built-in Wi-Fi and Bluetooth Low En
 4. Data logging and telemetry
 
 ## Hardware Requirements
-
 ### ESP32 Board Options
-
 **Recommended boards:**
 
 1. **ESP32-DevKitC** ($8-12)
@@ -51,7 +46,6 @@ The ESP32 is a powerful microcontroller with built-in Wi-Fi and Bluetooth Low En
 - USB port for programming
 
 ### Additional Components
-
 **For gamepad input:**
 - USB Host Shield (for wired USB controllers)
 - OR Bluetooth gamepad (pairs directly with ESP32)
@@ -69,19 +63,15 @@ The ESP32 is a powerful microcontroller with built-in Wi-Fi and Bluetooth Low En
 - Emergency stop button
 
 ## Software Setup
-
 ### Option 1: MicroPython (Recommended)
-
 MicroPython is easier to work with and allows running Python code similar to the PC version.
 
 #### 1. Install Esptool
-
 ```bash
 pip install esptool
 ```
 
 #### 2. Download MicroPython Firmware
-
 Get the latest ESP32 firmware from:
 https://micropython.org/download/esp32/
 
@@ -94,7 +84,6 @@ wget https://micropython.org/resources/firmware/esp32-20231005-v1.21.0.bin
 ```
 
 #### 3. Erase Flash
-
 ```bash
 # Windows
 python -m esptool --chip esp32 --port COM3 erase_flash
@@ -107,7 +96,6 @@ python -m esptool --chip esp32 --port /dev/cu.usbserial-* erase_flash
 ```
 
 #### 4. Flash MicroPython
-
 ```bash
 # Windows
 python -m esptool --chip esp32 --port COM3 --baud 460800 write_flash -z 0x1000 esp32-20231005-v1.21.0.bin
@@ -117,7 +105,6 @@ python -m esptool --chip esp32 --port /dev/ttyUSB0 --baud 460800 write_flash -z 
 ```
 
 #### 5. Test Connection
-
 ```bash
 # Install mpremote for file transfer
 pip install mpremote
@@ -131,11 +118,9 @@ mpremote connect /dev/ttyUSB0  # Linux
 ```
 
 ### Option 2: Arduino/PlatformIO
-
 For C++ development with more control over hardware.
 
 #### 1. Install PlatformIO
-
 ```bash
 pip install platformio
 
@@ -143,7 +128,6 @@ pip install platformio
 ```
 
 #### 2. Create Project
-
 ```bash
 mkdir m5squared-esp32
 cd m5squared-esp32
@@ -151,7 +135,6 @@ pio init --board esp32dev
 ```
 
 #### 3. Configure platformio.ini
-
 ```ini
 [env:esp32dev]
 platform = espressif32
@@ -165,9 +148,7 @@ monitor_speed = 115200
 ```
 
 ## Port M5Squared to ESP32
-
 ### Architecture
-
 ```
 ┌─────────────────────────────────────────────┐
 │ ESP32 Board                                 │
@@ -197,7 +178,6 @@ monitor_speed = 115200
 ```
 
 ### Core Files to Port
-
 **Essential modules:**
 1. `m25_crypto.py` - Encryption/decryption (port to MicroPython)
 2. `m25_protocol.py` - Protocol handling
@@ -211,9 +191,7 @@ monitor_speed = 115200
 - Limited standard library
 
 ### Example MicroPython Code
-
 #### 1. BLE Connection (ESP32)
-
 ```python
 # esp32_ble.py
 import ubluetooth
@@ -255,7 +233,6 @@ class ESP32BLE:
 ```
 
 #### 2. Input Handling
-
 ```python
 # esp32_input.py
 from machine import Pin, ADC
@@ -288,7 +265,6 @@ class GamepadInput:
 ```
 
 #### 3. Main Loop
-
 ```python
 # main.py
 import uasyncio as asyncio
@@ -344,7 +320,6 @@ asyncio.run(main())
 ```
 
 ### Uploading Files to ESP32
-
 ```bash
 # Copy Python files to ESP32
 mpremote connect COM3 fs cp m25_crypto.py :
@@ -364,7 +339,6 @@ mpremote connect COM3 run main.py
 ```
 
 ## Wi-Fi Remote Control (Optional)
-
 Add a web server for smartphone/tablet control:
 
 ```python
@@ -411,9 +385,7 @@ class WebController:
 ```
 
 ## Troubleshooting
-
 ### ESP32 Not Detected
-
 **Windows:**
 - Install CP2102 or CH340 USB driver
 - Check Device Manager for COM port
@@ -424,22 +396,60 @@ class WebController:
 - Check permissions: `ls -l /dev/ttyUSB*`
 - Install pyserial: `pip install pyserial`
 
-### Flash Failed
+### Flash Failed / Wrong Boot Mode
+**Error: "Wrong boot mode detected (0x13)"**
+
+This is the most common ESP32 upload issue. The ESP32 needs to be manually put into bootloader/download mode.
+
+**Solution - Hold BOOT during upload:**
+
+1. **Press and hold** the BOOT button on your ESP32
+2. Click **Upload** in Arduino IDE (while still holding BOOT)
+3. Keep holding BOOT through the "Connecting......" dots
+4. Once you see **"Writing at 0x..."** or upload percentage, **release BOOT**
+5. Upload continues automatically
+
+**Timing is key:** Hold BOOT during the connection phase, release once writing starts.
+
+**Alternative method - BOOT + RESET sequence:**
+
+1. Press and hold **BOOT**
+2. Press and release **RESET** (while still holding BOOT)
+3. Release **BOOT**
+4. Click **Upload** immediately
+
+**Identifying the buttons:**
+
+- **BOOT**: Usually labeled BOOT, IO0, or GPIO0
+- **RESET**: Usually labeled RST, RESET, or EN
+- Both are small tactile switches on the board
+
+**Success indicators:**
+
+```
+Connecting....
+Connected to ESP32 on COM8:
+Chip type:          ESP32-D0WD-V3 (revision v3.1)
+Writing at 0x00054070 [==============================] 100.0%
+Hash of data verified.
+Hard resetting via RTS pin...
+```
+
+**If still failing:**
 
 - Try lower baud rate: `--baud 115200`
-- Hold BOOT button during flash
-- Check USB cable quality
-- Erase flash completely first
+- Check USB cable quality (must support data transfer)
+- Try a different USB port
+- Erase flash completely first: `esptool --port COM8 erase_flash`
+- Some boards have auto-reset issues - manual BOOT method always works
 
 ### BLE Connection Issues
-
 - ESP32 can only handle 3-4 BLE connections simultaneously
 - Increase BLE stack size in `sdkconfig` (Arduino/PlatformIO)
 - Use NimBLE instead of Bluedroid (more efficient)
 - Check M25 wheels are in pairing mode
 
 ### Memory Issues
-
 MicroPython has limited RAM (~100KB free after boot):
 - Use `gc.collect()` frequently
 - Precompile Python to bytecode (`.mpy` files)
@@ -447,7 +457,6 @@ MicroPython has limited RAM (~100KB free after boot):
 - Consider ESP32-S3 with more RAM (512KB)
 
 ## Power Considerations
-
 **ESP32 power consumption:**
 - Active (Wi-Fi + BLE): ~160-260mA
 - BLE only: ~100-140mA  
@@ -466,7 +475,6 @@ MicroPython has limited RAM (~100KB free after boot):
 - Turn off unused peripherals
 
 ## Next Steps
-
 1. **Get ESP32 board** - Start with ESP32-DevKitC
 2. **Flash MicroPython** - Follow steps above
 3. **Test BLE** - Scan for M25 wheels
@@ -476,7 +484,6 @@ MicroPython has limited RAM (~100KB free after boot):
 7. **Build enclosure** - 3D print or custom case
 
 ## Resources
-
 - **MicroPython ESP32**: https://docs.micropython.org/en/latest/esp32/quickref.html
 - **ESP32 BLE**: https://docs.micropython.org/en/latest/library/ubluetooth.html
 - **PlatformIO ESP32**: https://docs.platformio.org/en/latest/platforms/espressif32.html
@@ -485,7 +492,6 @@ MicroPython has limited RAM (~100KB free after boot):
 - **BLE Notifications**: [ble-notifications-how-it-works.md](ble-notifications-how-it-works.md)
 
 ## Alternative: ESP32 as Wi-Fi Bridge
-
 If you want to keep the PC-based control but add wireless capability:
 
 ```
@@ -498,7 +504,6 @@ If you want to keep the PC-based control but add wireless capability:
 The ESP32 acts as a Wi-Fi-to-BLE bridge, allowing remote control from any device while keeping the complex logic on the PC.
 
 ## Support
-
 For ESP32-specific questions:
 - ESP32 Forum: https://esp32.com
 - MicroPython Forum: https://forum.micropython.org
