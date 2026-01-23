@@ -25,10 +25,27 @@
 #include <BLE2902.h>
 
 // Configuration
-#define DEVICE_NAME "M25_FAKE_LEFT"  // Change to M25_FAKE_RIGHT for second wheel
+#define DEVICE_NAME "M25_FAKE_RIGHT"  // Change to M25_FAKE_RIGHT for second wheel
 #define SERVICE_UUID "00001101-0000-1000-8000-00805F9B34FB"  // SPP UUID
 #define CHAR_UUID_TX "00001101-0000-1000-8000-00805F9B34FB"
 #define CHAR_UUID_RX "00001102-0000-1000-8000-00805F9B34FB"
+
+// Hardware pins for visual feedback
+// Wire colors: 3.3V=red, GND=brown, button/LEDs as marked below
+#define LED_RED 25      // D25 (orange wire) - Error/Low Battery/Advertising
+#define LED_YELLOW 26   // D26 (yellow wire) - Medium Battery/Connecting
+#define LED_GREEN 27    // D27 (turquoise wire) - Good Battery/Connected
+#define BUTTON_PIN 33   // D33 (blue wire) - Button to force advertising
+#define BUTTON_DEBOUNCE 50  // Debounce delay in ms
+
+// LED states
+enum LEDState {
+    LED_ADVERTISING,    // Red blinking fast
+    LED_CONNECTING,     // Yellow blinking
+    LED_CONNECTED,      // Green solid
+    LED_ERROR,          // Red solid
+    LED_BATTERY         // Show battery level
+};
 
 // Globals
 BLEServer* pServer = NULL;
@@ -45,10 +62,18 @@ bool hillHold = false;
 int driveProfile = 0;   // 0 = standard
 bool debugMode = false; // Verbose logging
 
+// Button state
+bool lastButtonState = HIGH;
+unsigned long lastDebounceTime = 0;
+
 void handleCommand(uint8_t* data, size_t len);
 void sendResponse();
 void handleSerialCommand();
 void printHelp();
+void updateLEDs();
+void handleButton();
+void setLEDState(LEDState state);
+void showBatteryLevel();
 
 // Server callbacks
 class MyServerCallbacks: public BLEServerCallbacks {
@@ -122,13 +147,34 @@ void sendResponse() {
 
 void setup() {
     Serial.begin(115200);
-    delay(1000);
+    delay(2000);  // Increased delay for serial connection stability
+    
+    // Initialize LED pins
+    pinMode(LED_RED, OUTPUT);
+    pinMode(LED_YELLOW, OUTPUT);
+    pinMode(LED_GREEN, OUTPUT);
+    pinMode(BUTTON_PIN, INPUT_PULLUP);  // Button with internal pullup
+    
+    // All LEDs on briefly for test
+    digitalWrite(LED_RED, HIGH);
+    digitalWrite(LED_YELLOW, HIGH);
+    digitalWrite(LED_GREEN, HIGH);
+    delay(500);
+    digitalWrite(LED_RED, LOW);
+    digitalWrite(LED_YELLOW, LOW);
+    digitalWrite(LED_GREEN, LOW);
     
     Serial.println("\n=================================");
     Serial.println("Fake M25 Wheel Simulator");
     Serial.println("=================================");
     Serial.println();
     Serial.println("Device name: " + String(DEVICE_NAME));
+    Serial.println();
+    Serial.println("Hardware:");
+    Serial.println("  Red LED (Pin " + String(LED_RED) + ") - Advertising/Low Battery");
+    Serial.println("  Yellow LED (Pin " + String(LED_YELLOW) + ") - Medium Battery/Connecting");
+    Serial.println("  Green LED (Pin " + String(LED_GREEN) + ") - Good Battery/Connected");
+    Serial.println("  Button (Pin " + String(BUTTON_PIN) + ") - Force Advertising");
     Serial.println();
 
     // Initialize BLE
@@ -177,6 +223,9 @@ void setup() {
     Serial.println();
     Serial.println("Type 'help' for available commands");
     Serial.println();
+    
+    // Start with advertising state
+    setLEDState(LED_ADVERTISING);
 }
 
 void loop() {
@@ -186,6 +235,8 @@ void loop() {
         Serial.println("=== CONNECTED ===");
         Serial.println("Ready to receive commands");
         Serial.println();
+        setLEDState(LED_CONNECTED);
+        showBatteryLevel();
     }
     
     if (!deviceConnected && oldDeviceConnected) {
@@ -195,7 +246,14 @@ void loop() {
         Serial.println("Advertising restarted");
         Serial.println();
         oldDeviceConnected = deviceConnected;
+        setLEDState(LED_ADVERTISING);
     }
+    
+    // Update LED states
+    updateLEDs();
+    
+    // Handle button press
+    handleButton();
     
     // Handle serial commands
     handleSerialCommand();
@@ -208,11 +266,14 @@ void loop() {
             Serial.print("Battery: ");
             Serial.print(batteryLevel);
             Serial.println("%");
+            if (deviceConnected) {
+                showBatteryLevel();  // Update battery LED when connected
+            }
         }
         lastBatteryUpdate = millis();
     }
     
-    delay(100);
+    delay(20);  // Reduced delay for better responsiveness
 }
 
 void handleSerialCommand() {
@@ -381,4 +442,111 @@ void printHelp() {
     Serial.println("disconnect        - Disconnect client");
     Serial.println("advertise         - Force restart BLE advertising");
     Serial.println("========================\n");
+}
+
+// LED Management Functions
+void updateLEDs() {
+    static unsigned long lastBlink = 0;
+    static bool blinkState = false;
+    unsigned long currentMillis = millis();
+    
+    // Handle blinking states
+    if (!deviceConnected) {
+        // Advertising: Red blinks fast (250ms interval)
+        if (currentMillis - lastBlink >= 250) {
+            blinkState = !blinkState;
+            digitalWrite(LED_RED, blinkState ? HIGH : LOW);
+            lastBlink = currentMillis;
+        }
+    }
+}
+
+void setLEDState(LEDState state) {
+    // Turn all LEDs off first
+    digitalWrite(LED_RED, LOW);
+    digitalWrite(LED_YELLOW, LOW);
+    digitalWrite(LED_GREEN, LOW);
+    
+    switch (state) {
+        case LED_ADVERTISING:
+            // Will blink in updateLEDs()
+            Serial.println("LED: Advertising mode (red blinking)");
+            break;
+            
+        case LED_CONNECTING:
+            digitalWrite(LED_YELLOW, HIGH);
+            Serial.println("LED: Connecting (yellow)");
+            break;
+            
+        case LED_CONNECTED:
+            digitalWrite(LED_GREEN, HIGH);
+            Serial.println("LED: Connected (green)");
+            break;
+            
+        case LED_ERROR:
+            digitalWrite(LED_RED, HIGH);
+            Serial.println("LED: Error (red solid)");
+            break;
+            
+        case LED_BATTERY:
+            showBatteryLevel();
+            break;
+    }
+}
+
+void showBatteryLevel() {
+    // Turn all off first
+    digitalWrite(LED_RED, LOW);
+    digitalWrite(LED_YELLOW, LOW);
+    digitalWrite(LED_GREEN, LOW);
+    
+    if (batteryLevel > 66) {
+        // High battery: Green
+        digitalWrite(LED_GREEN, HIGH);
+    } else if (batteryLevel > 33) {
+        // Medium battery: Yellow
+        digitalWrite(LED_YELLOW, HIGH);
+    } else {
+        // Low battery: Red
+        digitalWrite(LED_RED, HIGH);
+    }
+    
+    Serial.print("Battery LED: ");
+    if (batteryLevel > 66) Serial.println("Green (>66%)");
+    else if (batteryLevel > 33) Serial.println("Yellow (33-66%)");
+    else Serial.println("Red (<33%)");
+}
+
+void handleButton() {
+    int reading = digitalRead(BUTTON_PIN);
+    
+    // Debounce check - wait for stable state
+    if (reading != lastButtonState) {
+        lastDebounceTime = millis();
+        lastButtonState = reading;
+    }
+    
+    // If button is pressed (LOW) and debounce time has passed
+    if (reading == LOW && (millis() - lastDebounceTime) > BUTTON_DEBOUNCE) {
+        Serial.println("\n*** BUTTON PRESSED ***");
+        
+        if (deviceConnected) {
+            Serial.println("Disconnecting client...");
+            pServer->disconnect(pServer->getConnId());
+        }
+        
+        Serial.println("Force advertising...");
+        BLEDevice::startAdvertising();
+        Serial.println("Broadcasting as: " + String(DEVICE_NAME));
+        setLEDState(LED_ADVERTISING);
+        
+        // Wait for button release
+        while (digitalRead(BUTTON_PIN) == LOW) {
+            delay(10);
+        }
+        Serial.println("Button released\n");
+        
+        // Reset debounce timer
+        lastDebounceTime = millis();
+    }
 }
