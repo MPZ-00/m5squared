@@ -32,17 +32,18 @@
 
 // Hardware pins for visual feedback
 // Wire colors: 3.3V=red, GND=brown, button/LEDs as marked below
-#define LED_RED 25      // D25 (orange wire) - Error/Low Battery/Advertising
-#define LED_YELLOW 26   // D26 (yellow wire) - Medium Battery/Connecting
-#define LED_GREEN 27    // D27 (turquoise wire) - Good Battery/Connected
+#define LED_RED 25      // D25 (orange wire) - Low battery (red)
+#define LED_YELLOW 26   // D26 (yellow wire) - Medium battery (yellow)
+#define LED_GREEN 27    // D27 (turquoise wire) - High battery (green)
+#define LED_WHITE 32    // D32 (white wire) - Connection status
 #define BUTTON_PIN 33   // D33 (blue wire) - Button to force advertising
 #define BUTTON_DEBOUNCE 50  // Debounce delay in ms
 
 // LED states
 enum LEDState {
-    LED_ADVERTISING,    // Red blinking fast
-    LED_CONNECTING,     // Yellow blinking
-    LED_CONNECTED,      // Green solid
+    LED_ADVERTISING,    // White blinking fast
+    LED_CONNECTING,     // White blinking slow
+    LED_CONNECTED,      // White solid
     LED_ERROR,          // Red solid
     LED_BATTERY         // Show battery level
 };
@@ -153,16 +154,19 @@ void setup() {
     pinMode(LED_RED, OUTPUT);
     pinMode(LED_YELLOW, OUTPUT);
     pinMode(LED_GREEN, OUTPUT);
+    pinMode(LED_WHITE, OUTPUT);
     pinMode(BUTTON_PIN, INPUT_PULLUP);  // Button with internal pullup
     
     // All LEDs on briefly for test
     digitalWrite(LED_RED, HIGH);
     digitalWrite(LED_YELLOW, HIGH);
     digitalWrite(LED_GREEN, HIGH);
+    digitalWrite(LED_WHITE, HIGH);
     delay(500);
     digitalWrite(LED_RED, LOW);
     digitalWrite(LED_YELLOW, LOW);
     digitalWrite(LED_GREEN, LOW);
+    digitalWrite(LED_WHITE, LOW);
     
     Serial.println("\n=================================");
     Serial.println("Fake M25 Wheel Simulator");
@@ -171,9 +175,10 @@ void setup() {
     Serial.println("Device name: " + String(DEVICE_NAME));
     Serial.println();
     Serial.println("Hardware:");
-    Serial.println("  Red LED (Pin " + String(LED_RED) + ") - Advertising/Low Battery");
-    Serial.println("  Yellow LED (Pin " + String(LED_YELLOW) + ") - Medium Battery/Connecting");
-    Serial.println("  Green LED (Pin " + String(LED_GREEN) + ") - Good Battery/Connected");
+    Serial.println("  White LED (Pin " + String(LED_WHITE) + ") - Connection Status");
+    Serial.println("  Red LED (Pin " + String(LED_RED) + ") - Low Battery");
+    Serial.println("  Yellow LED (Pin " + String(LED_YELLOW) + ") - Medium Battery");
+    Serial.println("  Green LED (Pin " + String(LED_GREEN) + ") - High Battery");
     Serial.println("  Button (Pin " + String(BUTTON_PIN) + ") - Force Advertising");
     Serial.println();
 
@@ -452,39 +457,39 @@ void updateLEDs() {
     
     // Handle blinking states
     if (!deviceConnected) {
-        // Advertising: Red blinks fast (250ms interval)
+        // Advertising: White blinks fast (250ms interval)
         if (currentMillis - lastBlink >= 250) {
             blinkState = !blinkState;
-            digitalWrite(LED_RED, blinkState ? HIGH : LOW);
+            digitalWrite(LED_WHITE, blinkState ? HIGH : LOW);
             lastBlink = currentMillis;
         }
     }
 }
 
 void setLEDState(LEDState state) {
-    // Turn all LEDs off first
-    digitalWrite(LED_RED, LOW);
-    digitalWrite(LED_YELLOW, LOW);
-    digitalWrite(LED_GREEN, LOW);
+    // Turn white LED off (battery LEDs controlled separately)
+    digitalWrite(LED_WHITE, LOW);
     
     switch (state) {
         case LED_ADVERTISING:
             // Will blink in updateLEDs()
-            Serial.println("LED: Advertising mode (red blinking)");
+            Serial.println("LED: Advertising mode (white blinking)");
             break;
             
         case LED_CONNECTING:
-            digitalWrite(LED_YELLOW, HIGH);
-            Serial.println("LED: Connecting (yellow)");
+            digitalWrite(LED_WHITE, HIGH);
+            Serial.println("LED: Connecting (white slow blink)");
             break;
             
         case LED_CONNECTED:
-            digitalWrite(LED_GREEN, HIGH);
-            Serial.println("LED: Connected (green)");
+            digitalWrite(LED_WHITE, HIGH);
+            Serial.println("LED: Connected (white solid)");
             break;
             
         case LED_ERROR:
             digitalWrite(LED_RED, HIGH);
+            digitalWrite(LED_YELLOW, LOW);
+            digitalWrite(LED_GREEN, LOW);
             Serial.println("LED: Error (red solid)");
             break;
             
