@@ -163,10 +163,14 @@ void setup() {
     digitalWrite(LED_GREEN, HIGH);
     digitalWrite(LED_WHITE, HIGH);
     delay(500);
+    // Turn off all LEDs
     digitalWrite(LED_RED, LOW);
     digitalWrite(LED_YELLOW, LOW);
     digitalWrite(LED_GREEN, LOW);
     digitalWrite(LED_WHITE, LOW);
+    
+    // Show initial battery level (before connection)
+    showBatteryLevel();
     
     Serial.println("\n=================================");
     Serial.println("Fake M25 Wheel Simulator");
@@ -241,7 +245,6 @@ void loop() {
         Serial.println("Ready to receive commands");
         Serial.println();
         setLEDState(LED_CONNECTED);
-        showBatteryLevel();
     }
     
     if (!deviceConnected && oldDeviceConnected) {
@@ -267,12 +270,16 @@ void loop() {
     static unsigned long lastBatteryUpdate = 0;
     if (millis() - lastBatteryUpdate > 60000) {  // Every minute
         if (batteryLevel > 0) {
+            int oldLevel = batteryLevel;
             batteryLevel--;
             Serial.print("Battery: ");
             Serial.print(batteryLevel);
             Serial.println("%");
-            if (deviceConnected) {
-                showBatteryLevel();  // Update battery LED when connected
+            // Only update LED if battery crosses threshold (no spam)
+            int oldThreshold = (oldLevel > 66) ? 2 : (oldLevel > 33) ? 1 : 0;
+            int newThreshold = (batteryLevel > 66) ? 2 : (batteryLevel > 33) ? 1 : 0;
+            if (oldThreshold != newThreshold) {
+                showBatteryLevel();
             }
         }
         lastBatteryUpdate = millis();
@@ -311,6 +318,7 @@ void handleSerialCommand() {
                 Serial.print("Battery set to ");
                 Serial.print(batteryLevel);
                 Serial.println("%");
+                showBatteryLevel();  // Update LED to match new level
             } else {
                 Serial.println("Error: Battery must be 0-100");
             }
@@ -490,6 +498,7 @@ void setLEDState(LEDState state) {
             digitalWrite(LED_RED, HIGH);
             digitalWrite(LED_YELLOW, LOW);
             digitalWrite(LED_GREEN, LOW);
+            digitalWrite(LED_WHITE, LOW);
             Serial.println("LED: Error (red solid)");
             break;
             
@@ -500,26 +509,22 @@ void setLEDState(LEDState state) {
 }
 
 void showBatteryLevel() {
-    // Turn all off first
+    // Turn all battery LEDs off first
     digitalWrite(LED_RED, LOW);
     digitalWrite(LED_YELLOW, LOW);
     digitalWrite(LED_GREEN, LOW);
     
     if (batteryLevel > 66) {
-        // High battery: Green
+        // High battery: Green LED
         digitalWrite(LED_GREEN, HIGH);
     } else if (batteryLevel > 33) {
-        // Medium battery: Yellow
+        // Medium battery: Yellow LED
         digitalWrite(LED_YELLOW, HIGH);
     } else {
-        // Low battery: Red
+        // Low battery: Red LED
         digitalWrite(LED_RED, HIGH);
     }
-    
-    Serial.print("Battery LED: ");
-    if (batteryLevel > 66) Serial.println("Green (>66%)");
-    else if (batteryLevel > 33) Serial.println("Yellow (33-66%)");
-    else Serial.println("Red (<33%)");
+    // No serial spam - LED shows battery level visually
 }
 
 void handleButton() {

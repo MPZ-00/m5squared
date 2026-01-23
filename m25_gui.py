@@ -1892,9 +1892,26 @@ class M25GUI:
             self.status_message("error", "Bluetooth support not available")
             return
 
+        # Show Windows limitation warning
+        if IS_WINDOWS:
+            result = messagebox.showinfo(
+                "Windows BLE Scanning",
+                "IMPORTANT: On Windows, only devices that are already paired in \n"
+                "Windows Bluetooth settings will appear in the scan.\n\n"
+                "To see your M25 wheels:\n"
+                "1. Open Settings > Bluetooth & devices\n"
+                "2. Make sure wheels are powered on\n"
+                "3. Click 'Add device' and pair them first\n"
+                "4. Then scan again in this app\n\n"
+                "This is a Windows BLE API limitation, not a bug.",
+                icon="info"
+            )
+
         filter_enabled = self.filter_m25.get()
         scan_type = "M25 wheels" if filter_enabled else "all Bluetooth devices"
         self.log("info", f"Scanning for {scan_type}...")
+        if IS_WINDOWS:
+            self.log("muted", "Note: Only paired devices will appear (Windows limitation)")
         self.scan_status_lbl.config(text="Scanning...")
         self.scan_btn.config(state="disabled")
         self.status_message("info", "Scanning for devices...")
@@ -1927,6 +1944,9 @@ class M25GUI:
 
         if not devices:
             self.log("warning", "No devices found.")
+            if IS_WINDOWS:
+                self.log("muted", "Remember: Only paired devices appear on Windows.")
+                self.log("muted", "Pair devices in Windows Settings > Bluetooth & devices first.")
             self.scan_status_lbl.config(text="No devices found")
             self.status_message("warning", "Scan complete, no devices found")
             return
