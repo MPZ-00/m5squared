@@ -35,6 +35,21 @@ Presented at 39C3 Hamburg: *["Pwn2Roll: Who Needs a 595€ Remote When You Have 
 
 ## Quick Start
 
+**Easiest Way (All Platforms):**
+
+```bash
+# Windows: Double-click start.bat
+# Linux/Mac: ./start.sh
+# Or:
+python launch.py
+```
+
+The GUI includes optional core architecture support with safety features, plus an optional (but cautioned) deadman disable mode for controlled testing.
+
+See [QUICKSTART.md](QUICKSTART.md) for more options and details.
+
+**Traditional Setup:**
+
 ```bash
 # Setup (Ubuntu/Debian)
 sudo apt install python3.12-venv python3-bluez
@@ -50,17 +65,58 @@ python m25_ecs.py --left-addr AA:BB:CC:DD:EE:FF --right-addr 11:22:33:44:55:66 \
                   --left-key HEXKEY --right-key HEXKEY
 ```
 
+## Windows Setup
+### 1. Install Python 3.12
+- Download and install Python 3.12 from python.org  
+- Enable “Add Python to PATH” during setup  
+- Verify:
+  - `py -3.12 --version`
+
+### 2. Create a virtual environment
+```powershell
+cd C:\path\to\your\m5squared
+py -3.12 -m venv .venv
+```
+
+### 3. Allow PowerShell script execution (current session only)
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+Optional, persistent for your user:
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+```
+
+### 4. Activate the virtual environment
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+### 5. Upgrade pip
+```powershell
+python -m pip install --upgrade pip
+```
+
+### 6. Install the project in editable mode
+```powershell
+pip install -e .
+```
+
+
 ## Tools
 
-| Script             | What it does                                      | 
-| ------------------ | ------------------------------------------------- |
-| `m25_qr_to_key.py` | QR code → AES key (their encoding is... creative) |
-| `m25_ecs.py`       | The main event: read status, change settings      |
-| `m25_decrypt.py`   | Decrypt captured Bluetooth packets                |
-| `m25_encrypt.py`   | Encrypt packets for transmission                  |
-| `m25_analyzer.py`  | Make sense of the packet soup                     |
-| `m25_parking.py`   | Remote movement control (use responsibly)         |
-| `m25_bluetooth.py` | Scan, connect, send/receive                       |
+| Script                      | What it does                                      | 
+| --------------------------- | ------------------------------------------------- |
+| `m25_qr_to_key.py`          | QR code → AES key (their encoding is... creative) |
+| `m25_ecs.py`                | The main event: read status, change settings      |
+| `m25_gui.py`                | GUI interface for Windows/Linux (NEW)             |
+| `m25_decrypt.py`            | Decrypt captured Bluetooth packets                |
+| `m25_encrypt.py`            | Encrypt packets for transmission                  |
+| `m25_analyzer.py`           | Make sense of the packet soup                     |
+| `m25_parking.py`            | Remote movement control (use responsibly)         |
+| `m25_bluetooth.py`          | Scan, connect, send/receive (Linux)               |
+| `m25_bluetooth_windows.py`  | Windows Bluetooth support via Bleak               |
 
 ## Getting Your Keys
 
@@ -89,7 +145,25 @@ Why encrypt the IV with ECB first? Nobody knows. But it works.
 
 - Python 3.8+
 - `pycryptodome` - For the crypto
-- `bluez` / `python3-bluez` - For the Bluetooth
+- `python-dotenv` - For .env file support
+- **Linux:** `bluez` / `python3-bluez` - For Bluetooth
+- **Windows:** `bleak` - For Bluetooth (installed automatically)
+
+## Configuration
+
+Create a `.env` file from the template to store your credentials securely:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and fill in:
+- `M25_LEFT_MAC` - Left wheel MAC address
+- `M25_LEFT_KEY` - Left wheel encryption key (from QR code)
+- `M25_RIGHT_MAC` - Right wheel MAC address  
+- `M25_RIGHT_KEY` - Right wheel encryption key
+
+The `.env` file is gitignored and won't be committed.
 
 ## Legal Stuff
 
