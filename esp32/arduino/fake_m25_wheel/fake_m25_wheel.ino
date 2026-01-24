@@ -34,12 +34,33 @@
 
 // Hardware pins for visual feedback
 // Wire colors: 3.3V=red, GND=brown, button/LEDs as marked below
-#define LED_RED 25      // D25 (orange wire) - Low battery (red)
-#define LED_YELLOW 26   // D26 (yellow wire) - Medium battery (yellow)
-#define LED_GREEN 27    // D27 (turquoise wire) - High battery (green)
-#define LED_WHITE 32    // D32 (white wire) - Connection status
-#define LED_BLUE 14     // D14 - Error state (blue)
-#define BUTTON_PIN 33   // D33 (blue wire) - Button to force advertising
+// Can be overridden in device_config.h
+#ifndef LED_RED_PIN
+#define LED_RED_PIN 25      // D25 (orange wire) - Low battery (red)
+#endif
+#ifndef LED_YELLOW_PIN
+#define LED_YELLOW_PIN 26   // D26 (yellow wire) - Medium battery (yellow)
+#endif
+#ifndef LED_GREEN_PIN
+#define LED_GREEN_PIN 27    // D27 (turquoise wire) - High battery (green)
+#endif
+#ifndef LED_WHITE_PIN
+#define LED_WHITE_PIN 32    // D32 (white wire) - Connection status
+#endif
+#ifndef LED_BLUE_PIN
+#define LED_BLUE_PIN 14     // D14 - Error state (blue)
+#endif
+#ifndef BUTTON_PIN_OVERRIDE
+#define BUTTON_PIN_OVERRIDE 33   // D33 (blue wire) - Button to force advertising
+#endif
+
+// Actual pin assignments (allows override)
+#define LED_RED LED_RED_PIN
+#define LED_YELLOW LED_YELLOW_PIN
+#define LED_GREEN LED_GREEN_PIN
+#define LED_WHITE LED_WHITE_PIN
+#define LED_BLUE LED_BLUE_PIN
+#define BUTTON_PIN BUTTON_PIN_OVERRIDE
 #define BUTTON_DEBOUNCE 50  // Debounce delay in ms
 
 // LED states
