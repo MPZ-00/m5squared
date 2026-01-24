@@ -24,8 +24,10 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 
+// Device-specific configuration
+#include "device_config.h"
+
 // Configuration
-#define DEVICE_NAME "M25_FAKE_RIGHT"  // Change to M25_FAKE_RIGHT for second wheel
 #define SERVICE_UUID "00001101-0000-1000-8000-00805F9B34FB"  // SPP UUID
 #define CHAR_UUID_TX "00001101-0000-1000-8000-00805F9B34FB"
 #define CHAR_UUID_RX "00001102-0000-1000-8000-00805F9B34FB"
@@ -36,6 +38,7 @@
 #define LED_YELLOW 26   // D26 (yellow wire) - Medium battery (yellow)
 #define LED_GREEN 27    // D27 (turquoise wire) - High battery (green)
 #define LED_WHITE 32    // D32 (white wire) - Connection status
+#define LED_BLUE 14     // D14 - Error state (blue)
 #define BUTTON_PIN 33   // D33 (blue wire) - Button to force advertising
 #define BUTTON_DEBOUNCE 50  // Debounce delay in ms
 
@@ -44,7 +47,7 @@ enum LEDState {
     LED_ADVERTISING,    // White blinking fast
     LED_CONNECTING,     // White blinking slow
     LED_CONNECTED,      // White solid
-    LED_ERROR,          // Red solid
+    LED_ERROR,          // Blue blinking slow
     LED_BATTERY         // Show battery level
 };
 
@@ -54,6 +57,7 @@ BLECharacteristic* pTxCharacteristic = NULL;
 BLECharacteristic* pRxCharacteristic = NULL;
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
+LEDState currentLEDState = LED_ADVERTISING;
 
 // Simulated wheel state
 int currentSpeed = 0;
@@ -155,6 +159,7 @@ void setup() {
     pinMode(LED_YELLOW, OUTPUT);
     pinMode(LED_GREEN, OUTPUT);
     pinMode(LED_WHITE, OUTPUT);
+    pinMode(LED_BLUE, OUTPUT);
     pinMode(BUTTON_PIN, INPUT_PULLUP);  // Button with internal pullup
     
     // All LEDs on briefly for test
@@ -162,12 +167,14 @@ void setup() {
     digitalWrite(LED_YELLOW, HIGH);
     digitalWrite(LED_GREEN, HIGH);
     digitalWrite(LED_WHITE, HIGH);
+    digitalWrite(LED_BLUE, HIGH);
     delay(500);
     // Turn off all LEDs
     digitalWrite(LED_RED, LOW);
     digitalWrite(LED_YELLOW, LOW);
     digitalWrite(LED_GREEN, LOW);
     digitalWrite(LED_WHITE, LOW);
+    digitalWrite(LED_BLUE, LOW);
     
     // Show initial battery level (before connection)
     showBatteryLevel();
@@ -183,6 +190,7 @@ void setup() {
     Serial.println("  Red LED (Pin " + String(LED_RED) + ") - Low Battery");
     Serial.println("  Yellow LED (Pin " + String(LED_YELLOW) + ") - Medium Battery");
     Serial.println("  Green LED (Pin " + String(LED_GREEN) + ") - High Battery");
+    Serial.println("  Blue LED (Pin " + String(LED_BLUE) + ") - Error State");
     Serial.println("  Button (Pin " + String(BUTTON_PIN) + ") - Force Advertising");
     Serial.println();
 
@@ -464,7 +472,14 @@ void updateLEDs() {
     unsigned long currentMillis = millis();
     
     // Handle blinking states
-    if (!deviceConnected) {
+    if (currentLEDState == LED_ERROR) {
+        // Error: Blue blinks slow (500ms interval)
+        if (currentMillis - lastBlink >= 500) {
+            blinkState = !blinkState;
+            digitalWrite(LED_BLUE, blinkState ? HIGH : LOW);
+            lastBlink = currentMillis;
+        }
+    } else if (!deviceConnected) {
         // Advertising: White blinks fast (250ms interval)
         if (currentMillis - lastBlink >= 250) {
             blinkState = !blinkState;
@@ -475,6 +490,8 @@ void updateLEDs() {
 }
 
 void setLEDState(LEDState state) {
+    currentLEDState = state;
+    
     // Turn white LED off (battery LEDs controlled separately)
     digitalWrite(LED_WHITE, LOW);
     
@@ -495,11 +512,8 @@ void setLEDState(LEDState state) {
             break;
             
         case LED_ERROR:
-            digitalWrite(LED_RED, HIGH);
-            digitalWrite(LED_YELLOW, LOW);
-            digitalWrite(LED_GREEN, LOW);
-            digitalWrite(LED_WHITE, LOW);
-            Serial.println("LED: Error (red solid)");
+            // Will blink in updateLEDs()
+            Serial.println("LED: Error (blue blinking slow)");
             break;
             
         case LED_BATTERY:
@@ -509,6 +523,9 @@ void setLEDState(LEDState state) {
 }
 
 void showBatteryLevel() {
+    // Debug output
+    Serial.print("showBatteryLevel() called - Battery: " + String(batteryLevel) + "% -> ");
+    
     // Turn all battery LEDs off first
     digitalWrite(LED_RED, LOW);
     digitalWrite(LED_YELLOW, LOW);
@@ -517,14 +534,16 @@ void showBatteryLevel() {
     if (batteryLevel > 66) {
         // High battery: Green LED
         digitalWrite(LED_GREEN, HIGH);
+        Serial.println("GREEN LED");
     } else if (batteryLevel > 33) {
         // Medium battery: Yellow LED
         digitalWrite(LED_YELLOW, HIGH);
+        Serial.println("YELLOW LED");
     } else {
         // Low battery: Red LED
         digitalWrite(LED_RED, HIGH);
+        Serial.println("RED LED");
     }
-    // No serial spam - LED shows battery level visually
 }
 
 void handleButton() {
@@ -554,6 +573,7 @@ void handleButton() {
         while (digitalRead(BUTTON_PIN) == LOW) {
             delay(10);
         }
+        setLEDState(LED_BATTERY);
         Serial.println("Button released\n");
         
         // Reset debounce timer
