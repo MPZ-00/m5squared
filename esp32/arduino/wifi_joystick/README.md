@@ -23,7 +23,14 @@ Open Arduino IDE and install these libraries via Library Manager:
 
 - **WebSockets** by Markus Sattler
 
-### 2. Configure Device
+### 2. Set Partition Scheme
+In Arduino IDE:
+
+**Tools → Partition Scheme → "Huge APP (3MB No OTA/1MB SPIFFS)"**
+
+This allocates more space for the program (BLE + WebSockets needs ~1.7MB).
+
+### 3. Configure Device
 Edit `device_config.h`:
 
 ```cpp
@@ -41,18 +48,11 @@ Edit `device_config.h`:
 #define CONNECT_LEFT_WHEEL  // or CONNECT_RIGHT_WHEEL
 ```
 
-### 3. Upload HTML Files
-1. Install **ESP32 Sketch Data Upload** plugin for Arduino IDE
-   - Download from: https://github.com/me-no-dev/arduino-esp32fs-plugin
-   - Extract to `Arduino/tools/ESP32FS/tool/esp32fs.jar`
-2. In Arduino IDE: **Tools → ESP32 Sketch Data Upload**
-3. Wait for upload to complete
-
 ### 4. Upload Sketch
 1. Open `wifi_joystick.ino` in Arduino IDE
 2. Select your ESP32 board under Tools → Board
 3. Select the correct COM port under Tools → Port
-4. Click Upload
+4. Click Upload (HTML is embedded, no data upload needed!)
 
 ### 3. Connect from Phone
 1. **ESP32 powers on** and creates WiFi network:
@@ -88,10 +88,11 @@ wifi_joystick/
 
 ## Configuration
 ### Finding Wheel MAC Addresses
+index_html.h         # Embedded web interface
+└── README.md
+```
 
-Use a BLE scanner app or the Python scripts:
-
-```bash
+The HTML is now embedded in `index_html.h` as a minified string constant, eliminating the need for SPIFFS and data folder uploads.bash
 # Using Python
 python m25_bluetooth.py scan
 
@@ -151,8 +152,8 @@ const unsigned long COMMAND_INTERVAL = 25;  // 40Hz
 │  (Browser)  │   WebSocket   │             │   Encrypted  │  Wheels  │
 └─────────────┘   Joystick    └─────────────┘   Commands   └──────────┘
                    Data              |
-                                     |
-                                  SPIFFS
+                                index_html.h
+                                 (embedded
                                 (index.html)
 ```
 
@@ -176,8 +177,7 @@ const unsigned long COMMAND_INTERVAL = 25;  // 40Hz
 
 ## Features
 ### Implemented
-- WiFi AP mode with web server
-- Touch-optimized HTML5 joystick (external file)
+- WiFi AP mode with web servermbedded, minified)
 - Real-time WebSocket communication
 - BLE client connection to M25 wheels
 - Automatic BLE scanning and connection
@@ -186,6 +186,7 @@ const unsigned long COMMAND_INTERVAL = 25;  // 40Hz
 - Automatic reconnection on BLE disconnect
 - Deadman switch (release to stop)
 - Emergency stop button
+- No SPIFFS needed - HTML embedded in sketch
 - SPIFFS file system for HTML
 
 ### TODO
@@ -221,27 +222,28 @@ const unsigned long COMMAND_INTERVAL = 25;  // 40Hz
 - Check power supply (needs stable 5V)
 - Reduce WebSocket update rate
 - BLE scan may be blocking - check serial output
+Sketch too large error
+- HTML is now embedded - should always work
+- Check serial monitor for errors
+- Try accessing http://192.168.4.1 (not 192.168.4.1/)ts + embedded HTML = ~1.7MB
 
+### 
 ### HTML not loading
 - Ensure data folder was uploaded using ESP32 Sketch Data Upload
 - Check SPIFFS mounted successfully in serial monitor
 - Try uploading data folder again
 
-### BLE won't connect
-- Verify wheel MAC address is correct
-- Check wheel is powered on and advertising
-- Ensure encryption key matches wheel
-- Check serial monitor for connection errors
+### Customizing HTML
+To edit the web interface:
 
-### HTML editing
-Since HTML is now external, you can edit `data/index.html` directly:
-1. Edit the HTML file
-2. Upload data folder again (ESP32 Sketch Data Upload)
-3. Refresh browser
+1. Edit the readable HTML in `data/index.html` (kept for reference)
+2. Minify it using an online tool (e.g., https://www.minifier.org/)
+3. Replace the content in `index_html.h`
+4. Upload sketch again
 
-## Advanced Usage
-### Edit HTML Interface
-The HTML file is in `data/index.html` - edit it directly:
+Or edit `index_html.h` directly if you're comfortable with minified code.
+
+## Advanced Usagetly:
 
 1. Make changes to `data/index.html`
 2. Upload data folder: **Tools → ESP32 Sketch Data Upload**

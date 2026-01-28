@@ -2,21 +2,20 @@
  * WiFi Virtual Joystick Controller for M25 Wheels
  * 
  * Creates a WiFi access point that serves a web-based virtual joystick.
- * Connect with your phone/tablet to control the wheelchair.
+ * Connect with your phone/tablet to control the wheelchair via BLE.
  * 
  * Features:
  * - WiFi AP mode (no router needed)
- * - HTML5 touch joystick interface
+ * - HTML5 touch joystick interface (embedded)
  * - Real-time WebSocket communication
  * - Connects to M25 wheels via BLE
  * - AES encryption for M25 protocol
  * 
  * Setup:
  * 1. Configure device_config.h with encryption key and wheel MAC
- * 2. Upload data folder using "ESP32 Sketch Data Upload"
- * 3. Upload this sketch to ESP32
- * 4. Connect phone to WiFi "M25-Controller" (password: "m25wheel")
- * 5. Open browser to http://192.168.4.1
+ * 2. Upload this sketch to ESP32
+ * 3. Connect phone to WiFi "M25-Controller" (password: "m25wheel")
+ * 4. Open browser to http://192.168.4.1
  * 
  * Hardware: ESP32-WROOM-32 or similar
  */
@@ -24,13 +23,13 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <WebSocketsServer.h>
-#include <SPIFFS.h>
 #include <BLEDevice.h>
 #include <BLEClient.h>
 #include <BLEUtils.h>
 #include <mbedtls/aes.h>
 
 #include "device_config.h"
+#include "index_html.h"
 
 // Encryption key from config
 const uint8_t encryptionKey[16] = ENCRYPTION_KEY;
@@ -336,15 +335,6 @@ void setup() {
     Serial.println("M25 WiFi Virtual Joystick Controller");
     Serial.println("========================================\n");
     
-    // Initialize SPIFFS
-    if (!SPIFFS.begin(true)) {
-        Serial.println("[SPIFFS] Mount failed!");
-        Serial.println("HTML will not be available.");
-        Serial.println("Use 'Tools > ESP32 Sketch Data Upload' to upload HTML files.");
-    } else {
-        Serial.println("[SPIFFS] Mounted successfully");
-    }
-    
     // Setup WiFi Access Point
     Serial.print("[WiFi] Creating AP: ");
     Serial.println(WIFI_SSID);
@@ -358,15 +348,7 @@ void setup() {
     
     // Setup web server routes
     server.on("/", []() {
-        if (SPIFFS.exists("/index.html")) {
-            File file = SPIFFS.open("/index.html", "r");
-            server.streamFile(file, "text/html");
-            file.close();
-        } else {
-            server.send(200, "text/html", 
-                "<html><body><h1>Error: index.html not found</h1>"
-                "<p>Upload HTML files using ESP32 Sketch Data Upload</p></body></html>");
-        }
+        server.send_P(200, "text/html", INDEX_HTML);
     });
     
     server.onNotFound(handleNotFound);
