@@ -2,12 +2,14 @@
 Web-based touchscreen joystick for controlling M25 wheels via ESP32.
 
 ## Overview
-This solution uses WiFi instead of BLE for phone connectivity, making it easier to implement and use:
+This solution uses WiFi for phone connectivity and BLE to connect to M25 wheels:
 
 - **ESP32 creates WiFi access point** - No router needed
 - **Web-based interface** - No app installation required  
 - **Touch-optimized joystick** - Natural touchscreen control
 - **Real-time WebSocket** - Low latency communication
+- **BLE connection to M25 wheels** - Automatic connection and reconnection
+- **AES encryption** - Secure wheel communication
 - **Works on any device** - Phone, tablet, laptop
 
 ## Hardware Required
@@ -21,7 +23,32 @@ Open Arduino IDE and install these libraries via Library Manager:
 
 - **WebSockets** by Markus Sattler
 
-### 2. Upload Sketch
+### 2. Configure Device
+Edit `device_config.h`:
+
+```cpp
+// Set your encryption key (from QR code)
+#define ENCRYPTION_KEY { \
+    0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, \
+    0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0  \
+}
+
+// Set wheel MAC addresses (find using BLE scanner)
+#define LEFT_WHEEL_MAC  "AA:BB:CC:DD:EE:FF"
+#define RIGHT_WHEEL_MAC "11:22:33:44:55:66"
+
+// Choose which wheel to connect to
+#define CONNECT_LEFT_WHEEL  // or CONNECT_RIGHT_WHEEL
+```
+
+### 3. Upload HTML Files
+1. Install **ESP32 Sketch Data Upload** plugin for Arduino IDE
+   - Download from: https://github.com/me-no-dev/arduino-esp32fs-plugin
+   - Extract to `Arduino/tools/ESP32FS/tool/esp32fs.jar`
+2. In Arduino IDE: **Tools → ESP32 Sketch Data Upload**
+3. Wait for upload to complete
+
+### 4. Upload Sketch
 1. Open `wifi_joystick.ino` in Arduino IDE
 2. Select your ESP32 board under Tools → Board
 3. Select the correct COM port under Tools → Port
@@ -46,14 +73,48 @@ Open Arduino IDE and install these libraries via Library Manager:
    - Touch and drag the joystick
    - Release to stop (deadman switch)
    - Use emergency stop button if needed
+   - Watch BLE status indicator (should show "Connected")
+
+## File Structure
+
+```
+wifi_joystick/
+├── wifi_joystick.ino    # Main Arduino sketch
+├── device_config.h      # Configuration (keys, MAC addresses)
+├── data/
+│   └── index.html       # Web interface (uploaded to SPIFFS)
+└── README.md
+```
 
 ## Configuration
+### Finding Wheel MAC Addresses
+
+Use a BLE scanner app or the Python scripts:
+
+```bash
+# Using Python
+python m25_bluetooth.py scan
+
+# Or use BLE scanner app on phone
+# - Android: "BLE Scanner" or "nRF Connect"
+# - iOS: "LightBlue Explorer"
+```
+
+### Getting Encryption Key
+
+Extract from QR code using the Python tool:
+
+```bash
+python m25_qr_to_key.py path/to/qr_image.png
+```
+
 ### Change WiFi Credentials
-Edit in `wifi_joystick.ino`:
+
+Edit in `device_config.h`:
 
 ```cpp
-const char* ssid = "M25-Controller";      // Network name
-const char* password = "m25wheel";        // Password (min 8 chars)
+#define WIFI_SSID "M25-Controller"
+#define WIFI_PASSWORD "m25wheel"  // Min 8 characters
 ```
 
 ### Adjust Control Sensitivity
@@ -87,14 +148,18 @@ const unsigned long COMMAND_INTERVAL = 25;  // 40Hz
 ```
 ┌─────────────┐     WiFi      ┌─────────────┐     BLE      ┌──────────┐
 │   Phone     │◄──────────────►│    ESP32    │◄────────────►│  M25     │
-│  (Browser)  │   WebSocket   │             │   Commands   │  Wheels  │
-└─────────────┘   Joystick    └─────────────┘              └──────────┘
-                   Data
+│  (Browser)  │   WebSocket   │             │   Encrypted  │  Wheels  │
+└─────────────┘   Joystick    └─────────────┘   Commands   └──────────┘
+                   Data              |
+                                     |
+                                  SPIFFS
+                                (index.html)
 ```
 
 1. **Phone → ESP32**: Touch joystick sends X/Y coordinates via WebSocket
 2. **ESP32 Processing**: Converts joystick to differential wheel speeds
-3. **ESP32 → M25**: Sends encrypted commands to wheels via BLE
+3. **ESP32 → M25**: Sends AES-encrypted commands to wheels via BLE
+4. **HTML served from SPIFFS**: External file for easy editing
 
 ## Joystick Coordinate System
 ```
@@ -112,21 +177,25 @@ const unsigned long COMMAND_INTERVAL = 25;  // 40Hz
 ## Features
 ### Implemented
 - WiFi AP mode with web server
-- Touch-optimized HTML5 joystick
+- Touch-optimized HTML5 joystick (external file)
 - Real-time WebSocket communication
+- BLE client connection to M25 wheels
+- Automatic BLE scanning and connection
+- AES-128 encryption for wheel commands
+- BLE status indicator on web interface
+- Automatic reconnection on BLE disconnect
 - Deadman switch (release to stop)
 - Emergency stop button
-- Visual feedback (connection status)
-- Works on any device with browser
+- SPIFFS file system for HTML
 
 ### TODO
-- BLE connection to actual M25 wheels
-- M25 protocol encoding with encryption
+- M25 protocol encoding refinement
 - Battery level display
 - Assist level control
 - Hill hold toggle
 - Settings page
-- Multi-client support (multiple controllers)
+- Connect to both wheels simultaneously
+- Response handling from wheels
 
 ## Troubleshooting
 ### Can't find WiFi network
@@ -151,16 +220,34 @@ const unsigned long COMMAND_INTERVAL = 25;  // 40Hz
 - Watchdog timer triggered
 - Check power supply (needs stable 5V)
 - Reduce WebSocket update rate
-- Add `delay(1)` in loop if missing
+- BLE scan may be blocking - check serial output
+
+### HTML not loading
+- Ensure data folder was uploaded using ESP32 Sketch Data Upload
+- Check SPIFFS mounted successfully in serial monitor
+- Try uploading data folder again
+
+### BLE won't connect
+- Verify wheel MAC address is correct
+- Check wheel is powered on and advertising
+- Ensure encryption key matches wheel
+- Check serial monitor for connection errors
+
+### HTML editing
+Since HTML is now external, you can edit `data/index.html` directly:
+1. Edit the HTML file
+2. Upload data folder again (ESP32 Sketch Data Upload)
+3. Refresh browser
 
 ## Advanced Usage
-### Custom HTML Interface
-The HTML page is embedded in the sketch. To modify:
+### Edit HTML Interface
+The HTML file is in `data/index.html` - edit it directly:
 
-1. Edit the `htmlPage` variable
-2. Maintain the WebSocket JavaScript code
-3. Test in browser first (separate HTML file)
-4. Copy back to sketch as raw string
+1. Make changes to `data/index.html`
+2. Upload data folder: **Tools → ESP32 Sketch Data Upload**
+3. Refresh browser (Ctrl+F5 to clear cache)
+
+This makes it much easier to customize the interface!
 
 ### Add Multiple Joysticks
 Modify WebSocket handler to support multiple clients:
@@ -184,30 +271,39 @@ AsyncWebServer server(443);  // HTTPS port
 // Add SSL certificate
 ```
 
-## Integration with M25 Protocol
-To connect to real M25 wheels, integrate the Python protocol:
+## Integration Notes
 
-1. **Copy encryption key** from your QR code
-2. **Implement AES encryption** (mbedtls library)
-3. **Encode M25 protocol packets** (see `m25_protocol.py`)
-4. **Add BLE client code** to connect to wheels
+The M25 protocol packet structure is simplified in this implementation. You may need to adjust the `sendWheelCommand()` function based on actual protocol requirements from your Python implementation.
 
-See [../fake_m25_wheel/fake_m25_wheel.ino](../fake_m25_wheel/fake_m25_wheel.ino) for BLE examples.
+Current packet structure:
+```cpp
+plainPacket[0] = 0x01;  // Command ID
+plainPacket[1] = leftSpeed & 0xFF;
+plainPacket[2] = (leftSpeed >> 8) & 0xFF;
+plainPacket[3] = rightSpeed & 0xFF;
+plainPacket[4] = (rightSpeed >> 8) & 0xFF;
+// Bytes 5-15 = padding
+```
+
+Refer to `m25_protocol.py` for the complete protocol specification.
 
 ## Performance
 - **Latency**: ~30-50ms (WiFi + WebSocket)
-- **Update rate**: 20Hz (configurable)
+- **BLE update rate**: 20Hz (50ms interval)
 - **Concurrent users**: 1-4 (depends on ESP32 model)
-- **Range**: ~10-30m (typical WiFi AP range)
+- **WiFi range**: ~10-30m (typical AP range)
+- **BLE range**: ~5-10m to wheelchair
 
 ## Safety Notes
 - **Always test in safe environment** before real use
 - **Keep emergency stop accessible** at all times
 - **Deadman switch prevents runaway** (release stops)
+- **BLE disconnection stops commands** automatically
 - **Consider hardware e-stop** on wheelchair for ultimate safety
-- **Monitor for WiFi disconnections** - implement auto-stop on loss
+- **Monitor connection status** - both WiFi and BLE must be active
 
 ## See Also
 - [ESP32 Setup Guide](../../../doc/esp32-setup.md)
 - [M25 Protocol](../../../doc/m25-protocol.md)
 - [Fake M25 Wheel](../fake_m25_wheel/) - BLE testing
+- [Device Config](device_config.h) - Configuration template
