@@ -23,9 +23,13 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+#include <mbedtls/aes.h>
 
 // Device-specific configuration
 #include "device_config.h"
+
+// Encryption key from config
+const uint8_t encryptionKey[16] = ENCRYPTION_KEY;
 
 // Configuration
 #define SERVICE_UUID "00001101-0000-1000-8000-00805F9B34FB"  // SPP UUID
@@ -100,6 +104,9 @@ void updateLEDs();
 void handleButton();
 void setLEDState(LEDState state);
 void showBatteryLevel();
+bool decryptPacket(uint8_t* data, size_t len, uint8_t* output);
+void encryptPacket(uint8_t* data, size_t len, uint8_t* output);
+void printKey();
 
 // Server callbacks
 class MyServerCallbacks: public BLEServerCallbacks {
@@ -136,39 +143,60 @@ class MyCallbacks: public BLECharacteristicCallbacks {
 };
 
 void handleCommand(uint8_t* data, size_t len) {
-    // In real implementation, data is AES-encrypted
-    // For now, just acknowledge we received something
-    
     Serial.print("Command length: ");
     Serial.println(len);
     
     // M25 commands are typically 16 or 32 bytes (AES blocks)
-    if (len == 16 || len == 32) {
-        Serial.println("Valid packet size (encrypted)");
+    if (len != 16 && len != 32) {
+        Serial.println("Unexpected packet size");
+        return;
+    }
+    
+    Serial.println("Valid packet size (encrypted)");
+    
+    // Decrypt packet
+    uint8_t decrypted[32];
+    if (decryptPacket(data, len, decrypted)) {
+        Serial.print("Decrypted: ");
+        for (size_t i = 0; i < len; i++) {
+            Serial.printf("%02X ", decrypted[i]);
+        }
+        Serial.println();
         
-        // Send a fake response after short delay
+        // Parse command from decrypted data
+        // TODO: Implement actual command parsing
+        
+        // Send response after short delay
         delay(50);
         sendResponse();
     } else {
-        Serial.println("Unexpected packet size");
+        Serial.println("Decryption failed");
     }
 }
 
 void sendResponse() {
     if (!deviceConnected) return;
     
-    // Fake encrypted response (16 bytes)
-    uint8_t response[16] = {
+    // Build unencrypted response (16 bytes)
+    uint8_t plainResponse[16] = {
         0xAA, 0xBB, 0xCC, 0xDD, 
         0x00, 0x00, 0x00, 0x00,
         batteryLevel, assistLevel, driveProfile, 0x00,
         0x11, 0x22, 0x33, 0x44
     };
     
-    pTxCharacteristic->setValue(response, 16);
-    pTxCharacteristic->notify();
+    // Encrypt response
+    uint8_t encrypted[16];
+    encryptPacket(plainResponse, 16, encrypted);
     
-    Serial.println("Sent response");
+    Serial.print("Sending encrypted response: ");
+    for (int i = 0; i < 16; i++) {
+        Serial.printf("%02X ", encrypted[i]);
+    }
+    Serial.println();
+    
+    pTxCharacteristic->setValue(encrypted, 16);
+    pTxCharacteristic->notify();
 }
 
 void setup() {
@@ -259,6 +287,10 @@ void setup() {
     Serial.println("BLE device ready!");
     Serial.println("Waiting for connection...");
     Serial.println();
+    
+    // Display encryption key
+    printKey();
+    
     Serial.println("Type 'help' for available commands");
     Serial.println();
     
@@ -462,6 +494,9 @@ void handleSerialCommand() {
         Serial.print("MAC Address: ");
         Serial.println(BLEDevice::getAddress().toString().c_str());
     }
+    else if (command == "key") {
+        printKey();
+    }
     else {
         Serial.print("Unknown command: ");
         Serial.println(command);
@@ -474,6 +509,7 @@ void printHelp() {
     Serial.println("help              - Show this help");
     Serial.println("status            - Show current wheel state");
     Serial.println("mac               - Show BLE MAC address");
+    Serial.println("key               - Show encryption key");
     Serial.println("battery [0-100]   - Set/show battery level");
     Serial.println("speed <value>     - Set/show simulated speed");
     Serial.println("assist [0-2]      - Set/show assist level");
@@ -600,4 +636,74 @@ void handleButton() {
         // Reset debounce timer
         lastDebounceTime = millis();
     }
+}
+
+// Encryption Functions
+
+bool decryptPacket(uint8_t* data, size_t len, uint8_t* output) {
+    if (len % 16 != 0) {
+        Serial.println("Error: Data length must be multiple of 16");
+        return false;
+    }
+    
+    mbedtls_aes_context aes;
+    mbedtls_aes_init(&aes);
+    
+    // Set decryption key
+    if (mbedtls_aes_setkey_dec(&aes, encryptionKey, 128) != 0) {
+        Serial.println("Error: Failed to set decryption key");
+        mbedtls_aes_free(&aes);
+        return false;
+    }
+    
+    // Decrypt each 16-byte block
+    for (size_t i = 0; i < len; i += 16) {
+        if (mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_DECRYPT, data + i, output + i) != 0) {
+            Serial.println("Error: Decryption failed");
+            mbedtls_aes_free(&aes);
+            return false;
+        }
+    }
+    
+    mbedtls_aes_free(&aes);
+    return true;
+}
+
+void encryptPacket(uint8_t* data, size_t len, uint8_t* output) {
+    if (len % 16 != 0) {
+        Serial.println("Error: Data length must be multiple of 16");
+        return;
+    }
+    
+    mbedtls_aes_context aes;
+    mbedtls_aes_init(&aes);
+    
+    // Set encryption key
+    if (mbedtls_aes_setkey_enc(&aes, encryptionKey, 128) != 0) {
+        Serial.println("Error: Failed to set encryption key");
+        mbedtls_aes_free(&aes);
+        return;
+    }
+    
+    // Encrypt each 16-byte block
+    for (size_t i = 0; i < len; i += 16) {
+        if (mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_ENCRYPT, data + i, output + i) != 0) {
+            Serial.println("Error: Encryption failed");
+            mbedtls_aes_free(&aes);
+            return;
+        }
+    }
+    
+    mbedtls_aes_free(&aes);
+}
+
+void printKey() {
+    Serial.println("\n=== Encryption Key ===");
+    Serial.print("Key (hex): ");
+    for (int i = 0; i < 16; i++) {
+        Serial.printf("%02X ", encryptionKey[i]);
+        if (i == 7) Serial.print(" ");
+    }
+    Serial.println();
+    Serial.println("======================\n");
 }
