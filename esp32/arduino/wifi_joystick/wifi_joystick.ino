@@ -72,6 +72,19 @@ BLERemoteCharacteristic* pRxCharacteristic = nullptr;
 BLEAdvertisedDevice* targetDevice = nullptr;
 unsigned long lastBLEReconnectAttempt = 0;
 
+// Discovered wheels storage
+#define MAX_DISCOVERED_WHEELS 20
+struct DiscoveredWheel {
+    String mac;
+    String name;
+    int rssi;
+    bool valid;
+};
+DiscoveredWheel discoveredWheels[MAX_DISCOVERED_WHEELS];
+int discoveredWheelCount = 0;
+String selectedWheelMAC = "";
+bool autoConnectEnabled = true;
+
 // Timing
 unsigned long lastCommandTime = 0;
 const unsigned long COMMAND_INTERVAL = 50;  // 20Hz update rate
@@ -88,14 +101,49 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
     void onResult(BLEAdvertisedDevice advertisedDevice) {
         String deviceMAC = advertisedDevice.getAddress().toString().c_str();
         deviceMAC.toUpperCase();
-        String targetMAC = String(TARGET_WHEEL_MAC);
-        targetMAC.toUpperCase();
+        String deviceName = advertisedDevice.getName().c_str();
+        int rssi = advertisedDevice.getRSSI();
         
-        if (deviceMAC == targetMAC) {
-            Serial.println("Found target wheel: " + deviceMAC);
-            targetDevice = new BLEAdvertisedDevice(advertisedDevice);
-            BLEDevice::getScan()->stop();
-            bleScanning = false;
+        // Check if this looks like an M25 wheel (contains "M5" or "M25" in name)
+        bool isM25Wheel = (deviceName.indexOf("M5") >= 0 || 
+                          deviceName.indexOf("M25") >= 0 ||
+                          deviceName.indexOf("Wheel") >= 0);
+        
+        // Also check against configured wheel MACs
+        String leftMAC = String(LEFT_WHEEL_MAC);
+        String rightMAC = String(RIGHT_WHEEL_MAC);
+        leftMAC.toUpperCase();
+        rightMAC.toUpperCase();
+        
+        if (deviceMAC == leftMAC || deviceMAC == rightMAC) {
+            isM25Wheel = true;
+        }
+        
+        if (isM25Wheel) {
+            // Add to discovered wheels list if not already present
+            bool alreadyFound = false;
+            for (int i = 0; i < discoveredWheelCount; i++) {
+                if (discoveredWheels[i].mac == deviceMAC) {
+                    alreadyFound = true;
+                    // Update RSSI
+                    discoveredWheels[i].rssi = rssi;
+                    break;
+                }
+            }
+            
+            if (!alreadyFound && discoveredWheelCount < MAX_DISCOVERED_WHEELS) {
+                discoveredWheels[discoveredWheelCount].mac = deviceMAC;
+                discoveredWheels[discoveredWheelCount].name = deviceName.length() > 0 ? deviceName : "Unknown";
+                discoveredWheels[discoveredWheelCount].rssi = rssi;
+                discoveredWheels[discoveredWheelCount].valid = true;
+                discoveredWheelCount++;
+                Serial.println("Found M25 wheel: " + deviceMAC + " (" + deviceName + ") RSSI: " + String(rssi));
+            }
+            
+            // If this is the target device for auto-connect, save it
+            if (selectedWheelMAC.length() > 0 && deviceMAC == selectedWheelMAC) {
+                targetDevice = new BLEAdvertisedDevice(advertisedDevice);
+            }
         }
     }
 };
@@ -125,6 +173,81 @@ void sendBLEStatus() {
     String status = bleConnected ? "connected" : "disconnected";
     String json = "{\"bleStatus\":\"" + status + "\"}";
     webSocket.broadcastTXT(json);
+}
+
+// Send discovered wheels list to web interface
+void sendDiscoveredWheels() {
+    String json = "{\"wheels\":[";
+    for (int i = 0; i < discoveredWheelCount; i++) {
+        if (discoveredWheels[i].valid) {
+            if (i > 0) json += ",";
+            json += "{";
+            json += "\"mac\":\"" + discoveredWheels[i].mac + "\",";
+            json += "\"name\":\"" + discoveredWheels[i].name + "\",";
+            json += "\"rssi\":" + String(discoveredWheels[i].rssi);
+            json += "}";
+        }
+    }
+    json += "],\"scanning\":" + String(bleScanning ? "true" : "false") + "}";
+    webSocket.broadcastTXT(json);
+}
+
+// Start scanning for wheels
+void startWheelScan() {
+    if (bleScanning) {
+        Serial.println("[BLE] Already scanning");
+        return;
+    }
+    
+    // Clear previous results
+    discoveredWheelCount = 0;
+    for (int i = 0; i < MAX_DISCOVERED_WHEELS; i++) {
+        discoveredWheels[i].valid = false;
+    }
+    
+    Serial.println("[BLE] Starting wheel scan...");
+    bleScanning = true;
+    
+    // Notify clients that scanning started
+    String json = "{\"scanning\":true}";
+    webSocket.broadcastTXT(json);
+    
+    BLEScan* pBLEScan = BLEDevice::getScan();
+    pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
+    pBLEScan->setInterval(1349);
+    pBLEScan->setWindow(449);
+    pBLEScan->setActiveScan(true);
+    pBLEScan->start(BLE_SCAN_TIME, false);
+}
+
+// Connect to specific wheel by MAC address
+void connectToWheel(String mac) {
+    if (bleConnected) {
+        Serial.println("[BLE] Already connected, disconnecting first...");
+        disconnectBLE();
+        delay(1000);
+    }
+    
+    selectedWheelMAC = mac;
+    mac.toUpperCase();
+    Serial.println("[BLE] Connecting to wheel: " + mac);
+    
+    // Check if we already discovered this device
+    bool foundInCache = false;
+    for (int i = 0; i < discoveredWheelCount; i++) {
+        if (discoveredWheels[i].valid && discoveredWheels[i].mac == mac) {
+            foundInCache = true;
+            Serial.println("[BLE] Using cached device info");
+            break;
+        }
+    }
+    
+    if (!foundInCache) {
+        Serial.println("[BLE] Device not in cache, scanning...");
+        startWheelScan();
+    } else {
+        connectToBLE();
+    }
 }
 
 // WebSocket event handler
@@ -157,6 +280,29 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
                     joystick.x = 0;
                     joystick.y = 0;
                     sendWheelCommand(0, 0);
+                }
+                else if (data.indexOf("scanWheels") >= 0) {
+                    Serial.println("[WS] Scan wheels command received");
+                    startWheelScan();
+                }
+                else if (data.indexOf("connectWheel") >= 0) {
+                    // Parse MAC address from command: {"command":"connectWheel","mac":"AA:BB:CC:DD:EE:FF"}
+                    int macPos = data.indexOf("\"mac\":\"") + 7;
+                    int macEnd = data.indexOf("\"", macPos);
+                    if (macPos > 6 && macEnd > macPos) {
+                        String mac = data.substring(macPos, macEnd);
+                        Serial.println("[WS] Connect to wheel: " + mac);
+                        connectToWheel(mac);
+                    }
+                }
+                else if (data.indexOf("disconnectWheel") >= 0) {
+                    Serial.println("[WS] Disconnect wheel command received");
+                    disconnectBLE();
+                    sendBLEStatus();
+                }
+                else if (data.indexOf("getWheels") >= 0) {
+                    Serial.println("[WS] Get wheels list command received");
+                    sendDiscoveredWheels();
                 }
                 return;
             }
@@ -256,7 +402,11 @@ void connectToBLE() {
         return;
     }
     
-    Serial.println("\n[BLE] Starting scan for wheel: " + String(TARGET_WHEEL_MAC));
+    // Use selected wheel MAC or fallback to default
+    String targetMAC = selectedWheelMAC.length() > 0 ? selectedWheelMAC : String(TARGET_WHEEL_MAC);
+    targetMAC.toUpperCase();
+    
+    Serial.println("\n[BLE] Starting scan for wheel: " + targetMAC);
     bleScanning = true;
     
     BLEScan* pBLEScan = BLEDevice::getScan();
@@ -269,6 +419,9 @@ void connectToBLE() {
     // Wait for scan to complete
     delay(BLE_SCAN_TIME * 1000);
     bleScanning = false;
+    
+    // Send discovered wheels to clients
+    sendDiscoveredWheels();
     
     if (targetDevice == nullptr) {
         Serial.println("[BLE] Wheel not found!");
@@ -385,11 +538,19 @@ void setup() {
     Serial.println("========================================");
     Serial.println("1. Connect phone to WiFi: " + String(WIFI_SSID));
     Serial.println("2. Open browser to: http://192.168.4.1");
-    Serial.println("3. BLE will connect automatically to wheel");
+    Serial.println("3. Use web interface to scan and connect to wheels");
     Serial.println("========================================\n");
     
-    // Start BLE connection
-    connectToBLE();
+    // Initialize with default selected wheel for auto-connect
+    selectedWheelMAC = String(TARGET_WHEEL_MAC);
+    
+    // Start BLE connection if auto-connect is enabled
+    if (autoConnectEnabled) {
+        Serial.println("[BLE] Auto-connect enabled");
+        connectToBLE();
+    } else {
+        Serial.println("[BLE] Auto-connect disabled. Use web interface to scan and connect.");
+    }
 }
 
 void loop() {
@@ -399,12 +560,27 @@ void loop() {
     // Handle WebSocket events
     webSocket.loop();
     
-    // Try to reconnect BLE if disconnected
-    if (!bleConnected && !bleScanning) {
+    // Handle scan completion
+    if (bleScanning) {
+        BLEScan* pBLEScan = BLEDevice::getScan();
+        if (!pBLEScan->isScanning()) {
+            bleScanning = false;
+            Serial.println("[BLE] Scan completed. Found " + String(discoveredWheelCount) + " wheels");
+            sendDiscoveredWheels();
+            
+            // If we have a selected wheel and found it, connect automatically
+            if (selectedWheelMAC.length() > 0 && targetDevice != nullptr) {
+                connectToBLE();
+            }
+        }
+    }
+    
+    // Try to reconnect BLE if disconnected and a wheel was selected
+    if (!bleConnected && !bleScanning && selectedWheelMAC.length() > 0) {
         unsigned long now = millis();
         if (now - lastBLEReconnectAttempt > BLE_RECONNECT_DELAY) {
             lastBLEReconnectAttempt = now;
-            Serial.println("[BLE] Attempting reconnection...");
+            Serial.println("[BLE] Attempting reconnection to " + selectedWheelMAC + "...");
             connectToBLE();
         }
     }
