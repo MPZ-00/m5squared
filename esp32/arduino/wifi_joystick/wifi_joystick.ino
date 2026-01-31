@@ -84,6 +84,7 @@ DiscoveredWheel discoveredWheels[MAX_DISCOVERED_WHEELS];
 int discoveredWheelCount = 0;
 String selectedWheelMAC = "";
 bool autoConnectEnabled = true;
+bool autoReconnectEnabled = true;  // Try to reconnect automatically when disconnected
 bool debugMode = false;  // Verbose logging
 
 // Timing
@@ -585,7 +586,7 @@ void loop() {
     }
     
     // Try to reconnect BLE if disconnected and a wheel was selected
-    if (!bleConnected && !bleScanning && selectedWheelMAC.length() > 0) {
+    if (!bleConnected && !bleScanning && selectedWheelMAC.length() > 0 && autoReconnectEnabled) {
         unsigned long now = millis();
         if (now - lastBLEReconnectAttempt > BLE_RECONNECT_DELAY) {
             lastBLEReconnectAttempt = now;
@@ -713,6 +714,19 @@ void handleSerialCommand() {
             Serial.println(autoConnectEnabled ? "ON" : "OFF");
         }
     }
+    else if (command == "autoreconnect") {
+        if (arg == "on" || arg == "1") {
+            autoReconnectEnabled = true;
+            Serial.println("Auto-reconnect enabled");
+        } else if (arg == "off" || arg == "0") {
+            autoReconnectEnabled = false;
+            Serial.println("Auto-reconnect disabled");
+        } else {
+            autoReconnectEnabled = !autoReconnectEnabled;
+            Serial.print("Auto-reconnect: ");
+            Serial.println(autoReconnectEnabled ? "ON" : "OFF");
+        }
+    }
     else if (command == "wifi") {
         Serial.println("\n=== WiFi Status ===");
         Serial.print("SSID: ");
@@ -784,6 +798,7 @@ void printHelp() {
     Serial.println("connect [MAC]     - Connect to wheel (selected or specified)");
     Serial.println("disconnect        - Disconnect from current wheel");
     Serial.println("autoconnect       - Toggle auto-connect on startup");
+    Serial.println("autoreconnect     - Toggle auto-reconnect when disconnected");
     Serial.println("wifi              - Show WiFi AP status");
     Serial.println("joystick          - Show current joystick state");
     Serial.println("stop              - Emergency stop (zero all movement)");
@@ -819,6 +834,8 @@ void printStatus() {
     }
     Serial.print("  Auto-connect: ");
     Serial.println(autoConnectEnabled ? "ON" : "OFF");
+    Serial.print("  Auto-reconnect: ");
+    Serial.println(autoReconnectEnabled ? "ON" : "OFF");
     Serial.print("  Discovered Wheels: ");
     Serial.println(discoveredWheelCount);
     
