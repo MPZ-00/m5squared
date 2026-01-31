@@ -12,6 +12,13 @@ extern BLEClient* pClient;
 extern BLERemoteCharacteristic* pTxCharacteristic;
 extern BLERemoteCharacteristic* pRxCharacteristic;
 extern BLEAdvertisedDevice* targetDevice;
+extern WebSocketsServer webSocket;
+
+// Declared in other modules
+void sendBLEStatus();
+void sendDiscoveredWheels();
+void disconnectBLE();
+void connectToBLE();
 
 // BLE Scan callback
 class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {

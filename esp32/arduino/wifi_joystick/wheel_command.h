@@ -4,7 +4,9 @@
 // Declared in main sketch
 extern bool bleConnected;
 extern BLERemoteCharacteristic* pRxCharacteristic;
-extern JoystickState joystick;
+
+// Declared in encryption module
+bool encryptPacket(uint8_t* data, size_t len, uint8_t* output);
 
 // Convert joystick to wheel speeds
 void joystickToWheelSpeeds(float joyX, float joyY, int& leftSpeed, int& rightSpeed) {

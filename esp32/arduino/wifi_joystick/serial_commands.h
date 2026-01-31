@@ -12,6 +12,20 @@ extern DiscoveredWheel discoveredWheels[];
 extern JoystickState joystick;
 extern const uint8_t encryptionKey[16];
 
+// Declared in other modules
+void startWheelScan();
+void connectToWheel(String mac);
+void connectToBLE();
+void disconnectBLE();
+void sendBLEStatus();
+void joystickToWheelSpeeds(float joyX, float joyY, int& leftSpeed, int& rightSpeed);
+void sendWheelCommand(int leftSpeed, int rightSpeed);
+
+// Local helpers
+void printHelp();
+void printStatus();
+void printKey();
+
 void handleSerialCommand() {
     if (!Serial.available()) return;
     

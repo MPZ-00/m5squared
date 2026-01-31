@@ -9,6 +9,12 @@ extern DiscoveredWheel discoveredWheels[];
 extern bool bleScanning;
 extern WebSocketsServer webSocket;
 
+// Declared in other modules
+void sendWheelCommand(int leftSpeed, int rightSpeed);
+void startWheelScan();
+void connectToWheel(String mac);
+void disconnectBLE();
+
 // Send BLE status to web interface
 void sendBLEStatus() {
     String status = bleConnected ? "connected" : "disconnected";

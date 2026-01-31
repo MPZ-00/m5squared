@@ -37,13 +37,6 @@
 #include "device_config.h"
 #include "index_html.h"
 
-// ============== Module Includes ==============
-#include "encryption.h"
-#include "wheel_command.h"
-#include "websocket_handlers.h"
-#include "ble_scanner.h"
-#include "serial_commands.h"
-
 // ============== Configuration ==============
 const uint8_t encryptionKey[16] = ENCRYPTION_KEY;
 
@@ -61,15 +54,34 @@ const uint8_t encryptionKey[16] = ENCRYPTION_KEY;
     #error "Define either CONNECT_LEFT_WHEEL or CONNECT_RIGHT_WHEEL in device_config.h"
 #endif
 
-// ============== Global State ==============
-WebServer server(80);
-WebSocketsServer webSocket = WebSocketsServer(81);
+// ============== Types & Constants ==============
+#define MAX_DISCOVERED_WHEELS 20
 
 struct JoystickState {
     float x;
     float y;
     bool active;
-} joystick = {0.0, 0.0, false};
+};
+
+struct DiscoveredWheel {
+    String mac;
+    String name;
+    int rssi;
+    bool valid;
+};
+
+// ============== Module Includes ==============
+#include "encryption.h"
+#include "wheel_command.h"
+#include "websocket_handlers.h"
+#include "ble_scanner.h"
+#include "serial_commands.h"
+
+// ============== Global State ==============
+WebServer server(80);
+WebSocketsServer webSocket = WebSocketsServer(81);
+
+JoystickState joystick = {0.0, 0.0, false};
 
 bool bleConnected = false;
 bool bleScanning = false;
@@ -79,13 +91,6 @@ BLERemoteCharacteristic* pRxCharacteristic = nullptr;
 BLEAdvertisedDevice* targetDevice = nullptr;
 unsigned long lastBLEReconnectAttempt = 0;
 
-#define MAX_DISCOVERED_WHEELS 20
-struct DiscoveredWheel {
-    String mac;
-    String name;
-    int rssi;
-    bool valid;
-};
 DiscoveredWheel discoveredWheels[MAX_DISCOVERED_WHEELS];
 int discoveredWheelCount = 0;
 String selectedWheelMAC = "";
