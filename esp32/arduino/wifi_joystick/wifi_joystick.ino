@@ -95,7 +95,7 @@ DiscoveredWheel discoveredWheels[MAX_DISCOVERED_WHEELS];
 int discoveredWheelCount = 0;
 String selectedWheelMAC = "";
 bool autoConnectEnabled = true;
-bool autoReconnectEnabled = true;
+bool autoReconnectEnabled = false;
 bool debugMode = false;
 
 unsigned long lastCommandTime = 0;
