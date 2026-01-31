@@ -21,11 +21,11 @@
 // Find using BLE scanner or m5squared Python scripts
 // Format: "AA:BB:CC:DD:EE:FF"
 #define LEFT_WHEEL_MAC  "00:00:00:00:00:00"   // Replace with left wheel MAC
-#define RIGHT_WHEEL_MAC "00:00:00:00:00:00"   // Replace with right wheel MAC
+#define RIGHT_WHEEL_MAC "28:05:A5:70:4B:42"   // Replace with right wheel MAC
 
 // Which wheel to connect to (uncomment ONE)
-#define CONNECT_LEFT_WHEEL
-// #define CONNECT_RIGHT_WHEEL
+// #define CONNECT_LEFT_WHEEL
+#define CONNECT_RIGHT_WHEEL
 // #define CONNECT_BOTH_WHEELS  // Not yet implemented
 
 // BLE Configuration
