@@ -102,6 +102,13 @@ unsigned long lastCommandTime = 0;
 const unsigned long COMMAND_INTERVAL = 50;
 unsigned long scanStartTime = 0;
 
+// Continuous joystick monitoring
+bool continuousJoystickMonitor = false;
+unsigned long lastJoystickPrint = 0;
+unsigned long lastSerialActivity = 0;
+const unsigned long JOYSTICK_MONITOR_INTERVAL = 100;  // 10Hz
+const unsigned long SERIAL_TIMEOUT = 5000;  // 5 seconds
+
 // ============== Web Server Handler ==============
 void handleNotFound() {
     server.send(404, "text/plain", "File not found");
@@ -191,6 +198,9 @@ void loop() {
     
     // Handle serial commands
     handleSerialCommand();
+    
+    // Handle continuous joystick monitoring
+    handleContinuousMonitoring();
     
     // Handle scan completion
     if (bleScanning) {

@@ -11,6 +11,11 @@ extern int discoveredWheelCount;
 extern DiscoveredWheel discoveredWheels[];
 extern JoystickState joystick;
 extern const uint8_t encryptionKey[16];
+extern bool continuousJoystickMonitor;
+extern unsigned long lastSerialActivity;
+extern unsigned long lastJoystickPrint;
+extern const unsigned long JOYSTICK_MONITOR_INTERVAL;
+extern const unsigned long SERIAL_TIMEOUT;
 
 // Declared in other modules
 void startWheelScan();
@@ -25,6 +30,7 @@ void sendWheelCommand(int leftSpeed, int rightSpeed);
 void printHelp();
 void printStatus();
 void printKey();
+void handleContinuousMonitoring();
 
 void handleSerialCommand() {
     if (!Serial.available()) return;
@@ -33,6 +39,9 @@ void handleSerialCommand() {
     cmd.trim();
     
     if (cmd.length() == 0) return;
+    
+    // Track serial activity for continuous monitoring timeout
+    lastSerialActivity = millis();
     
     Serial.print("> ");
     Serial.println(cmd);
@@ -146,23 +155,45 @@ void handleSerialCommand() {
         Serial.println("===================\n");
     }
     else if (command == "joystick") {
-        Serial.println("\n=== Joystick State ===");
-        Serial.print("X: ");
-        Serial.println(joystick.x, 3);
-        Serial.print("Y: ");
-        Serial.println(joystick.y, 3);
-        Serial.print("Active: ");
-        Serial.println(joystick.active ? "YES" : "NO");
-        
-        if (joystick.active) {
-            int leftSpeed, rightSpeed;
-            joystickToWheelSpeeds(joystick.x, joystick.y, leftSpeed, rightSpeed);
-            Serial.print("Left Speed: ");
-            Serial.println(leftSpeed);
-            Serial.print("Right Speed: ");
-            Serial.println(rightSpeed);
+        if (debugMode && arg != "once") {
+            // Start continuous monitoring in debug mode
+            continuousJoystickMonitor = !continuousJoystickMonitor;
+            if (continuousJoystickMonitor) {
+                Serial.println("[Debug] Continuous joystick monitoring started");
+                Serial.println("[Debug] Will stop after 5 seconds of inactivity or on any command");
+                lastSerialActivity = millis();
+                lastJoystickPrint = 0;  // Print immediately
+            } else {
+                Serial.println("[Debug] Continuous joystick monitoring stopped");
+            }
+        } else {
+            // Single shot
+            Serial.println("\n=== Joystick State ===");
+            Serial.print("X: ");
+            Serial.println(joystick.x, 3);
+            Serial.print("Y: ");
+            Serial.println(joystick.y, 3);
+            Serial.print("Active: ");
+            Serial.println(joystick.active ? "YES" : "NO");
+            
+            if (joystick.active) {
+                int leftSpeed, rightSpeed;
+                joystickToWheelSpeeds(joystick.x, joystick.y, leftSpeed, rightSpeed);
+                Serial.print("Left Speed: ");
+                Serial.println(leftSpeed);
+                Serial.print("Right Speed: ");
+                Serial.println(rightSpeed);
+            }
+            Serial.println("======================\n");
         }
-        Serial.println("======================\n");
+    }
+    else if (command == "stopinfo" || command == "stopmonitor") {
+        if (continuousJoystickMonitor) {
+            continuousJoystickMonitor = false;
+            Serial.println("[Debug] Continuous monitoring stopped");
+        } else {
+            Serial.println("No continuous monitoring active");
+        }
     }
     else if (command == "stop") {
         Serial.println("Emergency stop!");
@@ -176,6 +207,11 @@ void handleSerialCommand() {
         debugMode = !debugMode;
         Serial.print("Debug mode: ");
         Serial.println(debugMode ? "ON" : "OFF");
+        // Stop monitoring if debug is turned off
+        if (!debugMode && continuousJoystickMonitor) {
+            continuousJoystickMonitor = false;
+            Serial.println("[Debug] Continuous monitoring stopped");
+        }
     }
     else if (command == "key") {
         printKey();
@@ -208,7 +244,8 @@ void printHelp() {
     Serial.println("autoconnect       - Toggle auto-connect on startup");
     Serial.println("autoreconnect     - Toggle auto-reconnect when disconnected");
     Serial.println("wifi              - Show WiFi AP status");
-    Serial.println("joystick          - Show current joystick state");
+    Serial.println("joystick [once]   - Show joystick (continuous if debug on)");
+    Serial.println("stopinfo          - Stop continuous monitoring");
     Serial.println("stop              - Emergency stop (zero all movement)");
     Serial.println("key               - Show encryption key");
     Serial.println("mac               - Show BLE MAC address");
@@ -285,6 +322,41 @@ void printKey() {
     }
     Serial.println();
     Serial.println("======================\n");
+}
+
+void handleContinuousMonitoring() {
+    if (!continuousJoystickMonitor) return;
+    
+    unsigned long now = millis();
+    
+    // Check for timeout (5 seconds of no serial activity)
+    if (now - lastSerialActivity > SERIAL_TIMEOUT) {
+        continuousJoystickMonitor = false;
+        Serial.println("\n[Debug] Monitoring stopped (timeout)");
+        return;
+    }
+    
+    // Print joystick info at regular intervals
+    if (now - lastJoystickPrint >= JOYSTICK_MONITOR_INTERVAL) {
+        lastJoystickPrint = now;
+        
+        Serial.print("[Joy] X:");
+        Serial.print(joystick.x, 2);
+        Serial.print(" Y:");
+        Serial.print(joystick.y, 2);
+        Serial.print(" Active:");
+        Serial.print(joystick.active ? "Y" : "N");
+        
+        if (joystick.active) {
+            int leftSpeed, rightSpeed;
+            joystickToWheelSpeeds(joystick.x, joystick.y, leftSpeed, rightSpeed);
+            Serial.print(" L:");
+            Serial.print(leftSpeed);
+            Serial.print(" R:");
+            Serial.print(rightSpeed);
+        }
+        Serial.println();
+    }
 }
 
 #endif
