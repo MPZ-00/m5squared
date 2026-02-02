@@ -3,6 +3,7 @@
 
 // Declared in main sketch
 extern bool debugMode;
+extern bool verboseLogging;
 extern bool autoConnectEnabled;
 extern bool autoReconnectEnabled;
 extern String selectedWheelMAC;
@@ -213,6 +214,11 @@ inline void handleSerialCommand() {
             Serial.println("[Debug] Continuous monitoring stopped");
         }
     }
+    else if (command == "verbose") {
+        verboseLogging = !verboseLogging;
+        Serial.print("Verbose logging: ");
+        Serial.println(verboseLogging ? "ON" : "OFF");
+    }
     else if (command == "key") {
         printKey();
     }
@@ -250,6 +256,7 @@ inline void printHelp() {
     Serial.println("key               - Show encryption key");
     Serial.println("mac               - Show BLE MAC address");
     Serial.println("debug             - Toggle debug mode");
+    Serial.println("verbose           - Toggle verbose logging (BLE commands)");
     Serial.println("restart           - Restart ESP32");
     Serial.println("==========================\n");
 }

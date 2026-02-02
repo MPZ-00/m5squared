@@ -3,6 +3,7 @@
 
 // Declared in main sketch
 extern bool bleConnected;
+extern bool verboseLogging;
 extern BLERemoteCharacteristic* pRxCharacteristic;
 
 // Declared in encryption module
@@ -44,7 +45,9 @@ void sendWheelCommand(int leftSpeed, int rightSpeed) {
     uint8_t encrypted[16];
     if (encryptPacket(plainPacket, 16, encrypted)) {
         pRxCharacteristic->writeValue(encrypted, 16, false);
-        Serial.printf("[BLE] Sent: L=%d, R=%d\n", leftSpeed, rightSpeed);
+        if (verboseLogging) {
+            Serial.printf("[BLE] Sent: L=%d, R=%d\n", leftSpeed, rightSpeed);
+        }
     } else {
         Serial.println("[BLE] Encryption failed!");
     }

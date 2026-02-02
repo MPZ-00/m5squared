@@ -97,6 +97,7 @@ String selectedWheelMAC = "";
 bool autoConnectEnabled = true;
 bool autoReconnectEnabled = false;
 bool debugMode = false;
+bool verboseLogging = false;
 
 unsigned long lastCommandTime = 0;
 const unsigned long COMMAND_INTERVAL = 50;
