@@ -32,7 +32,7 @@ void printStatus();
 void printKey();
 void handleContinuousMonitoring();
 
-void handleSerialCommand() {
+inline void handleSerialCommand() {
     if (!Serial.available()) return;
     
     String cmd = Serial.readStringUntil('\n');
@@ -232,7 +232,7 @@ void handleSerialCommand() {
     }
 }
 
-void printHelp() {
+inline void printHelp() {
     Serial.println("\n=== Available Commands ===");
     Serial.println("help              - Show this help");
     Serial.println("status            - Show system status");
@@ -254,7 +254,7 @@ void printHelp() {
     Serial.println("==========================\n");
 }
 
-void printStatus() {
+inline void printStatus() {
     Serial.println("\n=== WiFi Joystick Status ===");
     
     // WiFi Info
@@ -313,7 +313,7 @@ void printStatus() {
     Serial.println("============================\n");
 }
 
-void printKey() {
+inline void printKey() {
     Serial.println("\n=== Encryption Key ===");
     Serial.print("Key (hex): ");
     for (int i = 0; i < 16; i++) {
@@ -324,7 +324,7 @@ void printKey() {
     Serial.println("======================\n");
 }
 
-void handleContinuousMonitoring() {
+inline void handleContinuousMonitoring() {
     if (!continuousJoystickMonitor) return;
     
     unsigned long now = millis();
