@@ -17,6 +17,8 @@ extern unsigned long lastSerialActivity;
 extern unsigned long lastJoystickPrint;
 extern const unsigned long JOYSTICK_MONITOR_INTERVAL;
 extern const unsigned long SERIAL_TIMEOUT;
+extern bool usePhysicalJoystick;
+extern PhysicalJoystickState physicalJoystick;
 
 // Declared in other modules
 void startWheelScan();
@@ -26,6 +28,8 @@ void disconnectBLE();
 void sendBLEStatus();
 void joystickToWheelSpeeds(float joyX, float joyY, int& leftSpeed, int& rightSpeed);
 void sendWheelCommand(int leftSpeed, int rightSpeed);
+void readPhysicalJoystick(PhysicalJoystickState* state);
+void printJoystickCalibration();
 
 // Local helpers
 void printHelp();
@@ -156,7 +160,18 @@ inline void handleSerialCommand() {
         Serial.println("===================\n");
     }
     else if (command == "joystick") {
-        if (debugMode && arg != "once") {
+        if (arg == "on" || arg == "1") {
+            usePhysicalJoystick = true;
+            Serial.println("Physical joystick input enabled");
+        } else if (arg == "off" || arg == "0") {
+            usePhysicalJoystick = false;
+            joystick.x = 0;
+            joystick.y = 0;
+            joystick.active = false;
+            Serial.println("Physical joystick input disabled");
+        } else if (arg == "calibrate") {
+            printJoystickCalibration();
+        } else if (debugMode && arg != "once") {
             // Start continuous monitoring in debug mode
             continuousJoystickMonitor = !continuousJoystickMonitor;
             if (continuousJoystickMonitor) {
@@ -176,6 +191,18 @@ inline void handleSerialCommand() {
             Serial.println(joystick.y, 3);
             Serial.print("Active: ");
             Serial.println(joystick.active ? "YES" : "NO");
+            
+            if (usePhysicalJoystick) {
+                Serial.print("\nPhysical Input (enabled):");
+                Serial.print("  X: ");
+                Serial.print(physicalJoystick.x, 3);
+                Serial.print(", Y: ");
+                Serial.print(physicalJoystick.y, 3);
+                Serial.print(", Button: ");
+                Serial.println(physicalJoystick.button ? "Pressed" : "Released");
+            } else {
+                Serial.println("\nPhysical Input: DISABLED (use 'joystick on' to enable)");
+            }
             
             if (joystick.active) {
                 int leftSpeed, rightSpeed;
@@ -250,7 +277,9 @@ inline void printHelp() {
     Serial.println("autoconnect       - Toggle auto-connect on startup");
     Serial.println("autoreconnect     - Toggle auto-reconnect when disconnected");
     Serial.println("wifi              - Show WiFi AP status");
-    Serial.println("joystick [once]   - Show joystick (continuous if debug on)");
+    Serial.println("joystick [on|off] - Enable/disable physical joystick input");
+    Serial.println("joystick once     - Show joystick state (continuous if debug on)");
+    Serial.println("joystick calib    - Calibrate physical joystick");
     Serial.println("stopinfo          - Stop continuous monitoring");
     Serial.println("stop              - Emergency stop (zero all movement)");
     Serial.println("key               - Show encryption key");
@@ -296,14 +325,8 @@ inline void printStatus() {
     Serial.println(joystick.y, 3);
     Serial.print("  Active: ");
     Serial.println(joystick.active ? "YES" : "NO");
-    
-    if (joystick.active) {
-        int leftSpeed, rightSpeed;
-        joystickToWheelSpeeds(joystick.x, joystick.y, leftSpeed, rightSpeed);
-        Serial.print("  Wheel Speeds - L: ");
-        Serial.print(leftSpeed);
-        Serial.print(", R: ");
-        Serial.println(rightSpeed);
+    Serial.print("  Physical Input: ");
+    Serial.println(usePhysicalJoystick ? "ENABLED" : "DISABLED");
     }
     
     // System

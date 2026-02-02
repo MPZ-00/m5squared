@@ -61,6 +61,8 @@ struct JoystickState {
     float x;
     float y;
     bool active;
+    float buttonPressed;
+    float extraAxis;
 };
 
 struct DiscoveredWheel {
@@ -70,12 +72,22 @@ struct DiscoveredWheel {
     bool valid;
 };
 
+// Physical joystick state (from ADC pins)
+struct PhysicalJoystickState {
+    float x;           // X-axis (-1.0 to 1.0)
+    float y;           // Y-axis (-1.0 to 1.0)
+    bool button;       // Button state
+    float extra;       // Extra axis (-1.0 to 1.0)
+    unsigned long lastRead;
+};
+
 // ============== Module Includes ==============
 #include "encryption.h"
 #include "wheel_command.h"
 #include "websocket_handlers.h"
 #include "ble_scanner.h"
 #include "serial_commands.h"
+#include "joystick_input.h"
 
 // ============== Global State ==============
 WebServer server(80);
@@ -110,6 +122,12 @@ unsigned long lastSerialActivity = 0;
 const unsigned long JOYSTICK_MONITOR_INTERVAL = 100;  // 10Hz
 const unsigned long SERIAL_TIMEOUT = 5000;  // 5 seconds
 
+// Physical joystick state
+PhysicalJoystickState physicalJoystick = {0.0, 0.0, false, 0.0, 0};
+unsigned long lastPhysicalJoystickRead = 0;
+const unsigned long PHYSICAL_JOYSTICK_READ_INTERVAL = 50;  // 20Hz
+bool usePhysicalJoystick = false;  // Can be toggled via serial command
+
 // ============== Web Server Handler ==============
 void handleNotFound() {
     server.send(404, "text/plain", "File not found");
@@ -123,6 +141,15 @@ void setup() {
     Serial.println("\n\n========================================");
     Serial.println("M25 WiFi Virtual Joystick Controller");
     Serial.println("========================================\n");
+    
+    // Initialize physical joystick pins
+    Serial.println("[Joystick] Initializing physical joystick...");
+    initializeJoystick();
+    Serial.println("[Joystick] Pins configured:");
+    Serial.printf("  - VRx (X-axis):  GPIO %d (ADC)\n", JOYSTICK_VRX_PIN);
+    Serial.printf("  - VRy (Y-axis):  GPIO %d (ADC)\n", JOYSTICK_VRY_PIN);
+    Serial.printf("  - SW (Button):   GPIO %d (Digital)\n", JOYSTICK_SW_PIN);
+    Serial.printf("  - Extra:         GPIO %d (ADC)\n", JOYSTICK_EXTRA_PIN);
     
     // Setup WiFi Access Point
     Serial.print("[WiFi] Creating AP: ");
@@ -202,6 +229,22 @@ void loop() {
     
     // Handle continuous joystick monitoring
     handleContinuousMonitoring();
+    
+    // Read physical joystick if enabled
+    if (usePhysicalJoystick) {
+        unsigned long now = millis();
+        if (now - lastPhysicalJoystickRead >= PHYSICAL_JOYSTICK_READ_INTERVAL) {
+            lastPhysicalJoystickRead = now;
+            readPhysicalJoystick(&physicalJoystick);
+            
+            // Update main joystick state from physical input
+            joystick.x = physicalJoystick.x;
+            joystick.y = physicalJoystick.y;
+            joystick.buttonPressed = physicalJoystick.button ? 1.0 : 0.0;
+            joystick.extraAxis = physicalJoystick.extra;
+            joystick.active = (physicalJoystick.x != 0.0) || (physicalJoystick.y != 0.0);
+        }
+    }
     
     // Handle scan completion
     if (bleScanning) {
