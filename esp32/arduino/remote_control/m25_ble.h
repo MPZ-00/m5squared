@@ -375,7 +375,7 @@ static bool _connectWheel(int idx) {
 // ---------------------------------------------------------------------------
 inline void bleConnect() {
     for (int i = 0; i < WHEEL_COUNT; i++) {
-        if (_wheels[i].state != WHEEL_CONNECTED) {
+        if (!_wheels[i].connected) {
             _connectWheel(i);
         }
     }
