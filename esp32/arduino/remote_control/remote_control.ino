@@ -105,48 +105,62 @@ static void enterError(const char* reason) {
 // ---------------------------------------------------------------------------
 // Power-on safety check (blocking)
 // Verifies joystick is centered before enabling remote mode.
+// Send "confirm" or "skip" over serial to bypass during development.
 // ---------------------------------------------------------------------------
 static bool powerOnSafetyCheck() {
-    Serial.println("[Safety] Power-on check: center joystick and press E-stop to confirm");
+    Serial.println("[Safety] Power-on check: center joystick, hold 2 s, then press E-stop");
+    Serial.println("[Safety] (Send 'confirm' via serial to bypass)");
+
     uint32_t centeredSince = 0;
-    bool centered = false;
+    bool     centered      = false;
+    char     scBuf[16];
+    uint8_t  scLen         = 0;
 
-    // Run until joystick has been centered for 2 s AND e-stop pressed once
-    bool confirmed = false;
-    while (!confirmed) {
-        // Flash all LEDs during check
-        ledStartupTest();
-        buttonsInit();   // re-init to clear any stale press
+    while (true) {
+        buttonsTick();
+        JoystickNorm js = joystickRead();
 
-        uint32_t deadline = millis() + 3000;
-        while (millis() < deadline) {
-            buttonsTick();
-            JoystickNorm js = joystickRead();
-
-            if (js.inDeadzone) {
-                if (!centered) {
-                    centered       = true;
-                    centeredSince  = millis();
+        // --- Serial bypass ---
+        while (Serial.available() > 0) {
+            char c = (char)Serial.read();
+            if (c == '\r') continue;
+            if (c == '\n') {
+                scBuf[scLen] = '\0';
+                if (strcmp(scBuf, "confirm") == 0 || strcmp(scBuf, "skip") == 0) {
+                    Serial.println("[Safety] Check BYPASSED via serial");
+                    return true;
                 }
-            } else {
-                centered      = false;
-                centeredSince = 0;
+                scLen = 0;
+            } else if (scLen < (uint8_t)(sizeof(scBuf) - 1)) {
+                scBuf[scLen++] = c;
             }
-
-            // E-stop confirms safety check after joystick has been centered >= 2 s
-            bool jsCenteredLongEnough =
-                centered && ((millis() - centeredSince) >= 2000);
-
-            if (jsCenteredLongEnough && btnEstop.wasPressed()) {
-                Serial.println("[Safety] Check PASSED");
-                return true;
-            }
-
-            ledTick();
-            delay(10);
         }
+
+        // --- Joystick centering feedback ---
+        if (js.inDeadzone) {
+            if (!centered) {
+                centered      = true;
+                centeredSince = millis();
+                Serial.println("[Safety] Joystick centered - hold 2 s then press E-stop");
+            }
+        } else {
+            if (centered) {
+                centered = false;
+                Serial.println("[Safety] Joystick off-center, re-center and hold");
+            }
+        }
+
+        // --- Confirm: joystick centered >= 2 s AND E-stop pressed ---
+        bool longEnough = centered && ((millis() - centeredSince) >= 2000);
+        if (longEnough && btnEstop.wasPressed()) {
+            Serial.println("[Safety] Check PASSED");
+            return true;
+        }
+
+        ledTick();
+        delay(10);
     }
-    return false; // unreachable, but satisfies compiler
+    return false; // unreachable
 }
 
 // ---------------------------------------------------------------------------

@@ -199,14 +199,14 @@ inline void ledTick() {
 // Startup self-test: flash all LEDs once in sequence
 // ---------------------------------------------------------------------------
 inline void ledStartupTest() {
-    uint8_t channels[] = {
-        LEDC_CH_STATUS, LEDC_CH_BATTERY,
-        LEDC_CH_HILL_HOLD, LEDC_CH_ASSIST, LEDC_CH_BLE
+    uint8_t pins[] = {
+        LED_STATUS_PIN, LED_BATTERY_PIN,
+        LED_HILL_HOLD_PIN, LED_ASSIST_PIN, LED_BLE_PIN
     };
-    for (uint8_t ch : channels) {
-        _ledSetDuty(ch, LED_DUTY_ON);
+    for (uint8_t pin : pins) {
+        _ledSetDuty(pin, LED_DUTY_ON);
         delay(120);
-        _ledSetDuty(ch, LED_DUTY_OFF);
+        _ledSetDuty(pin, LED_DUTY_OFF);
         delay(60);
     }
 }
