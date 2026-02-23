@@ -85,6 +85,8 @@ static void enterReady() {
     ledSetBle(true);
     lastActiveMs      = millis();
     watchdogWarnShown = false;
+    bleSendStop();   // one explicit stop on transition; resets the keepalive timer
+    lastCommandSentMs = millis();
     Serial.println("[State] -> READY");
 }
 
@@ -295,8 +297,11 @@ void loop() {
                 enterOperating();
                 // Fall through to OPERATING to send first command immediately
             } else {
-                // Keep wheels explicitly stopped (belt-and-suspenders)
-                if (now - lastCommandSentMs >= COMMAND_RATE_MS) {
+                // Periodic keepalive stop in READY state.
+                // Rate is deliberately slow (500 ms) to avoid saturating the
+                // BLE TX queue, which would block writeValue() and freeze loop().
+                // The initial stop is sent by enterReady() on state entry.
+                if (now - lastCommandSentMs >= 500) {
                     bleSendStop();
                     lastCommandSentMs = now;
                 }
