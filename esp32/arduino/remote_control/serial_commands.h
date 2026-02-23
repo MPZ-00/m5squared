@@ -46,6 +46,8 @@
 #include "joystick.h"
 #include "motor_control.h"
 #include "m25_ble.h"
+#include <WiFi.h>
+#include <esp_chip_info.h>
 
 // ---------------------------------------------------------------------------
 // Debug output flags - check these in the main sketch / motor send path
@@ -75,7 +77,7 @@ struct SerialContext {
 // ---------------------------------------------------------------------------
 // Internal: line-receive state
 // ---------------------------------------------------------------------------
-static char    _scBuf[80];
+static char    _scBuf[128];
 static uint8_t _scBufLen = 0;
 
 // Human-readable state names (must match SystemState order)
@@ -90,19 +92,25 @@ static void _scPrintHelp() {
     Serial.println(F("--- Commands ---"));
     Serial.println(F("  help / ?                  This message"));
     Serial.println(F("  status                    System state snapshot"));
+    Serial.println(F("  sysinfo                   Chip, heap, uptime, WiFi/BT status"));
     Serial.println(F("  debug                     Show debug output flags"));
     Serial.println(F("  debug js                  Toggle joystick live (~5 Hz)"));
     Serial.println(F("  debug motor               Toggle motor command live (20 Hz)"));
     Serial.println(F("  debug all                 Enable all debug output"));
     Serial.println(F("  debug off                 Disable all debug output"));
     Serial.println(F("  js                        One-shot joystick snapshot"));
-    Serial.println(F("  ble                       BLE connection status"));
+    Serial.println(F("  ble                       Quick BLE connection status"));
+    Serial.println(F("  wheels                    Verbose per-wheel status + key"));
+    Serial.println(F("  autoreconnect <on|off>    Enable/disable auto-reconnect"));
+    Serial.println(F("  setmac <left|right> <MAC> Change wheel MAC (disconnects)"));
+    Serial.println(F("  setkey <left|right> <hex> Change AES key (32 hex chars)"));
     Serial.println(F("  assist <0|1|2>            Set assist level"));
     Serial.println(F("                            0=indoor  1=outdoor  2=learning"));
     Serial.println(F("  hillhold <on|off>         Toggle hill hold"));
     Serial.println(F("  recal                     Recalibrate joystick center"));
     Serial.println(F("  stop                      Software emergency stop"));
     Serial.println(F("  reconnect                 Trigger BLE reconnect"));
+    Serial.println(F("  restart                   Restart the ESP32"));
 #ifdef ENABLE_BATTERY_MONITOR
     Serial.println(F("  battery                   Print battery %"));
 #endif
@@ -152,6 +160,65 @@ static void _scPrintJs() {
     JoystickNorm n   = joystickRead();
     Serial.printf("[JS] raw X=%-5d Y=%-5d  norm X=%+.3f Y=%+.3f  dz=%s\n",
         raw.x, raw.y, n.x, n.y, n.inDeadzone ? "yes" : "no");
+}
+
+static void _scPrintWheels() {
+    blePrintWheelDetails();
+}
+
+static void _scPrintSysInfo() {
+    // Chip
+    esp_chip_info_t chip;
+    esp_chip_info(&chip);
+    Serial.printf("[SYS] Chip    : %s  cores=%d  rev=%d\n",
+        ESP.getChipModel(), chip.cores, chip.revision);
+    Serial.printf("[SYS] CPU     : %d MHz\n", ESP.getCpuFreqMHz());
+    Serial.printf("[SYS] Flash   : %u kB  %s\n",
+        (unsigned)(ESP.getFlashChipSize() / 1024),
+        (chip.features & CHIP_FEATURE_EMB_FLASH) ? "embedded" : "external");
+    Serial.printf("[SYS] Heap    : free=%u B  min-free=%u B\n",
+        ESP.getFreeHeap(), ESP.getMinFreeHeap());
+    uint32_t up = millis() / 1000;
+    Serial.printf("[SYS] Uptime  : %02u:%02u:%02u\n",
+        up / 3600, (up % 3600) / 60, up % 60);
+    // BT / BLE
+    Serial.printf("[BT]  MAC     : %s\n",
+        BLEDevice::getAddress().toString().c_str());
+    Serial.printf("[BLE] autoRec : %s\n",
+        bleGetAutoReconnect() ? "ON" : "off");
+    // WiFi
+    wifi_mode_t wmode = WiFi.getMode();
+    const char* modeStr =
+        wmode == WIFI_MODE_NULL  ? "disabled" :
+        wmode == WIFI_MODE_STA   ? "STA"      :
+        wmode == WIFI_MODE_AP    ? "AP"       :
+        wmode == WIFI_MODE_APSTA ? "AP+STA"   : "?";
+    Serial.printf("[WiFi] mode   : %s\n", modeStr);
+    if (wmode == WIFI_MODE_STA || wmode == WIFI_MODE_APSTA) {
+        Serial.printf("[WiFi] SSID   : %s\n", WiFi.SSID().c_str());
+        Serial.printf("[WiFi] IP     : %s\n", WiFi.localIP().toString().c_str());
+        Serial.printf("[WiFi] RSSI   : %d dBm\n", WiFi.RSSI());
+    }
+}
+
+// Parse exactly 32 hex characters (no spaces/colons) into 16 bytes.
+// Returns true on success.
+static bool _scParseHex16(const char* hex, uint8_t* out) {
+    if (strlen(hex) != 32) return false;
+    for (int i = 0; i < 16; i++) {
+        char hi = hex[i * 2];
+        char lo = hex[i * 2 + 1];
+        auto hexNib = [](char c) -> int {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            return -1;
+        };
+        int h = hexNib(hi), l = hexNib(lo);
+        if (h < 0 || l < 0) return false;
+        out[i] = (uint8_t)((h << 4) | l);
+    }
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -292,6 +359,80 @@ static void _scDispatch(const char* cmd, const SerialContext &ctx) {
         return;
     }
 #endif
+
+    // wheels - verbose per-wheel dump
+    if (strcmp(cmd, "wheels") == 0) {
+        _scPrintWheels();
+        return;
+    }
+
+    // sysinfo
+    if (strcmp(cmd, "sysinfo") == 0) {
+        _scPrintSysInfo();
+        return;
+    }
+
+    // autoreconnect <on|off>
+    if (strncmp(cmd, "autoreconnect ", 14) == 0) {
+        const char* arg = cmd + 14;
+        if (strcmp(arg, "on") == 0) {
+            bleSetAutoReconnect(true);
+        } else if (strcmp(arg, "off") == 0) {
+            bleSetAutoReconnect(false);
+        } else {
+            Serial.println(F("[CMD] autoreconnect: use 'on' or 'off'"));
+        }
+        return;
+    }
+
+    // setmac <left|right> <XX:XX:XX:XX:XX:XX>
+    if (strncmp(cmd, "setmac ", 7) == 0) {
+        const char* rest = cmd + 7;
+        int idx = -1;
+        if (strncmp(rest, "left ",  5) == 0) { idx = WHEEL_LEFT;  rest += 5; }
+        else if (strncmp(rest, "right ", 6) == 0) { idx = WHEEL_RIGHT; rest += 6; }
+        if (idx < 0) {
+            Serial.println(F("[CMD] setmac: setmac left <MAC>  or  setmac right <MAC>"));
+            return;
+        }
+        if (strlen(rest) != 17) {
+            Serial.println(F("[CMD] setmac: MAC must be XX:XX:XX:XX:XX:XX (17 chars)"));
+            return;
+        }
+        if (*ctx.state == STATE_OPERATING) {
+            Serial.println(F("[CMD] setmac: stop motors first"));
+            return;
+        }
+        bleSetMac(idx, rest);
+        return;
+    }
+
+    // setkey <left|right> <32 hex chars, no spaces>
+    if (strncmp(cmd, "setkey ", 7) == 0) {
+        const char* rest = cmd + 7;
+        int idx = -1;
+        if (strncmp(rest, "left ",  5) == 0) { idx = WHEEL_LEFT;  rest += 5; }
+        else if (strncmp(rest, "right ", 6) == 0) { idx = WHEEL_RIGHT; rest += 6; }
+        if (idx < 0) {
+            Serial.println(F("[CMD] setkey: setkey left <32hex>  or  setkey right <32hex>"));
+            return;
+        }
+        uint8_t newKey[16];
+        if (!_scParseHex16(rest, newKey)) {
+            Serial.println(F("[CMD] setkey: key must be exactly 32 hex chars, no spaces/colons"));
+            return;
+        }
+        bleSetKey(idx, newKey);
+        return;
+    }
+
+    // restart
+    if (strcmp(cmd, "restart") == 0) {
+        Serial.println(F("[CMD] Restarting ESP32..."));
+        delay(200);
+        ESP.restart();
+        return;
+    }
 
     Serial.printf("[CMD] Unknown: '%s'  (type 'help')\n", cmd);
 }

@@ -142,9 +142,9 @@ static size_t _addDelimiters(const uint8_t* in, size_t inLen, uint8_t* out) {
 // Per-wheel connection state
 // ---------------------------------------------------------------------------
 struct WheelConnState_t {
-    const char*                  mac;
+    char                         mac[18];   // runtime-mutable "XX:XX:XX:XX:XX:XX\0"
     const char*                  name;
-    const uint8_t*               key;
+    uint8_t                      key[16];   // runtime-mutable AES-128 key
     bool                         connected;
     bool                         protocolReady;      // SYSTEM_MODE + DRIVE_MODE acked
     uint8_t                      telegramId;         // SPP sequence counter
@@ -155,18 +155,17 @@ struct WheelConnState_t {
 };
 
 // ---------------------------------------------------------------------------
-// Encryption keys (from device_config.h)
+// Compile-time default keys (copied into mutable _wheels storage by bleInit)
 // ---------------------------------------------------------------------------
-static const uint8_t _keyLeft[16]  = ENCRYPTION_KEY_LEFT;
-static const uint8_t _keyRight[16] = ENCRYPTION_KEY_RIGHT;
+static const uint8_t _keyDefaultLeft[16]  = ENCRYPTION_KEY_LEFT;
+static const uint8_t _keyDefaultRight[16] = ENCRYPTION_KEY_RIGHT;
 
 // ---------------------------------------------------------------------------
-// Global wheel state
+// Global wheel state (zero-initialised; fully populated in bleInit)
+// Auto-reconnect flag: when false, bleTick() skips reconnect attempts.
 // ---------------------------------------------------------------------------
-static WheelConnState_t _wheels[WHEEL_COUNT] = {
-    { LEFT_WHEEL_MAC,  "Left",  _keyLeft,  false, false, M25_TELEGRAM_ID_START, 0, nullptr, nullptr, 0 },
-    { RIGHT_WHEEL_MAC, "Right", _keyRight, false, false, M25_TELEGRAM_ID_START, 0, nullptr, nullptr, 0 },
-};
+static WheelConnState_t _wheels[WHEEL_COUNT];
+static bool             _bleAutoReconnect = true;
 
 // ---------------------------------------------------------------------------
 // Encrypt an SPP plaintext packet into a complete M25 BLE frame.
@@ -307,6 +306,17 @@ static M25DisconnectCallback _callbacks[WHEEL_COUNT];
 // Initialization - call once in setup()
 // ---------------------------------------------------------------------------
 inline void bleInit(const char* deviceName = "M25-Remote") {
+    // Populate mutable wheel config from compile-time device_config.h defaults
+    memset(_wheels, 0, sizeof(_wheels));
+    strncpy(_wheels[WHEEL_LEFT].mac,  LEFT_WHEEL_MAC,  17);
+    strncpy(_wheels[WHEEL_RIGHT].mac, RIGHT_WHEEL_MAC, 17);
+    _wheels[WHEEL_LEFT].name   = "Left";
+    _wheels[WHEEL_RIGHT].name  = "Right";
+    memcpy(_wheels[WHEEL_LEFT].key,  _keyDefaultLeft,  16);
+    memcpy(_wheels[WHEEL_RIGHT].key, _keyDefaultRight, 16);
+    _wheels[WHEEL_LEFT].telegramId  = M25_TELEGRAM_ID_START;
+    _wheels[WHEEL_RIGHT].telegramId = M25_TELEGRAM_ID_START;
+
     BLEDevice::init(deviceName);
     Serial.println("[BLE] Device initialized");
 
@@ -511,6 +521,7 @@ inline bool bleSendAssistLevel(uint8_t level) {
 // Call from loop().
 // ---------------------------------------------------------------------------
 inline void bleTick() {
+    if (!_bleAutoReconnect) return;
     uint32_t now = millis();
     for (int i = 0; i < WHEEL_COUNT; i++) {
         WheelConnState_t &w = _wheels[i];
@@ -523,6 +534,69 @@ inline void bleTick() {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Auto-reconnect control
+// ---------------------------------------------------------------------------
+inline void bleSetAutoReconnect(bool enable) {
+    _bleAutoReconnect = enable;
+    Serial.printf("[BLE] Auto-reconnect: %s\n", enable ? "ON" : "off");
+}
+
+inline bool bleGetAutoReconnect() {
+    return _bleAutoReconnect;
+}
+
+// ---------------------------------------------------------------------------
+// Runtime MAC address override
+// Disconnects the affected wheel immediately; manual reconnect required.
+// mac must be a 17-char "XX:XX:XX:XX:XX:XX" string.
+// ---------------------------------------------------------------------------
+inline void bleSetMac(int idx, const char* mac) {
+    if (idx < 0 || idx >= WHEEL_COUNT) return;
+    WheelConnState_t &w = _wheels[idx];
+    if (w.client && w.client->isConnected()) {
+        w.client->disconnect();
+    }
+    w.connected     = false;
+    w.protocolReady = false;
+    strncpy(w.mac, mac, 17);
+    w.mac[17] = '\0';
+    Serial.printf("[BLE] %s wheel MAC -> %s  (reconnect required)\n", w.name, w.mac);
+}
+
+// ---------------------------------------------------------------------------
+// Runtime AES-128 key override (16 raw bytes)
+// The wheel must be reconnected after a key change.
+// ---------------------------------------------------------------------------
+inline void bleSetKey(int idx, const uint8_t* newKey) {
+    if (idx < 0 || idx >= WHEEL_COUNT) return;
+    memcpy(_wheels[idx].key, newKey, 16);
+    Serial.printf("[BLE] %s wheel key updated  (reconnect required)\n",
+                  _wheels[idx].name);
+}
+
+// ---------------------------------------------------------------------------
+// Verbose per-wheel status dump (called by serial 'wheels' command)
+// ---------------------------------------------------------------------------
+inline void blePrintWheelDetails() {
+    for (int i = 0; i < WHEEL_COUNT; i++) {
+        WheelConnState_t &w = _wheels[i];
+        Serial.printf("[Wheel %s]\n", w.name);
+        Serial.printf("  MAC          : %s\n", w.mac);
+        Serial.printf("  Key (hex)    : ");
+        for (int b = 0; b < 16; b++) {
+            Serial.printf("%02X", w.key[b]);
+            if (b < 15) Serial.print(' ');
+        }
+        Serial.println();
+        Serial.printf("  connected    : %s\n", w.connected     ? "yes" : "no");
+        Serial.printf("  protocolRdy  : %s\n", w.protocolReady ? "yes" : "no");
+        Serial.printf("  driveMode    : 0x%02X\n", w.driveModeBits);
+        Serial.printf("  telegramId   : %u\n",     (unsigned)w.telegramId);
+    }
+    Serial.printf("[BLE] autoReconnect: %s\n", _bleAutoReconnect ? "ON" : "off");
 }
 
 #endif // M25_BLE_H
