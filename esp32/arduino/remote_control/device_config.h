@@ -53,6 +53,10 @@
 // Scales LiPo 3.0-4.2 V to 1.5-2.1 V (well within 3.3 V ADC range)
 #define BATTERY_ADC_PIN 36   // ADC1_CH0 (VP) - input-only, no pull
 
+// Set this to enable battery monitoring (ADC read, LED, auto-shutdown).
+// Requires the voltage divider to be wired to BATTERY_ADC_PIN.
+// #define ENABLE_BATTERY_MONITOR
+
 // ---------------------------------------------------------------------------
 // Digital Inputs - active LOW, internal pull-up enabled
 // ---------------------------------------------------------------------------
@@ -70,12 +74,14 @@
 #define LED_BATTERY_PIN    17   // Red    - battery charge level indicator
 #define LED_HILL_HOLD_PIN  18   // Yellow - hill hold active indicator
 #define LED_ASSIST_PIN     19   // Green  - assist level indicator
+#define LED_BLE_PIN        27   // White  - BLE: blink slow = searching, solid = connected
 
 // LEDC channel assignments (0-7 are available in single-core mode)
 #define LEDC_CH_STATUS     0
 #define LEDC_CH_BATTERY    1
 #define LEDC_CH_HILL_HOLD  2
 #define LEDC_CH_ASSIST     3
+#define LEDC_CH_BLE        4
 
 #define LEDC_FREQ_HZ       5000  // PWM frequency
 #define LEDC_RESOLUTION    8     // bits -> duty cycle 0-255

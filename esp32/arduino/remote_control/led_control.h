@@ -26,6 +26,11 @@
  *    OFF          : indoor mode  (max 6 km/h)
  *    ON solid     : outdoor mode (max 8 km/h)
  *    SLOW (1 Hz)  : learning mode (max 3 km/h)
+ *
+ *  BLE LED (White, GPIO 27)
+ *    OFF          : not initialised
+ *    SLOW (1 Hz)  : connecting / searching for wheels
+ *    ON solid     : both wheels connected
  */
 
 #ifndef LED_CONTROL_H
@@ -61,6 +66,7 @@ static LedState _ledStatus   = { LEDC_CH_STATUS,    LED_OFF, 0, false };
 static LedState _ledBattery  = { LEDC_CH_BATTERY,   LED_OFF, 0, false };
 static LedState _ledHillHold = { LEDC_CH_HILL_HOLD, LED_OFF, 0, false };
 static LedState _ledAssist   = { LEDC_CH_ASSIST,    LED_OFF, 0, false };
+static LedState _ledBle      = { LEDC_CH_BLE,       LED_OFF, 0, false };
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -122,17 +128,20 @@ inline void ledInit() {
     ledcSetup(LEDC_CH_BATTERY,   LEDC_FREQ_HZ, LEDC_RESOLUTION);
     ledcSetup(LEDC_CH_HILL_HOLD, LEDC_FREQ_HZ, LEDC_RESOLUTION);
     ledcSetup(LEDC_CH_ASSIST,    LEDC_FREQ_HZ, LEDC_RESOLUTION);
+    ledcSetup(LEDC_CH_BLE,       LEDC_FREQ_HZ, LEDC_RESOLUTION);
 
     ledcAttachPin(LED_STATUS_PIN,    LEDC_CH_STATUS);
     ledcAttachPin(LED_BATTERY_PIN,   LEDC_CH_BATTERY);
     ledcAttachPin(LED_HILL_HOLD_PIN, LEDC_CH_HILL_HOLD);
     ledcAttachPin(LED_ASSIST_PIN,    LEDC_CH_ASSIST);
+    ledcAttachPin(LED_BLE_PIN,       LEDC_CH_BLE);
 
     // Start with everything off
     _ledSetDuty(LEDC_CH_STATUS,    LED_DUTY_OFF);
     _ledSetDuty(LEDC_CH_BATTERY,   LED_DUTY_OFF);
     _ledSetDuty(LEDC_CH_HILL_HOLD, LED_DUTY_OFF);
     _ledSetDuty(LEDC_CH_ASSIST,    LED_DUTY_OFF);
+    _ledSetDuty(LEDC_CH_BLE,       LED_DUTY_OFF);
 }
 
 // ---------------------------------------------------------------------------
@@ -168,12 +177,17 @@ inline void ledSetHillHold(bool active) {
 inline void ledSetAssistLevel(uint8_t level) {
     LedMode mode;
     switch (level) {
-        case ASSIST_INDOOR:   mode = LED_OFF;        break;
+        case ASSIST_INDOOR:   mode = LED_OFF;         break;
         case ASSIST_OUTDOOR:  mode = LED_ON;          break;
         case ASSIST_LEARNING: mode = LED_BLINK_SLOW;  break;
-        default:              mode = LED_OFF;          break;
+        default:              mode = LED_OFF;         break;
     }
     _ledSetMode(_ledAssist, mode);
+}
+
+// BLE LED: slow blink = connecting/searching, solid = connected
+inline void ledSetBle(bool connected) {
+    _ledSetMode(_ledBle, connected ? LED_ON : LED_BLINK_SLOW);
 }
 
 // ---------------------------------------------------------------------------
@@ -184,6 +198,7 @@ inline void ledTick() {
     _ledUpdate(_ledBattery);
     _ledUpdate(_ledHillHold);
     _ledUpdate(_ledAssist);
+    _ledUpdate(_ledBle);
 }
 
 // ---------------------------------------------------------------------------
@@ -192,7 +207,7 @@ inline void ledTick() {
 inline void ledStartupTest() {
     uint8_t channels[] = {
         LEDC_CH_STATUS, LEDC_CH_BATTERY,
-        LEDC_CH_HILL_HOLD, LEDC_CH_ASSIST
+        LEDC_CH_HILL_HOLD, LEDC_CH_ASSIST, LEDC_CH_BLE
     };
     for (uint8_t ch : channels) {
         _ledSetDuty(ch, LED_DUTY_ON);

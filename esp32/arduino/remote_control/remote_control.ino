@@ -11,10 +11,11 @@
  *   GPIO 14  - E-Stop button (active LOW, internal pull-up)
  *   GPIO 25  - Hill Hold button (active LOW, internal pull-up)
  *   GPIO 26  - Assist Level button (active LOW, internal pull-up)
- *   GPIO 16  - Status LED Red  (LEDC CH0)
- *   GPIO 17  - Battery LED Red (LEDC CH1)
+ *   GPIO 16  - Status LED Red     (LEDC CH0)
+ *   GPIO 17  - Battery LED Red    (LEDC CH1)
  *   GPIO 18  - Hill Hold LED Yellow (LEDC CH2)
- *   GPIO 19  - Assist LED Green (LEDC CH3)
+ *   GPIO 19  - Assist LED Green   (LEDC CH3)
+ *   GPIO 27  - BLE LED White      (LEDC CH4, blink=searching, solid=connected)
  *
  * Wiring notes:
  *   Joystick: VCC -> 3.3 V, GND -> GND, no voltage divider needed.
@@ -58,7 +59,9 @@ static SystemState sysState = STATE_BOOT;
 // ---------------------------------------------------------------------------
 static uint8_t assistLevel  = ASSIST_INDOOR;   // boot default: indoor
 static bool    hillHoldOn   = false;
+#ifdef ENABLE_BATTERY_MONITOR
 static int     batteryPct   = 100;
+#endif
 
 // Watchdog: tracks last non-zero joystick event
 static uint32_t lastActiveMs      = 0;
@@ -70,16 +73,17 @@ static uint32_t lastCommandSentMs = 0;
 // Reconnect rate limiter
 static uint32_t lastBleTickMs = 0;
 
+#ifdef ENABLE_BATTERY_MONITOR
 // Battery read interval
 static uint32_t lastBatteryMs = 0;
 #define BATTERY_READ_INTERVAL_MS 10000
+#endif
 
-// ---------------------------------------------------------------------------
+#ifdef ENABLE_BATTERY_MONITOR
 // Battery voltage measurement
 // Full formula: V_bat = V_adc * 2  (1:1 divider, 3.3 V ref)
 //               pct   = (adc - BATT_ADC_EMPTY) * 100
 //                        / (BATT_ADC_FULL - BATT_ADC_EMPTY)
-// ---------------------------------------------------------------------------
 static int readBatteryPct() {
     int raw = analogRead(BATTERY_ADC_PIN);
     int pct = (int)(
@@ -90,6 +94,7 @@ static int readBatteryPct() {
     if (pct > 100) pct = 100;
     return pct;
 }
+#endif
 
 // ---------------------------------------------------------------------------
 // Transition helpers
@@ -97,6 +102,7 @@ static int readBatteryPct() {
 static void enterConnecting() {
     sysState = STATE_CONNECTING;
     ledSetStatus(LED_BLINK_SLOW);
+    ledSetBle(false);
     Serial.println("[State] -> CONNECTING");
     bleConnect();
 }
@@ -104,6 +110,7 @@ static void enterConnecting() {
 static void enterReady() {
     sysState = STATE_READY;
     ledSetStatus(LED_ON);
+    ledSetBle(true);
     lastActiveMs      = millis();
     watchdogWarnShown = false;
     Serial.println("[State] -> READY");
@@ -118,6 +125,7 @@ static void enterOperating() {
 static void enterError(const char* reason) {
     sysState = STATE_ERROR;
     ledSetStatus(LED_BLINK_FAST);
+    ledSetBle(false);
     bleSendStop();
     Serial.printf("[State] -> ERROR  reason: %s\n", reason);
 }
@@ -184,10 +192,12 @@ void setup() {
     buttonsInit();
     joystickInit();
 
+#ifdef ENABLE_BATTERY_MONITOR
     analogSetPinAttenuation(BATTERY_ADC_PIN, ADC_11db);
     batteryPct = readBatteryPct();
     ledSetBattery(batteryPct);
     Serial.printf("[Boot] Battery: %d %%\n", batteryPct);
+#endif
 
     // Block on safety check before BLE init (saves radio power during boot)
     sysState = STATE_BOOT;
@@ -207,11 +217,11 @@ void setup() {
 void loop() {
     uint32_t now = millis();
 
-    // --- 1. Update input drivers ---
+    // --- Update input drivers ---
     buttonsTick();
     JoystickNorm js = joystickRead();
 
-    // --- 2. Emergency stop: highest priority, any state ---
+    // --- Emergency stop: highest priority, any state ---
     if (btnEstop.wasPressed()) {
         if (sysState == STATE_ERROR) {
             // Second press: reset from error
@@ -225,7 +235,7 @@ void loop() {
         return;
     }
 
-    // --- 3. State-specific logic ---
+    // --- State-specific logic ---
     switch (sysState) {
 
         // ---- CONNECTING ----
@@ -355,7 +365,7 @@ void loop() {
             break;
     }
 
-    // --- 4. BLE reconnect tick (runs every BLE_RECONNECT_DELAY_MS) ---
+    // --- BLE reconnect tick (runs every BLE_RECONNECT_DELAY_MS) ---
     if (now - lastBleTickMs >= 1000) {
         lastBleTickMs = now;
         if (sysState == STATE_CONNECTING) {
@@ -363,7 +373,8 @@ void loop() {
         }
     }
 
-    // --- 5. Battery monitoring (every 10 s) ---
+    // --- Battery monitoring (every 10 s) ---
+#ifdef ENABLE_BATTERY_MONITOR
     if (now - lastBatteryMs >= BATTERY_READ_INTERVAL_MS) {
         lastBatteryMs = now;
         batteryPct    = readBatteryPct();
@@ -378,7 +389,8 @@ void loop() {
             enterError("Battery critical - auto shutdown");
         }
     }
+#endif
 
-    // --- 6. LED tick (handles blinking) ---
+    // --- LED tick (handles blinking) ---
     ledTick();
 }
