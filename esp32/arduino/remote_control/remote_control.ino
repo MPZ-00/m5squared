@@ -21,18 +21,9 @@
 #include "button.h"
 #include "motor_control.h"
 #include "m25_ble.h"
+#include "serial_commands.h"
 
-// ---------------------------------------------------------------------------
-// System state machine
-// ---------------------------------------------------------------------------
-enum SystemState : uint8_t {
-    STATE_BOOT       = 0,
-    STATE_CONNECTING = 1,
-    STATE_READY      = 2,
-    STATE_OPERATING  = 3,
-    STATE_ERROR      = 4,
-};
-
+// SystemState enum is defined in device_config.h
 static SystemState sysState = STATE_BOOT;
 
 // ---------------------------------------------------------------------------
@@ -159,6 +150,22 @@ static bool powerOnSafetyCheck() {
 }
 
 // ---------------------------------------------------------------------------
+// Serial command context
+// Fill in after all static variables and helper functions are declared.
+// ---------------------------------------------------------------------------
+static SerialContext _serialCtx = {
+    &sysState,
+    &assistLevel,
+    &hillHoldOn,
+    enterConnecting,
+    enterError,
+    joystickRecalibrate,
+#ifdef ENABLE_BATTERY_MONITOR
+    &batteryPct,
+#endif
+};
+
+// ---------------------------------------------------------------------------
 // Arduino setup
 // ---------------------------------------------------------------------------
 void setup() {
@@ -190,6 +197,7 @@ void setup() {
     ledSetHillHold(hillHoldOn);
 
     enterConnecting();
+    serialInit(_serialCtx);
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +205,9 @@ void setup() {
 // ---------------------------------------------------------------------------
 void loop() {
     uint32_t now = millis();
+
+    // --- Serial command processing (input + live debug output) ---
+    serialTick(_serialCtx);
 
     // --- Update input drivers ---
     buttonsTick();
@@ -321,7 +332,7 @@ void loop() {
                     bleSendStop();
                 } else {
                     bleSendMotorCommand(cmd.leftSpeed, cmd.rightSpeed);
-                    if (Serial.availableForWrite() > 64) {
+                    if (debugFlags & DBG_MOTOR) {
                         printMotorCommand(cmd);
                     }
                 }

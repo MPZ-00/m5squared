@@ -149,4 +149,15 @@
 #define ASSIST_LEARNING 2
 #define ASSIST_COUNT    3
 
+// ---------------------------------------------------------------------------
+// System state machine (shared with serial_commands.h)
+// ---------------------------------------------------------------------------
+enum SystemState : uint8_t {
+    STATE_BOOT       = 0,
+    STATE_CONNECTING = 1,
+    STATE_READY      = 2,
+    STATE_OPERATING  = 3,
+    STATE_ERROR      = 4,
+};
+
 #endif // DEVICE_CONFIG_H
