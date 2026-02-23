@@ -46,8 +46,10 @@
 #include "joystick.h"
 #include "motor_control.h"
 #include "m25_ble.h"
-#include <WiFi.h>
 #include <esp_chip_info.h>
+// Note: WiFi.h is NOT included here - the WiFi stack adds ~500 kB to the binary.
+// Define ENABLE_WIFI in device_config.h and add #include <WiFi.h> in your sketch
+// if WiFi status is needed in sysinfo.
 
 // ---------------------------------------------------------------------------
 // Debug output flags - check these in the main sketch / motor send path
@@ -186,7 +188,8 @@ static void _scPrintSysInfo() {
         BLEDevice::getAddress().toString().c_str());
     Serial.printf("[BLE] autoRec : %s\n",
         bleGetAutoReconnect() ? "ON" : "off");
-    // WiFi
+    // WiFi (only when ENABLE_WIFI is defined in device_config.h)
+#ifdef ENABLE_WIFI
     wifi_mode_t wmode = WiFi.getMode();
     const char* modeStr =
         wmode == WIFI_MODE_NULL  ? "disabled" :
@@ -199,6 +202,9 @@ static void _scPrintSysInfo() {
         Serial.printf("[WiFi] IP     : %s\n", WiFi.localIP().toString().c_str());
         Serial.printf("[WiFi] RSSI   : %d dBm\n", WiFi.RSSI());
     }
+#else
+    Serial.println(F("[WiFi] disabled (ENABLE_WIFI not set)"));
+#endif
 }
 
 // Parse exactly 32 hex characters (no spaces/colons) into 16 bytes.

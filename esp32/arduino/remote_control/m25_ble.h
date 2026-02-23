@@ -28,9 +28,6 @@
 #include <Arduino.h>
 #include <BLEDevice.h>
 #include <BLEClient.h>
-#include <BLEUtils.h>
-#include <BLEScan.h>
-#include <BLEAdvertisedDevice.h>
 #include <mbedtls/aes.h>
 #include <esp_system.h>     // esp_fill_random()
 #include "device_config.h"
@@ -96,8 +93,9 @@ static const uint8_t M25_ASSIST_LEVEL_MAP[ASSIST_COUNT] = { 0, 1, 2 };
 
 // ---------------------------------------------------------------------------
 // CRC-16 lookup table (m25_protocol.py CRC_TABLE, init value 0xFFFF)
+// Stored in flash (PROGMEM) to save 512 bytes of heap.
 // ---------------------------------------------------------------------------
-static const uint16_t _crcTable[256] = {
+static const uint16_t _crcTable[256] PROGMEM = {
     0,49345,49537,320,49921,960,640,49729,50689,1728,1920,51009,1280,50625,50305,1088,
     52225,3264,3456,52545,3840,53185,52865,3648,2560,51905,52097,2880,51457,2496,2176,51265,
     55297,6336,6528,55617,6912,56257,55937,6720,7680,57025,57217,8000,56577,7616,7296,56385,
@@ -120,7 +118,7 @@ static const uint16_t _crcTable[256] = {
 static uint16_t _m25Crc16(const uint8_t* data, size_t len) {
     uint16_t crc = 0xFFFF;
     for (size_t i = 0; i < len; i++) {
-        crc = (crc >> 8) ^ _crcTable[(crc ^ data[i]) & 0xFF];
+        crc = (crc >> 8) ^ pgm_read_word(&_crcTable[(crc ^ data[i]) & 0xFF]);
     }
     return crc;
 }
