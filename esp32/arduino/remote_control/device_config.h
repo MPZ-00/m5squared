@@ -37,8 +37,8 @@
 #endif
 
 // M25 wheel BLE MAC addresses - replace with real values
-#define LEFT_WHEEL_MAC  "28:05:A5:00:00:00"
-#define RIGHT_WHEEL_MAC "28:05:A5:00:00:01"
+#define LEFT_WHEEL_MAC  "28:05:A5:6F:76:26"
+#define RIGHT_WHEEL_MAC "28:05:A5:70:4B:42"
 
 // ---------------------------------------------------------------------------
 // Analog Inputs - ADC1 only (safe while Bluetooth is active)
