@@ -41,6 +41,31 @@
 #define RIGHT_WHEEL_MAC "28:05:A5:70:4B:42"
 
 // ---------------------------------------------------------------------------
+// Wheel operating mode
+// Set WHEEL_MODE to match the hardware you have available.
+//   WHEEL_MODE_DUAL        - both wheels are connected and commanded
+//   WHEEL_MODE_LEFT_ONLY   - only the left  wheel (right is ignored)
+//   WHEEL_MODE_RIGHT_ONLY  - only the right wheel (left  is ignored)
+// All BLE and motor functions automatically skip inactive wheels.
+// Change back to WHEEL_MODE_DUAL when both wheels are present.
+// ---------------------------------------------------------------------------
+#define WHEEL_MODE_DUAL        0
+#define WHEEL_MODE_LEFT_ONLY   1
+#define WHEEL_MODE_RIGHT_ONLY  2
+
+#define WHEEL_MODE  WHEEL_MODE_RIGHT_ONLY   // <-- set to WHEEL_MODE_DUAL for normal operation
+
+#if   WHEEL_MODE == WHEEL_MODE_DUAL
+  #define WHEEL_MODE_NAME "Dual"
+#elif WHEEL_MODE == WHEEL_MODE_LEFT_ONLY
+  #define WHEEL_MODE_NAME "Left only"
+#elif WHEEL_MODE == WHEEL_MODE_RIGHT_ONLY
+  #define WHEEL_MODE_NAME "Right only"
+#else
+  #define WHEEL_MODE_NAME "Unknown"
+#endif
+
+// ---------------------------------------------------------------------------
 // Analog Inputs - ADC1 only (safe while Bluetooth is active)
 // ---------------------------------------------------------------------------
 // Joystick:  standard KY-023 or similar 10k potentiometer module
@@ -60,7 +85,7 @@
 // Define when no joystick is physically connected (e.g. during bench tests).
 // joystickInit() becomes a no-op; joystickRead() always returns centered/
 // deadzone so the system boots through the safety check without ADC noise.
-#define NO_JOYSTICK
+// #define NO_JOYSTICK
 
 // ---------------------------------------------------------------------------
 // Digital Inputs - active LOW, internal pull-up enabled

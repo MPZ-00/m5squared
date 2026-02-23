@@ -168,6 +168,23 @@ static WheelConnState_t _wheels[WHEEL_COUNT];
 static bool             _bleAutoReconnect = true;
 
 // ---------------------------------------------------------------------------
+// Wheel activity filter (compile-time, driven by WHEEL_MODE in device_config.h)
+// Every function that iterates _wheels[] calls this guard so inactive wheels
+// are silently skipped for connect, reconnect, and command dispatch.
+// ---------------------------------------------------------------------------
+static inline bool _wheelActive(int idx) {
+#if   WHEEL_MODE == WHEEL_MODE_DUAL
+    return true;
+#elif WHEEL_MODE == WHEEL_MODE_LEFT_ONLY
+    return idx == WHEEL_LEFT;
+#elif WHEEL_MODE == WHEEL_MODE_RIGHT_ONLY
+    return idx == WHEEL_RIGHT;
+#else
+    return true;
+#endif
+}
+
+// ---------------------------------------------------------------------------
 // Encrypt an SPP plaintext packet into a complete M25 BLE frame.
 // (m25_crypto.py M25Encryptor.encrypt + m25_protocol.py build_packet)
 //
@@ -385,11 +402,12 @@ static bool _connectWheel(int idx) {
 }
 
 // ---------------------------------------------------------------------------
-// Connect to both wheels (call after bleInit)
+// Connect to active wheels (call after bleInit)
+// Inactive wheels (per WHEEL_MODE) are silently skipped.
 // ---------------------------------------------------------------------------
 inline void bleConnect() {
     for (int i = 0; i < WHEEL_COUNT; i++) {
-        if (!_wheels[i].connected) {
+        if (_wheelActive(i) && !_wheels[i].connected) {
             _connectWheel(i);
         }
     }
@@ -401,6 +419,7 @@ inline void bleConnect() {
 // ---------------------------------------------------------------------------
 inline void bleDisconnect() {
     for (int i = 0; i < WHEEL_COUNT; i++) {
+        if (!_wheelActive(i)) continue;
         WheelConnState_t &w = _wheels[i];
         if (w.connected && w.rxChar) {
             // Step 3: WRITE_REMOTE_SPEED = 0  (stop)
@@ -427,12 +446,20 @@ inline bool bleIsConnected(int wheelIdx) {
         && w.client != nullptr && w.client->isConnected();
 }
 
+// True when every *active* wheel (per WHEEL_MODE) is connected and protocol-ready.
 inline bool bleAllConnected() {
-    return bleIsConnected(WHEEL_LEFT) && bleIsConnected(WHEEL_RIGHT);
+    for (int i = 0; i < WHEEL_COUNT; i++) {
+        if (_wheelActive(i) && !bleIsConnected(i)) return false;
+    }
+    return true;
 }
 
+// True when at least one active wheel is connected.
 inline bool bleAnyConnected() {
-    return bleIsConnected(WHEEL_LEFT) || bleIsConnected(WHEEL_RIGHT);
+    for (int i = 0; i < WHEEL_COUNT; i++) {
+        if (_wheelActive(i) && bleIsConnected(i)) return true;
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -528,6 +555,7 @@ inline void bleTick() {
     if (!_bleAutoReconnect) return;
     uint32_t now = millis();
     for (int i = 0; i < WHEEL_COUNT; i++) {
+        if (!_wheelActive(i)) continue;
         WheelConnState_t &w = _wheels[i];
         if (!w.connected) {
             if (now - w.lastConnectAttemptMs >= BLE_RECONNECT_DELAY_MS) {
@@ -600,8 +628,14 @@ inline void bleSetKey(int idx, const uint8_t* newKey) {
 // Verbose per-wheel status dump (called by serial 'wheels' command)
 // ---------------------------------------------------------------------------
 inline void blePrintWheelDetails() {
+    Serial.printf("[BLE] Wheel mode    : %s\n", WHEEL_MODE_NAME);
     for (int i = 0; i < WHEEL_COUNT; i++) {
         WheelConnState_t &w = _wheels[i];
+        if (!_wheelActive(i)) {
+            Serial.printf("[Wheel %s] INACTIVE (WHEEL_MODE = %s)\n",
+                          w.name, WHEEL_MODE_NAME);
+            continue;
+        }
         Serial.printf("[Wheel %s]\n", w.name);
         Serial.printf("  MAC          : %s\n", w.mac);
         Serial.printf("  Key (hex)    : ");
