@@ -53,7 +53,7 @@ enum LedMode : uint8_t {
 // Per-LED runtime state
 // ---------------------------------------------------------------------------
 struct LedState {
-    uint8_t  channel;    // LEDC channel
+    uint8_t  pin;        // GPIO pin (used by new LEDC API)
     LedMode  mode;
     uint32_t lastToggle; // millis() of last blink toggle
     bool     blinkPhase; // true = ON phase
@@ -62,34 +62,34 @@ struct LedState {
 // ---------------------------------------------------------------------------
 // Internal state for each LED
 // ---------------------------------------------------------------------------
-static LedState _ledStatus   = { LEDC_CH_STATUS,    LED_OFF, 0, false };
-static LedState _ledBattery  = { LEDC_CH_BATTERY,   LED_OFF, 0, false };
-static LedState _ledHillHold = { LEDC_CH_HILL_HOLD, LED_OFF, 0, false };
-static LedState _ledAssist   = { LEDC_CH_ASSIST,    LED_OFF, 0, false };
-static LedState _ledBle      = { LEDC_CH_BLE,       LED_OFF, 0, false };
+static LedState _ledStatus   = { LED_STATUS_PIN,    LED_OFF, 0, false };
+static LedState _ledBattery  = { LED_BATTERY_PIN,   LED_OFF, 0, false };
+static LedState _ledHillHold = { LED_HILL_HOLD_PIN, LED_OFF, 0, false };
+static LedState _ledAssist   = { LED_ASSIST_PIN,    LED_OFF, 0, false };
+static LedState _ledBle      = { LED_BLE_PIN,       LED_OFF, 0, false };
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-static void _ledSetDuty(uint8_t channel, uint8_t duty) {
-    ledcWrite(channel, duty);
+static void _ledSetDuty(uint8_t pin, uint8_t duty) {
+    ledcWrite(pin, duty);
 }
 
 static void _ledUpdate(LedState &led) {
     uint32_t now = millis();
     switch (led.mode) {
         case LED_OFF:
-            _ledSetDuty(led.channel, LED_DUTY_OFF);
+            _ledSetDuty(led.pin, LED_DUTY_OFF);
             break;
         case LED_ON:
-            _ledSetDuty(led.channel, LED_DUTY_ON);
+            _ledSetDuty(led.pin, LED_DUTY_ON);
             break;
         case LED_BLINK_SLOW: {
             uint32_t half = BLINK_SLOW_MS / 2;
             if (now - led.lastToggle >= half) {
                 led.blinkPhase  = !led.blinkPhase;
                 led.lastToggle  = now;
-                _ledSetDuty(led.channel, led.blinkPhase ? LED_DUTY_ON : LED_DUTY_OFF);
+                _ledSetDuty(led.pin, led.blinkPhase ? LED_DUTY_ON : LED_DUTY_OFF);
             }
             break;
         }
@@ -98,7 +98,7 @@ static void _ledUpdate(LedState &led) {
             if (now - led.lastToggle >= half) {
                 led.blinkPhase  = !led.blinkPhase;
                 led.lastToggle  = now;
-                _ledSetDuty(led.channel, led.blinkPhase ? LED_DUTY_ON : LED_DUTY_OFF);
+                _ledSetDuty(led.pin, led.blinkPhase ? LED_DUTY_ON : LED_DUTY_OFF);
             }
             break;
         }
@@ -112,9 +112,9 @@ static void _ledSetMode(LedState &led, LedMode newMode) {
         led.blinkPhase  = true;
         // Apply immediately so there is no one-loop delay
         if (newMode == LED_OFF) {
-            _ledSetDuty(led.channel, LED_DUTY_OFF);
+            _ledSetDuty(led.pin, LED_DUTY_OFF);
         } else {
-            _ledSetDuty(led.channel, LED_DUTY_ON);
+            _ledSetDuty(led.pin, LED_DUTY_ON);
         }
     }
 }
@@ -123,25 +123,19 @@ static void _ledSetMode(LedState &led, LedMode newMode) {
 // Public API - Initialization
 // ---------------------------------------------------------------------------
 inline void ledInit() {
-    // Attach all channels to their pins
-    ledcSetup(LEDC_CH_STATUS,    LEDC_FREQ_HZ, LEDC_RESOLUTION);
-    ledcSetup(LEDC_CH_BATTERY,   LEDC_FREQ_HZ, LEDC_RESOLUTION);
-    ledcSetup(LEDC_CH_HILL_HOLD, LEDC_FREQ_HZ, LEDC_RESOLUTION);
-    ledcSetup(LEDC_CH_ASSIST,    LEDC_FREQ_HZ, LEDC_RESOLUTION);
-    ledcSetup(LEDC_CH_BLE,       LEDC_FREQ_HZ, LEDC_RESOLUTION);
-
-    ledcAttachPin(LED_STATUS_PIN,    LEDC_CH_STATUS);
-    ledcAttachPin(LED_BATTERY_PIN,   LEDC_CH_BATTERY);
-    ledcAttachPin(LED_HILL_HOLD_PIN, LEDC_CH_HILL_HOLD);
-    ledcAttachPin(LED_ASSIST_PIN,    LEDC_CH_ASSIST);
-    ledcAttachPin(LED_BLE_PIN,       LEDC_CH_BLE);
+    // Attach pins and configure PWM (ESP32 Arduino core v3.x API)
+    ledcAttach(LED_STATUS_PIN,    LEDC_FREQ_HZ, LEDC_RESOLUTION);
+    ledcAttach(LED_BATTERY_PIN,   LEDC_FREQ_HZ, LEDC_RESOLUTION);
+    ledcAttach(LED_HILL_HOLD_PIN, LEDC_FREQ_HZ, LEDC_RESOLUTION);
+    ledcAttach(LED_ASSIST_PIN,    LEDC_FREQ_HZ, LEDC_RESOLUTION);
+    ledcAttach(LED_BLE_PIN,       LEDC_FREQ_HZ, LEDC_RESOLUTION);
 
     // Start with everything off
-    _ledSetDuty(LEDC_CH_STATUS,    LED_DUTY_OFF);
-    _ledSetDuty(LEDC_CH_BATTERY,   LED_DUTY_OFF);
-    _ledSetDuty(LEDC_CH_HILL_HOLD, LED_DUTY_OFF);
-    _ledSetDuty(LEDC_CH_ASSIST,    LED_DUTY_OFF);
-    _ledSetDuty(LEDC_CH_BLE,       LED_DUTY_OFF);
+    _ledSetDuty(LED_STATUS_PIN,    LED_DUTY_OFF);
+    _ledSetDuty(LED_BATTERY_PIN,   LED_DUTY_OFF);
+    _ledSetDuty(LED_HILL_HOLD_PIN, LED_DUTY_OFF);
+    _ledSetDuty(LED_ASSIST_PIN,    LED_DUTY_OFF);
+    _ledSetDuty(LED_BLE_PIN,       LED_DUTY_OFF);
 }
 
 // ---------------------------------------------------------------------------
