@@ -82,7 +82,9 @@ static const uint8_t M25_ASSIST_LEVEL_MAP[ASSIST_COUNT] = { 0, 1, 2 };
 #define M25_SPEED_SCALE  2.5f
 
 // Reconnect retry interval
-#define BLE_RECONNECT_DELAY_MS  5000
+#define BLE_RECONNECT_DELAY_MS    5000
+// Stop auto-reconnect after this many consecutive failures per wheel
+#define BLE_MAX_RECONNECT_FAILS   5
 
 // ---------------------------------------------------------------------------
 // Wheel slot indices
@@ -93,7 +95,6 @@ static const uint8_t M25_ASSIST_LEVEL_MAP[ASSIST_COUNT] = { 0, 1, 2 };
 
 // ---------------------------------------------------------------------------
 // CRC-16 lookup table (m25_protocol.py CRC_TABLE, init value 0xFFFF)
-// Stored in flash (PROGMEM) to save 512 bytes of heap.
 // ---------------------------------------------------------------------------
 static const uint16_t _crcTable[256] PROGMEM = {
     0,49345,49537,320,49921,960,640,49729,50689,1728,1920,51009,1280,50625,50305,1088,
@@ -150,6 +151,7 @@ struct WheelConnState_t {
     BLEClient*                   client;
     BLERemoteCharacteristic*     rxChar;
     uint32_t                     lastConnectAttemptMs;
+    uint8_t                      consecutiveFails;   // resets on success; auto-reconnect stops at BLE_MAX_RECONNECT_FAILS
 };
 
 // ---------------------------------------------------------------------------
@@ -342,6 +344,7 @@ static bool _connectWheel(int idx) {
 
     if (!w.client->connect(BLEAddress(w.mac))) {
         Serial.printf("[BLE] %s wheel: GATT connect FAILED\n", w.name);
+        w.consecutiveFails++;
         return false;
     }
 
@@ -349,6 +352,7 @@ static bool _connectWheel(int idx) {
     if (!svc) {
         Serial.printf("[BLE] %s wheel: SPP service not found\n", w.name);
         w.client->disconnect();
+        w.consecutiveFails++;
         return false;
     }
 
@@ -356,6 +360,7 @@ static bool _connectWheel(int idx) {
     if (!w.rxChar) {
         Serial.printf("[BLE] %s wheel: RX characteristic not found\n", w.name);
         w.client->disconnect();
+        w.consecutiveFails++;
         return false;
     }
 
@@ -374,6 +379,7 @@ static bool _connectWheel(int idx) {
     delay(300);
 
     w.protocolReady = true;
+    w.consecutiveFails = 0;
     Serial.printf("[BLE] %s wheel ready\n", w.name);
     return true;
 }
@@ -526,9 +532,17 @@ inline void bleTick() {
         if (!w.connected) {
             if (now - w.lastConnectAttemptMs >= BLE_RECONNECT_DELAY_MS) {
                 w.lastConnectAttemptMs = now;
-                Serial.printf("[BLE] Attempting reconnect to %s wheel...\n",
-                              w.name);
+                Serial.printf("[BLE] Attempting reconnect to %s wheel... (attempt %u/%u)\n",
+                              w.name, (unsigned)(w.consecutiveFails + 1),
+                              (unsigned)BLE_MAX_RECONNECT_FAILS);
                 _connectWheel(i);
+                if (w.consecutiveFails >= BLE_MAX_RECONNECT_FAILS) {
+                    Serial.printf("[BLE] %s wheel: %u consecutive failures - "
+                                  "disabling auto-reconnect. Use 'autoreconnect on' to retry.\n",
+                                  w.name, (unsigned)w.consecutiveFails);
+                    _bleAutoReconnect = false;
+                    return;
+                }
             }
         }
     }
@@ -539,6 +553,12 @@ inline void bleTick() {
 // ---------------------------------------------------------------------------
 inline void bleSetAutoReconnect(bool enable) {
     _bleAutoReconnect = enable;
+    if (enable) {
+        // Reset failure counters so the fresh run gets a clean slate
+        for (int i = 0; i < WHEEL_COUNT; i++) {
+            _wheels[i].consecutiveFails = 0;
+        }
+    }
     Serial.printf("[BLE] Auto-reconnect: %s\n", enable ? "ON" : "off");
 }
 
@@ -559,6 +579,7 @@ inline void bleSetMac(int idx, const char* mac) {
     }
     w.connected     = false;
     w.protocolReady = false;
+    w.consecutiveFails = 0;
     strncpy(w.mac, mac, 17);
     w.mac[17] = '\0';
     Serial.printf("[BLE] %s wheel MAC -> %s  (reconnect required)\n", w.name, w.mac);
@@ -591,6 +612,8 @@ inline void blePrintWheelDetails() {
         Serial.println();
         Serial.printf("  connected    : %s\n", w.connected     ? "yes" : "no");
         Serial.printf("  protocolRdy  : %s\n", w.protocolReady ? "yes" : "no");
+        Serial.printf("  failCount    : %u / %u\n", (unsigned)w.consecutiveFails,
+                                                     (unsigned)BLE_MAX_RECONNECT_FAILS);
         Serial.printf("  driveMode    : 0x%02X\n", w.driveModeBits);
         Serial.printf("  telegramId   : %u\n",     (unsigned)w.telegramId);
     }

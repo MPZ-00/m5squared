@@ -48,7 +48,7 @@
 #include "m25_ble.h"
 #include <esp_chip_info.h>
 // Note: WiFi.h is NOT included here - the WiFi stack adds ~500 kB to the binary.
-// Define ENABLE_WIFI in device_config.h and add #include <WiFi.h> in your sketch
+// Define ENABLE_WIFI in device_config.h and add #include <WiFi.h> in sketch
 // if WiFi status is needed in sysinfo.
 
 // ---------------------------------------------------------------------------
