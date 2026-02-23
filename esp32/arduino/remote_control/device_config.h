@@ -71,10 +71,10 @@
 // PWM LED Outputs (LEDC peripheral, 8-bit, 5 kHz)
 // ---------------------------------------------------------------------------
 #define LED_STATUS_PIN     16   // Red    - system status / error indicator
-#define LED_BATTERY_PIN    17   // Red    - battery charge level indicator
+#define LED_BLE_PIN        17   // White  - BLE: blink slow = searching, solid = connected
 #define LED_HILL_HOLD_PIN  18   // Yellow - hill hold active indicator
 #define LED_ASSIST_PIN     19   // Green  - assist level indicator
-#define LED_BLE_PIN        27   // White  - BLE: blink slow = searching, solid = connected
+#define LED_BATTERY_PIN    27   // Red    - battery charge level indicator
 
 // LEDC channel assignments (0-7 are available in single-core mode)
 #define LEDC_CH_STATUS     0

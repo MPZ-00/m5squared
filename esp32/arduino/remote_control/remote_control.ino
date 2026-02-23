@@ -3,26 +3,7 @@
  *
  * One-handed remote control for Alber e-motion M25 power-assist wheels.
  * Test-setup variant: simple push buttons, single-color LEDs, no display.
- *
- * Hardware (ESP32-WROOM-32):
- *   GPIO 32  - Joystick X analog (ADC1_CH4)
- *   GPIO 33  - Joystick Y analog (ADC1_CH5)
- *   GPIO 36  - Battery voltage divider (ADC1_CH0, input-only)
- *   GPIO 14  - E-Stop button (active LOW, internal pull-up)
- *   GPIO 25  - Hill Hold button (active LOW, internal pull-up)
- *   GPIO 26  - Assist Level button (active LOW, internal pull-up)
- *   GPIO 16  - Status LED Red     (LEDC CH0)
- *   GPIO 17  - Battery LED Red    (LEDC CH1)
- *   GPIO 18  - Hill Hold LED Yellow (LEDC CH2)
- *   GPIO 19  - Assist LED Green   (LEDC CH3)
- *   GPIO 27  - BLE LED White      (LEDC CH4, blink=searching, solid=connected)
- *
- * Wiring notes:
- *   Joystick: VCC -> 3.3 V, GND -> GND, no voltage divider needed.
- *   Battery voltage divider: 100k from BAT+ to GPIO 36,
- *                            100k from GPIO 36 to GND.
- *   LEDs: GPIO -> 330 ohm resistor -> LED anode -> LED cathode -> GND.
- *   Buttons: one leg to GPIO, other leg to GND (INPUT_PULLUP active).
+ * Pin assignments and wiring details: device_config.h
  *
  * State machine:
  *   BOOT       -> calibrate joystick, self-test LEDs, power-on safety check
