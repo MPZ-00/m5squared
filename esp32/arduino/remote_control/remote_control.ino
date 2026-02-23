@@ -108,8 +108,12 @@ static void enterError(const char* reason) {
 // Send "confirm" or "skip" over serial to bypass during development.
 // ---------------------------------------------------------------------------
 static bool powerOnSafetyCheck() {
+#ifdef NO_JOYSTICK
+    Serial.println("[Safety] NO_JOYSTICK: press E-stop to confirm, or send 'confirm' via serial");
+#else
     Serial.println("[Safety] Power-on check: center joystick, hold 2 s, then press E-stop");
     Serial.println("[Safety] (Send 'confirm' via serial to bypass)");
+#endif
 
     uint32_t centeredSince = 0;
     bool     centered      = false;
@@ -136,7 +140,8 @@ static bool powerOnSafetyCheck() {
             }
         }
 
-        // --- Joystick centering feedback ---
+#ifndef NO_JOYSTICK
+        // --- Joystick centering feedback (skipped when no joystick) ---
         if (js.inDeadzone) {
             if (!centered) {
                 centered      = true;
@@ -149,13 +154,18 @@ static bool powerOnSafetyCheck() {
                 Serial.println("[Safety] Joystick off-center, re-center and hold");
             }
         }
-
-        // --- Confirm: joystick centered >= 2 s AND E-stop pressed ---
         bool longEnough = centered && ((millis() - centeredSince) >= 2000);
         if (longEnough && btnEstop.wasPressed()) {
             Serial.println("[Safety] Check PASSED");
             return true;
         }
+#else
+        // NO_JOYSTICK: just wait for a single E-stop press
+        if (btnEstop.wasPressed()) {
+            Serial.println("[Safety] Check PASSED (no-joystick mode)");
+            return true;
+        }
+#endif
 
         ledTick();
         delay(10);

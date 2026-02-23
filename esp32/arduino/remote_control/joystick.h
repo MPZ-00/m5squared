@@ -15,6 +15,20 @@
 #include <Arduino.h>
 #include "device_config.h"
 
+#ifdef NO_JOYSTICK
+// ---------------------------------------------------------------------------
+// Stub implementation: no hardware joystick connected.
+// All reads return a perfectly centered, in-deadzone state.
+// ---------------------------------------------------------------------------
+inline void joystickInit()        { Serial.println("[Joystick] NO_JOYSTICK defined - ADC disabled"); }
+inline void joystickRecalibrate() { Serial.println("[Joystick] NO_JOYSTICK - recal skipped"); }
+inline int  joystickReadRawAxis(uint8_t) { return JOYSTICK_CENTER; }
+struct JoystickRaw  { int x = JOYSTICK_CENTER; int y = JOYSTICK_CENTER; };
+struct JoystickNorm { float x = 0.0f; float y = 0.0f; bool inDeadzone = true; };
+inline JoystickRaw  joystickReadRaw() { return { JOYSTICK_CENTER, JOYSTICK_CENTER }; }
+inline JoystickNorm joystickRead()    { return { 0.0f, 0.0f, true }; }
+#else // real joystick below
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -123,4 +137,5 @@ inline void joystickRecalibrate() {
     joystickInit();
 }
 
+#endif // !NO_JOYSTICK
 #endif // JOYSTICK_H

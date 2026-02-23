@@ -57,6 +57,11 @@
 // Requires the voltage divider to be wired to BATTERY_ADC_PIN.
 // #define ENABLE_BATTERY_MONITOR
 
+// Define when no joystick is physically connected (e.g. during bench tests).
+// joystickInit() becomes a no-op; joystickRead() always returns centered/
+// deadzone so the system boots through the safety check without ADC noise.
+#define NO_JOYSTICK
+
 // ---------------------------------------------------------------------------
 // Digital Inputs - active LOW, internal pull-up enabled
 // ---------------------------------------------------------------------------
