@@ -253,8 +253,28 @@ void loop() {
     buttonsTick();
     JoystickNorm js = joystickRead();
 
+    // --- Button press detection & logging (before action, so we see everything) ---
+    bool estopPressed    = btnEstop.wasPressed();
+    bool hillHoldPressed = btnHillHold.wasPressed();
+    bool assistPressed   = btnAssist.wasPressed();
+    const char* stateName = (sysState == STATE_BOOT) ? "BOOT" :
+                       (sysState == STATE_CONNECTING) ? "CONNECTING" :
+                       (sysState == STATE_READY) ? "READY" :
+                       (sysState == STATE_OPERATING) ? "OPERATING" :
+                       (sysState == STATE_ERROR) ? "ERROR" : "?";
+
+    if (estopPressed) {
+        Serial.printf("[Button] E-STOP pressed  (state=%s)\n", stateName);
+    }
+    if (hillHoldPressed) {
+        Serial.printf("[Button] HILL-HOLD pressed  (state=%s)\n", stateName);
+    }
+    if (assistPressed) {
+        Serial.printf("[Button] ASSIST pressed  (state=%s)\n", stateName);
+    }
+
     // --- Emergency stop: highest priority, any state ---
-    if (btnEstop.wasPressed()) {
+    if (estopPressed) {
         if (sysState == STATE_ERROR) {
             // Second press: reset from error
             Serial.println("[E-Stop] Reset: reconnecting...");
@@ -282,8 +302,15 @@ void loop() {
 
         // ---- READY ----
         case STATE_READY: {
+            // Dual button press: force BLE reconnect (hill-hold + assist simultaneously)
+            if (hillHoldPressed && assistPressed) {
+                Serial.println("[Button] Dual press: forcing BLE reconnect...");
+                enterConnecting();
+                break;
+            }
+
             // Hill hold toggle (allowed when motors stopped)
-            if (btnHillHold.wasPressed()) {
+            if (hillHoldPressed) {
                 hillHoldOn = !hillHoldOn;
                 ledSetHillHold(hillHoldOn);
                 bleSendHillHold(hillHoldOn);
@@ -291,7 +318,7 @@ void loop() {
             }
 
             // Assist level cycle (allowed when motors stopped)
-            if (btnAssist.wasPressed()) {
+            if (assistPressed) {
                 assistLevel = (assistLevel + 1) % ASSIST_COUNT;
                 ledSetAssistLevel(assistLevel);
                 bleSendAssistLevel(assistLevel);
@@ -335,12 +362,12 @@ void loop() {
         // ---- OPERATING ----
         case STATE_OPERATING: {
             // Hill hold NOT allowed while wheels are moving
-            if (btnHillHold.wasPressed()) {
+            if (hillHoldPressed) {
                 Serial.println("[HillHold] Ignored - motors active");
             }
 
             // Assist level NOT allowed while wheels are moving
-            if (btnAssist.wasPressed()) {
+            if (assistPressed) {
                 Serial.println("[Assist] Ignored - motors active, stop first");
             }
 
