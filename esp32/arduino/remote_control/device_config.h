@@ -96,6 +96,7 @@
 #define BTN_ESTOP_PIN      14   // Emergency stop  (index finger, top edge)
 #define BTN_HILL_HOLD_PIN  25   // Hill hold toggle (side button)
 #define BTN_ASSIST_PIN     26   // Assist level cycle (side button)
+#define BTN_POWER_PIN      13   // Power on/off toggle
 
 // ---------------------------------------------------------------------------
 // PWM LED Outputs (LEDC peripheral, 8-bit, 5 kHz)
@@ -200,6 +201,7 @@ enum SystemState : uint8_t {
     STATE_READY      = 2,
     STATE_OPERATING  = 3,
     STATE_ERROR      = 4,
+    STATE_OFF        = 5,
 };
 
 #endif // DEVICE_CONFIG_H

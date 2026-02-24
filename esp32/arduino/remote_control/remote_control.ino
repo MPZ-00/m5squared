@@ -12,9 +12,12 @@
  *   OPERATING  -> joystick active, sending motor commands at 20 Hz
  *   ERROR      -> E-stop pressed / watchdog timeout / connection lost
  *                 Press E-stop button again to reset back to CONNECTING.
+ *   OFF        -> device in deep sleep, power consumption ~10-150 µA
+ *                 Press power button to wake - device will reboot.
  */
 
 #include <Arduino.h>
+#include <esp_sleep.h>
 #include "device_config.h"
 #include "joystick.h"
 #include "led_control.h"
@@ -135,6 +138,40 @@ static void enterError(const char* reason) {
     }
 }
 
+static void enterOff() {
+    sysState = STATE_OFF;
+    jsActiveSinceMs = 0;
+    jsIdleSinceMs   = 0;
+    bleSendStop();
+    bleDisconnect();
+    
+    // Turn off all LEDs
+    ledSetStatus(LED_OFF);
+    ledSetBle(false);
+    ledSetBattery(0);  // force off
+    ledSetHillHold(false);
+    ledSetAssistLevel(ASSIST_INDOOR);  // shows off
+    ledTick();  // Apply LED changes immediately
+    
+    Serial.println("[State] -> OFF  (entering deep sleep)");
+    Serial.println("[Power] Press power button to wake up");
+    Serial.flush();  // Wait for serial output to complete
+    
+    delay(100);  // Give BLE and serial time to finish
+    
+    // Configure power button (GPIO 13) as wake-up source
+    // EXT0: wake on LOW level (button pressed, since active LOW with pull-up)
+    esp_sleep_enable_ext0_wakeup((gpio_num_t)BTN_POWER_PIN, 0);
+    
+    // Enter deep sleep - device will reboot when power button is pressed
+    Serial.println("[Power] Entering deep sleep...");
+    Serial.flush();
+    delay(50);
+    
+    esp_deep_sleep_start();
+    // Execution never reaches here
+}
+
 // ---------------------------------------------------------------------------
 // Power-on safety check (blocking)
 // Verifies joystick is centered before enabling remote mode.
@@ -216,6 +253,7 @@ static SerialContext _serialCtx = {
     &hillHoldOn,
     enterConnecting,
     enterError,
+    enterOff,
     joystickRecalibrate,
 #ifdef ENABLE_BATTERY_MONITOR
     &batteryPct,
@@ -229,6 +267,18 @@ void setup() {
     Serial.begin(115200);
     delay(200);
     Serial.println("\n\n[Boot] M25 Remote Control starting...");
+    
+    // Check wake-up reason
+    esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+    switch(wakeup_reason) {
+        case ESP_SLEEP_WAKEUP_EXT0:
+            Serial.println("[Boot] Wake-up from deep sleep via power button");
+            break;
+        case ESP_SLEEP_WAKEUP_UNDEFINED:
+        default:
+            Serial.println("[Boot] Cold boot or reset");
+            break;
+    }
 
     // Peripheral init
     ledInit();
@@ -268,7 +318,8 @@ void loop() {
                        (sysState == STATE_CONNECTING) ? "CONNECTING" :
                        (sysState == STATE_READY) ? "READY" :
                        (sysState == STATE_OPERATING) ? "OPERATING" :
-                       (sysState == STATE_ERROR) ? "ERROR" : "?";
+                       (sysState == STATE_ERROR) ? "ERROR" :
+                       (sysState == STATE_OFF) ? "OFF" : "?";
 
     // --- Heartbeat (every 5 seconds, proves loop is running) ---
     if (now - lastHeartbeatMs >= 5000 && debugFlags & DBG_HEARTBEAT) {
@@ -287,6 +338,7 @@ void loop() {
     bool estopPressed    = btnEstop.wasPressed();
     bool hillHoldPressed = btnHillHold.wasPressed();
     bool assistPressed   = btnAssist.wasPressed();
+    bool powerPressed    = btnPower.wasPressed();
 
     if (debugFlags & DBG_BUTTONS) {
         if (estopPressed) {
@@ -298,6 +350,33 @@ void loop() {
         if (assistPressed) {
             Serial.printf("[Button] ASSIST pressed  (state=%s)\n", stateName);
         }
+        if (powerPressed) {
+            Serial.printf("[Button] POWER pressed  (state=%s)\n", stateName);
+        }
+    }
+
+    // --- Power button: highest priority (except in BOOT) ---
+    if (powerPressed && sysState != STATE_BOOT) {
+        if (sysState == STATE_OFF) {
+            // This case should never be reached since we enter deep sleep
+            // But kept for serial command 'power on' support during development
+            Serial.println("[Power] Turning ON...");
+            bleInit("M25-Remote");
+            ledSetAssistLevel(assistLevel);
+            ledSetHillHold(hillHoldOn);
+            #ifdef ENABLE_BATTERY_MONITOR
+            ledSetBattery(batteryPct);
+            #endif
+            enterConnecting();
+        } else {
+            // Turn off from any active state -> deep sleep
+            Serial.println("[Power] Turning OFF...");
+            enterOff();  // This function calls esp_deep_sleep_start() and never returns
+            // Execution never reaches here
+        }
+        // Do not process other inputs this iteration
+        ledTick();
+        return;
     }
 
     // --- Emergency stop: highest priority, any state ---
@@ -480,6 +559,15 @@ void loop() {
         case STATE_BOOT:
         default:
             break;
+
+        // ---- OFF ----
+        case STATE_OFF:
+            // Power button handling already at top of loop
+            // Ignore all other buttons and inputs
+            if (estopPressed || hillHoldPressed || assistPressed) {
+                Serial.println("[Button] Ignored - device is off (press power button)");
+            }
+            break;
     }
 
     // --- BLE reconnect tick (runs every BLE_RECONNECT_DELAY_MS) ---
@@ -492,14 +580,14 @@ void loop() {
 
     // --- Battery monitoring (every 10 s) ---
 #ifdef ENABLE_BATTERY_MONITOR
-    if (now - lastBatteryMs >= BATTERY_READ_INTERVAL_MS) {
+    if (now - lastBatteryMs >= BATTERY_READ_INTERVAL_MS && sysState != STATE_OFF) {
         lastBatteryMs = now;
         batteryPct    = readBatteryPct();
         ledSetBattery(batteryPct);
         Serial.printf("[Battery] %d %%\n", batteryPct);
 
         // Critical battery: force safe shutdown
-        if (batteryPct <= BATT_AUTO_OFF_PCT && sysState != STATE_ERROR) {
+        if (batteryPct <= BATT_AUTO_OFF_PCT && sysState != STATE_ERROR && sysState != STATE_OFF) {
             Serial.println("[Battery] CRITICAL - forcing disconnect");
             bleSendStop();
             bleDisconnect();

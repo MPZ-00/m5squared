@@ -19,6 +19,7 @@
  *   recal                       Recalibrate joystick center position
  *   stop                        Software emergency stop (enters ERROR state)
  *   reconnect                   Trigger BLE reconnect (from ERROR or ready)
+ *   power off                   Turn device off (enters deep sleep)
  *   battery                     Print battery % (requires ENABLE_BATTERY_MONITOR)
  *
  * Debug output flags (check these before printing in the main sketch)
@@ -99,6 +100,7 @@ struct SerialContext {
     bool*        hillHoldOn;
     void (*fnEnterConnecting)();
     void (*fnEnterError)(const char*);
+    void (*fnEnterOff)();
     void (*fnRecalibrate)();
 #ifdef ENABLE_BATTERY_MONITOR
     int* batteryPct;
@@ -113,7 +115,7 @@ static uint8_t _scBufLen = 0;
 
 // Human-readable state names (must match SystemState order)
 static const char* const _stateNames[] = {
-    "BOOT", "CONNECTING", "READY", "OPERATING", "ERROR"
+    "BOOT", "CONNECTING", "READY", "OPERATING", "ERROR", "OFF"
 };
 
 // ---------------------------------------------------------------------------
@@ -141,6 +143,7 @@ static void _scPrintHelp() {
     Serial.println(F("  stop                      Software emergency stop"));
     Serial.println(F("  reset                     Clear ERROR state -> CONNECTING"));
     Serial.println(F("  reconnect                 Force BLE reconnect (non-ERROR states)"));
+    Serial.println(F("  power off                 Turn device off (enter deep sleep)"));
     Serial.println(F("  restart                   Restart the ESP32"));
 #ifdef ENABLE_BATTERY_MONITOR
     Serial.println(F("  battery                   Print battery %"));
@@ -467,7 +470,36 @@ static void _scDispatch(const char* cmd, const SerialContext &ctx) {
             Serial.println(F("[CMD] reconnect: use 'reset' to clear ERROR state first"));
             return;
         }
+        if (*ctx.state == STATE_OFF) {
+            Serial.println(F("[CMD] reconnect: device is OFF, use 'power on' first"));
+            return;
+        }
         ctx.fnEnterConnecting();
+        return;
+    }
+
+    // power <on|off>
+    if (strncmp(cmd, "power ", 6) == 0) {
+        const char* arg = cmd + 6;
+        if (strcmp(arg, "off") == 0) {
+            if (*ctx.state == STATE_OFF) {
+                Serial.println(F("[CMD] power: already off"));
+                return;
+            }
+            Serial.println(F("[CMD] Turning OFF (entering deep sleep)..."));
+            ctx.fnEnterOff();  // Never returns - enters deep sleep
+        } else if (strcmp(arg, "on") == 0) {
+            // Deep sleep means device reboots on wake, so this command only
+            // makes sense during development/testing when deep sleep is disabled
+            if (*ctx.state != STATE_OFF) {
+                Serial.println(F("[CMD] power: already on"));
+                return;
+            }
+            Serial.println(F("[CMD] Note: Device uses deep sleep. Power button causes reboot."));
+            Serial.println(F("[CMD] This command only works if deep sleep is disabled."));
+        } else {
+            Serial.println(F("[CMD] power: use 'on' or 'off'"));
+        }
         return;
     }
 

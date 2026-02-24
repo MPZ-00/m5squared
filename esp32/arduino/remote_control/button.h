@@ -84,6 +84,7 @@ struct Button {
 Button btnEstop     = { BTN_ESTOP_PIN };
 Button btnHillHold  = { BTN_HILL_HOLD_PIN };
 Button btnAssist    = { BTN_ASSIST_PIN };
+Button btnPower     = { BTN_POWER_PIN };
 
 // ---------------------------------------------------------------------------
 // Convenience functions
@@ -92,14 +93,16 @@ inline void buttonsInit() {
     btnEstop.init();
     btnHillHold.init();
     btnAssist.init();
+    btnPower.init();
     
     // Diagnostic: check if all buttons are stuck LOW (wiring problem)
     delay(50);  // Extra settle time
     int e = digitalRead(BTN_ESTOP_PIN);
     int h = digitalRead(BTN_HILL_HOLD_PIN);
     int a = digitalRead(BTN_ASSIST_PIN);
+    int p = digitalRead(BTN_POWER_PIN);
     
-    if (e == LOW && h == LOW && a == LOW) {
+    if (e == LOW && h == LOW && a == LOW && p == LOW) {
         Serial.println("[Button] WARNING: All buttons read LOW at startup!");
         Serial.println("[Button] Check wiring:");
         Serial.println("[Button]   - Pins 14,25,26 should connect to button terminals");
@@ -113,6 +116,7 @@ inline void buttonsTick() {
     btnEstop.tick();
     btnHillHold.tick();
     btnAssist.tick();
+    btnPower.tick();
 }
 
 // Debug: print raw button pin states (call from serial command)
@@ -120,12 +124,14 @@ inline void buttonsPrintDebug() {
     int estop = digitalRead(BTN_ESTOP_PIN);
     int hill  = digitalRead(BTN_HILL_HOLD_PIN);
     int assist = digitalRead(BTN_ASSIST_PIN);
-    Serial.printf("[Button-Debug] RAW pins: E-Stop=%d  HillHold=%d  Assist=%d  (LOW=pressed)\n",
-                  estop, hill, assist);
-    Serial.printf("[Button-Debug] Debounced: E-Stop=%s  HillHold=%s  Assist=%s\n",
+    int power = digitalRead(BTN_POWER_PIN);
+    Serial.printf("[Button-Debug] RAW pins: E-Stop=%d  HillHold=%d  Assist=%d  Power=%d  (LOW=pressed)\n",
+                  estop, hill, assist, power);
+    Serial.printf("[Button-Debug] Debounced: E-Stop=%s  HillHold=%s  Assist=%s  Power=%s\n",
                   btnEstop.isHeld() ? "HELD" : "released",
                   btnHillHold.isHeld() ? "HELD" : "released",
-                  btnAssist.isHeld() ? "HELD" : "released");
+                  btnAssist.isHeld() ? "HELD" : "released",
+                  btnPower.isHeld() ? "HELD" : "released");
 }
 
 #endif // BUTTON_H
