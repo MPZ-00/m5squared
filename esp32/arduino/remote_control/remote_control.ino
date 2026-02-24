@@ -49,6 +49,10 @@ static uint32_t jsIdleSinceMs   = 0;   // when joystick first entered deadzone
 // Reconnect rate limiter
 static uint32_t lastBleTickMs = 0;
 
+// Loop heartbeat (debug - shows loop() is running)
+static uint32_t lastHeartbeatMs = 0;
+static uint32_t loopCounter = 0;
+
 // ERROR state: limit BLE stop retries so writeValue() can't block loop() forever.
 // We send up to BLE_ERROR_STOP_TRIES stops after entering ERROR, then give up.
 // The wheel's own remote-control watchdog will cut power if it hears nothing.
@@ -246,6 +250,19 @@ void setup() {
 // ---------------------------------------------------------------------------
 void loop() {
     uint32_t now = millis();
+    loopCounter++;
+
+    // --- Heartbeat (every 5 seconds, proves loop is running) ---
+    if (now - lastHeartbeatMs >= 5000) {
+        lastHeartbeatMs = now;
+        Serial.printf("[Heartbeat] loop running, count=%u  state=%s\n",
+                      (unsigned)loopCounter,
+                      sysState == STATE_BOOT ? "BOOT" :
+                      sysState == STATE_CONNECTING ? "CONNECTING" :
+                      sysState == STATE_READY ? "READY" :
+                      sysState == STATE_OPERATING ? "OPERATING" :
+                      sysState == STATE_ERROR ? "ERROR" : "?");
+    }
 
     // --- Serial command processing (input + live debug output) ---
     serialTick(_serialCtx);

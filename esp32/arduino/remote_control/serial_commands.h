@@ -101,6 +101,7 @@ static void _scPrintHelp() {
     Serial.println(F("  debug all                 Enable all debug output"));
     Serial.println(F("  debug off                 Disable all debug output"));
     Serial.println(F("  js                        One-shot joystick snapshot"));
+    Serial.println(F("  buttons                   Debug button hardware & state"));
     Serial.println(F("  ble                       Quick BLE connection status"));
     Serial.println(F("  wheels                    Verbose per-wheel status + key"));
     Serial.println(F("  autoreconnect <on|off>    Enable/disable auto-reconnect"));
@@ -282,6 +283,12 @@ static void _scDispatch(const char* cmd, const SerialContext &ctx) {
     // js (one-shot snapshot)
     if (strcmp(cmd, "js") == 0) {
         _scPrintJs();
+        return;
+    }
+
+    // buttons (debug hardware state)
+    if (strcmp(cmd, "buttons") == 0) {
+        buttonsPrintDebug();
         return;
     }
 

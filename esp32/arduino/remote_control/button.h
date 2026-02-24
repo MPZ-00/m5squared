@@ -96,4 +96,17 @@ inline void buttonsTick() {
     btnAssist.tick();
 }
 
+// Debug: print raw button pin states (call from serial command)
+inline void buttonsPrintDebug() {
+    int estop = digitalRead(BTN_ESTOP_PIN);
+    int hill  = digitalRead(BTN_HILL_HOLD_PIN);
+    int assist = digitalRead(BTN_ASSIST_PIN);
+    Serial.printf("[Button-Debug] RAW pins: E-Stop=%d  HillHold=%d  Assist=%d  (LOW=pressed)\n",
+                  estop, hill, assist);
+    Serial.printf("[Button-Debug] Debounced: E-Stop=%s  HillHold=%s  Assist=%s\n",
+                  btnEstop.isHeld() ? "HELD" : "released",
+                  btnHillHold.isHeld() ? "HELD" : "released",
+                  btnAssist.isHeld() ? "HELD" : "released");
+}
+
 #endif // BUTTON_H
