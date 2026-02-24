@@ -104,6 +104,7 @@ static void enterOperating() {
     sysState = STATE_OPERATING;
     lastActiveMs      = millis();
     watchdogWarnShown = false;
+    Serial.println("[State] -> OPERATING");
 }
 
 static void enterError(const char* reason) {
@@ -292,6 +293,11 @@ void loop() {
 
         // ---- CONNECTING ----
         case STATE_CONNECTING:
+            // Buttons ignored during connection attempt
+            if (hillHoldPressed || assistPressed) {
+                Serial.println("[Button] Ignored - still connecting to wheels");
+            }
+
             if (bleAllConnected()) {
                 enterReady();
             } else {
