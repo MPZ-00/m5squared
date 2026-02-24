@@ -111,7 +111,8 @@ static void _scPrintHelp() {
     Serial.println(F("  hillhold <on|off>         Toggle hill hold"));
     Serial.println(F("  recal                     Recalibrate joystick center"));
     Serial.println(F("  stop                      Software emergency stop"));
-    Serial.println(F("  reconnect                 Trigger BLE reconnect"));
+    Serial.println(F("  reset                     Clear ERROR state -> CONNECTING"));
+    Serial.println(F("  reconnect                 Force BLE reconnect (non-ERROR states)"));
     Serial.println(F("  restart                   Restart the ESP32"));
 #ifdef ENABLE_BATTERY_MONITOR
     Serial.println(F("  battery                   Print battery %"));
@@ -346,10 +347,25 @@ static void _scDispatch(const char* cmd, const SerialContext &ctx) {
         return;
     }
 
-    // reconnect
+    // reset - exit ERROR state back to CONNECTING
+    if (strcmp(cmd, "reset") == 0) {
+        if (*ctx.state != STATE_ERROR) {
+            Serial.println(F("[CMD] reset: not in ERROR state"));
+            return;
+        }
+        Serial.println(F("[CMD] Clearing error, reconnecting..."));
+        ctx.fnEnterConnecting();
+        return;
+    }
+
+    // reconnect - force BLE reconnect from READY/CONNECTING
     if (strcmp(cmd, "reconnect") == 0) {
         if (*ctx.state == STATE_OPERATING) {
             Serial.println(F("[CMD] reconnect: stop motors first"));
+            return;
+        }
+        if (*ctx.state == STATE_ERROR) {
+            Serial.println(F("[CMD] reconnect: use 'reset' to clear ERROR state first"));
             return;
         }
         ctx.fnEnterConnecting();
