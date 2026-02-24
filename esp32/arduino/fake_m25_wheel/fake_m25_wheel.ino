@@ -113,13 +113,20 @@ bool deviceConnected = false;
 bool oldDeviceConnected = false;
 LEDState currentLEDState = LED_ADVERTISING;
 
+// Debug flags (bitfield)
+#define DBG_PROTOCOL    0x01  // Protocol parsing details
+#define DBG_CRYPTO      0x02  // Encryption/decryption steps
+#define DBG_CRC         0x04  // CRC validation
+#define DBG_COMMANDS    0x08  // Command interpretation
+#define DBG_RAW_DATA    0x10  // Raw hex dumps
+uint8_t debugFlags = DBG_COMMANDS;  // Default: only show decoded commands
+
 // Simulated wheel state
 int currentSpeed = 0;
 int batteryLevel = 85;  // 85%
 int assistLevel = 1;    // 0-2
 bool hillHold = false;
 int driveProfile = 0;   // 0 = standard
-bool debugMode = false; // Verbose logging
 long wheelRotation = 0; // Total wheel rotations
 float distanceTraveled = 0.0; // Distance in meters (approx 2m per rotation)
 
@@ -140,6 +147,7 @@ void printKey();
 bool validatePacket(uint8_t* data, size_t len);
 void printPacket(uint8_t* data, size_t len);
 void simulateWheelRotation(int rotations);
+void printDebugHelp();
 
 // Server callbacks
 class MyServerCallbacks: public BLEServerCallbacks {
@@ -176,15 +184,25 @@ class MyCallbacks: public BLECharacteristicCallbacks {
 };
 
 void handleCommand(uint8_t* data, size_t len) {
-    Serial.println("\n=== Incoming Packet ===");
-    Serial.print("Raw Length: ");
-    Serial.print(len);
-    Serial.println(" bytes");
+    if (debugFlags & DBG_PROTOCOL) {
+        Serial.println("\n=== Incoming Packet ===");
+        Serial.printf("Raw Length: %d bytes\n", len);
+    }
+    
+    if (debugFlags & DBG_RAW_DATA) {
+        Serial.print("Raw data: ");
+        for (size_t i = 0; i < len; i++) {
+            Serial.printf("%02X ", data[i]);
+        }
+        Serial.println();
+    }
     
     // Step 1: Remove byte stuffing
     uint8_t unstuffed[128];
     size_t unstuffedLen = removeDelimiters(data, len, unstuffed);
-    Serial.printf("After unstuffing: %d bytes\n", unstuffedLen);
+    if (debugFlags & DBG_PROTOCOL) {
+        Serial.printf("After unstuffing: %d bytes\n", unstuffedLen);
+    }
     
     // Step 2: Validate frame structure
     if (unstuffedLen < M25_HEADER_SIZE + M25_CRC_SIZE) {
@@ -196,34 +214,38 @@ void handleCommand(uint8_t* data, size_t len) {
     // Check header marker
     if (unstuffed[0] != M25_HEADER_MARKER) {
         Serial.printf("ERROR: Invalid header marker (expected 0xEF, got 0x%02X)\n", unstuffed[0]);
-        Serial.println("======================\n");
         return;
     }
     
     // Extract frame length from header
     uint16_t frameLength = ((uint16_t)unstuffed[1] << 8) | unstuffed[2];
-    Serial.printf("Frame length field: %d\n", frameLength);
+    if (debugFlags & DBG_PROTOCOL) {
+        Serial.printf("Frame length field: %d\n", frameLength);
+    }
     
     // Verify CRC (over everything except final 2 CRC bytes)
     size_t crcDataLen = unstuffedLen - M25_CRC_SIZE;
     uint16_t calculatedCRC = calculateCRC16(unstuffed, crcDataLen);
     uint16_t receivedCRC = ((uint16_t)unstuffed[crcDataLen] << 8) | unstuffed[crcDataLen + 1];
     
-    Serial.printf("CRC: received=0x%04X, calculated=0x%04X\n", receivedCRC, calculatedCRC);
+    if (debugFlags & DBG_CRC) {
+        Serial.printf("CRC: received=0x%04X, calculated=0x%04X\n", receivedCRC, calculatedCRC);
+    }
     if (calculatedCRC != receivedCRC) {
-        Serial.println("WARNING: CRC mismatch (continuing anyway for testing)");
+        Serial.println("WARNING: CRC mismatch");
         // Don't return - continue for testing purposes
-    } else {
+    } else if (debugFlags & DBG_CRC) {
         Serial.println("CRC: VALID");
     }
     
     // Step 3: Extract encrypted payload (between header and CRC)
     size_t payloadLen = crcDataLen - M25_HEADER_SIZE;
-    Serial.printf("Encrypted payload length: %d bytes\n", payloadLen);
+    if (debugFlags & DBG_CRYPTO) {
+        Serial.printf("Encrypted payload length: %d bytes\n", payloadLen);
+    }
     
     if (payloadLen < 16 || payloadLen % 16 != 0) {
         Serial.println("ERROR: Payload not AES-block aligned");
-        Serial.println("======================\n");
         return;
     }
     
@@ -233,7 +255,6 @@ void handleCommand(uint8_t* data, size_t len) {
     // Payload format: [IV_encrypted(16)][data_encrypted(16 or 32)]
     if (payloadLen < 32) {
         Serial.println("ERROR: Payload too short (need at least IV + one data block)");
-        Serial.println("======================\n");
         return;
     }
     
@@ -249,15 +270,16 @@ void handleCommand(uint8_t* data, size_t len) {
     if (mbedtls_aes_crypt_ecb(&aesCtx, MBEDTLS_AES_DECRYPT, ivEncrypted, iv) != 0) {
         Serial.println("ERROR: IV decryption failed");
         mbedtls_aes_free(&aesCtx);
-        Serial.println("======================\n");
         return;
     }
     
-    Serial.print("Decrypted IV: ");
-    for (int i = 0; i < 16; i++) {
-        Serial.printf("%02X ", iv[i]);
+    if (debugFlags & DBG_CRYPTO) {
+        Serial.print("Decrypted IV: ");
+        for (int i = 0; i < 16; i++) {
+            Serial.printf("%02X ", iv[i]);
+        }
+        Serial.println();
     }
-    Serial.println();
     
     // Decrypt data using CBC
     size_t dataLen = payloadLen - 16;
@@ -270,81 +292,104 @@ void handleCommand(uint8_t* data, size_t len) {
     if (mbedtls_aes_crypt_cbc(&aesCtx, MBEDTLS_AES_DECRYPT, dataLen, ivCopy, encryptedData, decryptedData) != 0) {
         Serial.println("ERROR: CBC decryption failed");
         mbedtls_aes_free(&aesCtx);
-        Serial.println("======================\n");
         return;
     }
     mbedtls_aes_free(&aesCtx);
     
-    Serial.println("Decryption: SUCCESS");
+    if (debugFlags & DBG_CRYPTO) {
+        Serial.println("Decryption: SUCCESS");
+    }
     
     // Step 5: Remove PKCS7 padding
     if (dataLen == 0) {
         Serial.println("ERROR: No data to unpad");
-        Serial.println("======================\n");
         return;
     }
     
     uint8_t padLen = decryptedData[dataLen - 1];
     if (padLen == 0 || padLen > 16 || padLen > dataLen) {
-        Serial.printf("WARNING: Invalid PKCS7 padding (%d), continuing anyway\n", padLen);
+        if (debugFlags & DBG_CRYPTO) {
+            Serial.printf("WARNING: Invalid PKCS7 padding (%d), continuing anyway\n", padLen);
+        }
         padLen = 0;  // Assume no padding
     }
     size_t sppLen = dataLen - padLen;
     
-    Serial.printf("PKCS7 padding: %d bytes, SPP length: %d bytes\n", padLen, sppLen);
+    if (debugFlags & DBG_CRYPTO) {
+        Serial.printf("PKCS7 padding: %d bytes, SPP length: %d bytes\n", padLen, sppLen);
+    }
     
     // Print decrypted SPP packet
-    Serial.print("Decrypted SPP: ");
-    for (size_t i = 0; i < sppLen; i++) {
-        Serial.printf("%02X ", decryptedData[i]);
+    if (debugFlags & DBG_RAW_DATA) {
+        Serial.print("Decrypted SPP: ");
+        for (size_t i = 0; i < sppLen; i++) {
+            Serial.printf("%02X ", decryptedData[i]);
+        }
+        Serial.println();
     }
-    Serial.println();
     
     // Parse SPP packet structure
     if (sppLen >= 6) {
-        Serial.println("\nSPP Packet Structure:");
-        Serial.printf("  Protocol ID:  0x%02X\n", decryptedData[0]);
-        Serial.printf("  Telegram ID:  0x%02X\n", decryptedData[1]);
-        Serial.printf("  Source:       0x%02X\n", decryptedData[2]);
-        Serial.printf("  Destination:  0x%02X\n", decryptedData[3]);
-        Serial.printf("  Service ID:   0x%02X\n", decryptedData[4]);
-        Serial.printf("  Parameter ID: 0x%02X\n", decryptedData[5]);
+        if (debugFlags & DBG_PROTOCOL) {
+            Serial.println("\nSPP Packet Structure:");
+            Serial.printf("  Protocol ID:  0x%02X\n", decryptedData[0]);
+            Serial.printf("  Telegram ID:  0x%02X\n", decryptedData[1]);
+            Serial.printf("  Source:       0x%02X\n", decryptedData[2]);
+            Serial.printf("  Destination:  0x%02X\n", decryptedData[3]);
+            Serial.printf("  Service ID:   0x%02X\n", decryptedData[4]);
+            Serial.printf("  Parameter ID: 0x%02X\n", decryptedData[5]);
+        }
         
-        if (sppLen > 6) {
+        if (sppLen > 6 && (debugFlags & DBG_PROTOCOL)) {
             Serial.print("  Payload:      ");
             for (size_t i = 6; i < sppLen; i++) {
                 Serial.printf("%02X ", decryptedData[i]);
             }
             Serial.println();
-            
-            // Decode common commands
-            uint8_t serviceId = decryptedData[4];
-            uint8_t paramId = decryptedData[5];
-            
+        }
+        
+        // Decode common commands
+        uint8_t serviceId = decryptedData[4];
+        uint8_t paramId = decryptedData[5];
+        
+        if (debugFlags & DBG_COMMANDS) {
             if (serviceId == 0x01) {  // APP_MGMT
                 if (paramId == 0x10) {
-                    Serial.println("  Command: WRITE_SYSTEM_MODE");
-                    if (sppLen > 6) Serial.printf("    Value: 0x%02X\n", decryptedData[6]);
+                    Serial.print("[CMD] SYSTEM_MODE");
+                    if (sppLen > 6) Serial.printf(" = 0x%02X\n", decryptedData[6]);
+                    else Serial.println();
                 } else if (paramId == 0x20) {
-                    Serial.println("  Command: WRITE_DRIVE_MODE");
-                    if (sppLen > 6) Serial.printf("    Value: 0x%02X\n", decryptedData[6]);
+                    Serial.print("[CMD] DRIVE_MODE");
+                    if (sppLen > 6) {
+                        uint8_t mode = decryptedData[6];
+                        Serial.printf(" = 0x%02X [", mode);
+                        if (mode & 0x01) Serial.print("HILL_HOLD ");
+                        if (mode & 0x02) Serial.print("CRUISE ");
+                        if (mode & 0x04) Serial.print("REMOTE");
+                        Serial.println("]");
+                    } else Serial.println();
                 } else if (paramId == 0x30) {
-                    Serial.println("  Command: WRITE_REMOTE_SPEED");
+                    Serial.print("[CMD] REMOTE_SPEED");
                     if (sppLen >= 8) {
                         int16_t speed = ((int16_t)decryptedData[6] << 8) | decryptedData[7];
-                        Serial.printf("    Speed: %d raw units\n", speed);
-                    }
+                        float percent = speed / 2.5;
+                        Serial.printf(" = %d raw (%.1f%%)\n", speed, percent);
+                    } else Serial.println();
                 } else if (paramId == 0x40) {
-                    Serial.println("  Command: WRITE_ASSIST_LEVEL");
-                    if (sppLen > 6) Serial.printf("    Level: %d\n", decryptedData[6]);
+                    Serial.print("[CMD] ASSIST_LEVEL");
+                    if (sppLen > 6) {
+                        uint8_t level = decryptedData[6];
+                        const char* names[] = {"INDOOR", "OUTDOOR", "LEARNING"};
+                        Serial.printf(" = %d (%s)\n", level, level < 3 ? names[level] : "UNKNOWN");
+                    } else Serial.println();
+                } else {
+                    Serial.printf("[CMD] Service=0x%02X, Param=0x%02X\n", serviceId, paramId);
                 }
+            } else {
+                Serial.printf("[CMD] Unknown service 0x%02X, param 0x%02X\n", serviceId, paramId);
             }
         }
     }
-    
-    Serial.println("\nValidation: PASSED");
-    Serial.println("Status: OK");
-    Serial.println("======================\n");
     
     // Note: Response sending disabled for now - real wheel doesn't respond to all commands
     // delay(50);
@@ -620,9 +665,39 @@ void handleSerialCommand() {
         }
     }
     else if (command == "debug") {
-        debugMode = !debugMode;
-        Serial.print("Debug mode: ");
-        Serial.println(debugMode ? "ON" : "OFF");
+        if (arg == "" || arg == "status") {
+            Serial.printf("Debug flags: 0x%02X\n", debugFlags);
+            Serial.printf("  Protocol:  %s (0x01)\n", (debugFlags & DBG_PROTOCOL)  ? "ON" : "off");
+            Serial.printf("  Crypto:    %s (0x02)\n", (debugFlags & DBG_CRYPTO)    ? "ON" : "off");
+            Serial.printf("  CRC:       %s (0x04)\n", (debugFlags & DBG_CRC)       ? "ON" : "off");
+            Serial.printf("  Commands:  %s (0x08)\n", (debugFlags & DBG_COMMANDS)  ? "ON" : "off");
+            Serial.printf("  Raw data:  %s (0x10)\n", (debugFlags & DBG_RAW_DATA)  ? "ON" : "off");
+        } else if (arg == "help") {
+            printDebugHelp();
+        } else if (arg == "all") {
+            debugFlags = 0xFF;
+            Serial.println("All debug flags enabled");
+        } else if (arg == "none") {
+            debugFlags = 0x00;
+            Serial.println("All debug flags disabled");
+        } else if (arg == "protocol") {
+            debugFlags ^= DBG_PROTOCOL;
+            Serial.printf("Protocol debug: %s\n", (debugFlags & DBG_PROTOCOL) ? "ON" : "off");
+        } else if (arg == "crypto") {
+            debugFlags ^= DBG_CRYPTO;
+            Serial.printf("Crypto debug: %s\n", (debugFlags & DBG_CRYPTO) ? "ON" : "off");
+        } else if (arg == "crc") {
+            debugFlags ^= DBG_CRC;
+            Serial.printf("CRC debug: %s\n", (debugFlags & DBG_CRC) ? "ON" : "off");
+        } else if (arg == "commands") {
+            debugFlags ^= DBG_COMMANDS;
+            Serial.printf("Commands debug: %s\n", (debugFlags & DBG_COMMANDS) ? "ON" : "off");
+        } else if (arg == "raw") {
+            debugFlags ^= DBG_RAW_DATA;
+            Serial.printf("Raw data debug: %s\n", (debugFlags & DBG_RAW_DATA) ? "ON" : "off");
+        } else {
+            Serial.println("Unknown debug option. Use 'debug help'");
+        }
     }
     else if (command == "status") {
         Serial.println("\n=== Wheel Status ===");
@@ -641,8 +716,7 @@ void handleSerialCommand() {
         Serial.println(driveProfile);
         Serial.print("Hill Hold: ");
         Serial.println(hillHold ? "ON" : "OFF");
-        Serial.print("Debug: ");
-        Serial.println(debugMode ? "ON" : "OFF");
+        Serial.printf("Debug Flags: 0x%02X\n", debugFlags);
         Serial.print("Wheel Rotations: ");
         Serial.println(wheelRotation);
         Serial.print("Distance: ");
@@ -708,11 +782,25 @@ void printHelp() {
     Serial.println("hillhold [on/off] - Toggle hill hold");
     Serial.println("rotate [n]        - Simulate n wheel rotations (default=1)");
     Serial.println("reset             - Reset wheel rotation counter");
-    Serial.println("debug             - Toggle debug mode");
+    Serial.println("debug [option]    - Control debug flags (use 'debug help')");
     Serial.println("send              - Send response packet now");
     Serial.println("disconnect        - Disconnect client");
     Serial.println("advertise         - Force restart BLE advertising");
     Serial.println("========================\n");
+}
+
+void printDebugHelp() {
+    Serial.println("\n=== Debug Flags ===");
+    Serial.println("debug [status]       - Show current flags");
+    Serial.println("debug help           - This help");
+    Serial.println("debug all            - Enable all flags");
+    Serial.println("debug none           - Disable all flags");
+    Serial.println("debug protocol       - Toggle protocol parsing (0x01)");
+    Serial.println("debug crypto         - Toggle encryption steps (0x02)");
+    Serial.println("debug crc            - Toggle CRC validation (0x04)");
+    Serial.println("debug commands       - Toggle command decode (0x08)");
+    Serial.println("debug raw            - Toggle raw hex dumps (0x10)");
+    Serial.println("===================\n");
 }
 
 // LED Management Functions
@@ -912,50 +1000,14 @@ void printPacket(uint8_t* data, size_t len) {
 }
 
 bool validatePacket(uint8_t* data, size_t len) {
+    // Legacy function - validation now done in handleCommand()
+    // Kept for compatibility with old code paths
     if (len < 4) {
-        Serial.println("Validation error: Packet too short (< 4 bytes)");
+        if (debugFlags & DBG_PROTOCOL) {
+            Serial.println("Validation error: Packet too short (< 4 bytes)");
+        }
         return false;
     }
-    
-    // Check for valid header bytes (M25 typically uses specific magic bytes)
-    // Common patterns: 0xAA 0x55, 0xFF 0xAA, or 0x00 0x01
-    bool hasValidHeader = false;
-    
-    // Accept common header patterns
-    if ((data[0] == 0xAA && data[1] == 0x55) ||  // Pattern 1
-        (data[0] == 0xFF && data[1] == 0xAA) ||  // Pattern 2
-        (data[0] == 0x00 && data[1] == 0x01) ||  // Pattern 3
-        (data[0] == 0x02) ||                     // Simple command byte
-        (data[0] >= 0x01 && data[0] <= 0x10)) {  // Command range
-        hasValidHeader = true;
-    }
-    
-    // If strict validation is disabled in debug mode, be more permissive
-    if (debugMode) {
-        Serial.println("Debug mode: Relaxed validation");
-        hasValidHeader = true;  // Accept any packet in debug mode
-    }
-    
-    if (!hasValidHeader) {
-        Serial.printf("Validation error: Invalid header bytes (%02X %02X)\n", data[0], data[1]);
-        return false;
-    }
-    
-    // Optional: Verify checksum (if last 2 bytes are checksum)
-    // Simple XOR checksum validation
-    if (len >= 4) {
-        uint8_t calculatedChecksum = 0;
-        for (size_t i = 0; i < len - 2; i++) {
-            calculatedChecksum ^= data[i];
-        }
-        
-        // Check if last byte matches checksum (relaxed check)
-        if (debugMode) {
-            Serial.printf("Calculated checksum: %02X, Packet checksum: %02X\n", 
-                         calculatedChecksum, data[len - 1]);
-        }
-    }
-    
     return true;
 }
 
