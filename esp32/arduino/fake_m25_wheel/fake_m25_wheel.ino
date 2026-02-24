@@ -37,34 +37,12 @@ const uint8_t encryptionKey[16] = ENCRYPTION_KEY;
 #define CHAR_UUID_RX "00001102-0000-1000-8000-00805F9B34FB"
 
 // Hardware pins for visual feedback
-// Wire colors: 3.3V=red, GND=brown, button/LEDs as marked below
-// Can be overridden in device_config.h
-#ifndef LED_RED_PIN
-#define LED_RED_PIN 25      // D25 (orange wire) - Low battery (red)
-#endif
-#ifndef LED_YELLOW_PIN
-#define LED_YELLOW_PIN 26   // D26 (yellow wire) - Medium battery (yellow)
-#endif
-#ifndef LED_GREEN_PIN
-#define LED_GREEN_PIN 27    // D27 (turquoise wire) - High battery (green)
-#endif
-#ifndef LED_WHITE_PIN
-#define LED_WHITE_PIN 32    // D32 (white wire) - Connection status
-#endif
-#ifndef LED_BLUE_PIN
-#define LED_BLUE_PIN 14     // D14 - Error state (blue)
-#endif
-#ifndef BUTTON_PIN_OVERRIDE
-#define BUTTON_PIN_OVERRIDE 33   // D33 (blue wire) - Button to force advertising
-#endif
-
-// Actual pin assignments (allows override)
-#define LED_RED LED_RED_PIN
-#define LED_YELLOW LED_YELLOW_PIN
-#define LED_GREEN LED_GREEN_PIN
-#define LED_WHITE LED_WHITE_PIN
-#define LED_BLUE LED_BLUE_PIN
-#define BUTTON_PIN BUTTON_PIN_OVERRIDE
+#define LED_RED 25          // Low battery indicator
+#define LED_YELLOW 26       // Medium battery indicator
+#define LED_GREEN 27        // High battery indicator
+#define LED_WHITE 32        // Connection status
+#define LED_BLUE 14         // Error state
+#define BUTTON_PIN 33       // Force advertising button
 #define BUTTON_DEBOUNCE 50  // Debounce delay in ms
 
 // LED states
@@ -91,6 +69,8 @@ int assistLevel = 1;    // 0-2
 bool hillHold = false;
 int driveProfile = 0;   // 0 = standard
 bool debugMode = false; // Verbose logging
+long wheelRotation = 0; // Total wheel rotations
+float distanceTraveled = 0.0; // Distance in meters (approx 2m per rotation)
 
 // Button state
 bool lastButtonState = HIGH;
@@ -104,11 +84,11 @@ void updateLEDs();
 void handleButton();
 void setLEDState(LEDState state);
 void showBatteryLevel();
-bool decryptPacket(uint8_t* data, size_t len, uint8_t* output);
-void encryptPacket(uint8_t* data, size_t len, uint8_t* output);
+bool cryptPacket(uint8_t* data, size_t len, uint8_t* output, bool encrypt);
 void printKey();
 bool validatePacket(uint8_t* data, size_t len);
 void printPacket(uint8_t* data, size_t len);
+void simulateWheelRotation(int rotations);
 
 // Server callbacks
 class MyServerCallbacks: public BLEServerCallbacks {
@@ -161,7 +141,7 @@ void handleCommand(uint8_t* data, size_t len) {
     
     // Decrypt packet
     uint8_t decrypted[32];
-    if (!decryptPacket(data, len, decrypted)) {
+    if (!cryptPacket(data, len, decrypted, false)) {
         Serial.println("ERROR: Decryption failed");
         Serial.println("======================\n");
         return;
@@ -202,7 +182,7 @@ void sendResponse() {
     
     // Encrypt response
     uint8_t encrypted[16];
-    encryptPacket(plainResponse, 16, encrypted);
+    cryptPacket(plainResponse, 16, encrypted, true);
     
     Serial.print("Sending encrypted response: ");
     for (int i = 0; i < 16; i++) {
@@ -481,6 +461,11 @@ void handleSerialCommand() {
         Serial.println(hillHold ? "ON" : "OFF");
         Serial.print("Debug: ");
         Serial.println(debugMode ? "ON" : "OFF");
+        Serial.print("Wheel Rotations: ");
+        Serial.println(wheelRotation);
+        Serial.print("Distance: ");
+        Serial.print(distanceTraveled);
+        Serial.println(" m");
         Serial.println("==================\n");
     }
     else if (command == "send") {
@@ -512,6 +497,15 @@ void handleSerialCommand() {
     else if (command == "key") {
         printKey();
     }
+    else if (command == "rotate" || command == "wheel") {
+        int rotations = arg.length() > 0 ? arg.toInt() : 1;
+        simulateWheelRotation(rotations);
+    }
+    else if (command == "reset") {
+        wheelRotation = 0;
+        distanceTraveled = 0.0;
+        Serial.println("Wheel rotation counter reset");
+    }
     else {
         Serial.print("Unknown command: ");
         Serial.println(command);
@@ -530,6 +524,8 @@ void printHelp() {
     Serial.println("assist [0-2]      - Set/show assist level");
     Serial.println("profile [0-5]     - Set/show drive profile");
     Serial.println("hillhold [on/off] - Toggle hill hold");
+    Serial.println("rotate [n]        - Simulate n wheel rotations (default=1)");
+    Serial.println("reset             - Reset wheel rotation counter");
     Serial.println("debug             - Toggle debug mode");
     Serial.println("send              - Send response packet now");
     Serial.println("disconnect        - Disconnect client");
@@ -654,8 +650,7 @@ void handleButton() {
 }
 
 // Encryption Functions
-
-bool decryptPacket(uint8_t* data, size_t len, uint8_t* output) {
+bool cryptPacket(uint8_t* data, size_t len, uint8_t* output, bool encrypt) {
     if (len % 16 != 0) {
         Serial.println("Error: Data length must be multiple of 16");
         return false;
@@ -664,17 +659,22 @@ bool decryptPacket(uint8_t* data, size_t len, uint8_t* output) {
     mbedtls_aes_context aes;
     mbedtls_aes_init(&aes);
     
-    // Set decryption key
-    if (mbedtls_aes_setkey_dec(&aes, encryptionKey, 128) != 0) {
-        Serial.println("Error: Failed to set decryption key");
+    // Set key based on mode
+    int mode = encrypt ? MBEDTLS_AES_ENCRYPT : MBEDTLS_AES_DECRYPT;
+    int keyResult = encrypt ? 
+        mbedtls_aes_setkey_enc(&aes, encryptionKey, 128) :
+        mbedtls_aes_setkey_dec(&aes, encryptionKey, 128);
+    
+    if (keyResult != 0) {
+        Serial.println(encrypt ? "Error: Failed to set encryption key" : "Error: Failed to set decryption key");
         mbedtls_aes_free(&aes);
         return false;
     }
     
-    // Decrypt each 16-byte block
+    // Process each 16-byte block
     for (size_t i = 0; i < len; i += 16) {
-        if (mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_DECRYPT, data + i, output + i) != 0) {
-            Serial.println("Error: Decryption failed");
+        if (mbedtls_aes_crypt_ecb(&aes, mode, data + i, output + i) != 0) {
+            Serial.println(encrypt ? "Error: Encryption failed" : "Error: Decryption failed");
             mbedtls_aes_free(&aes);
             return false;
         }
@@ -682,34 +682,6 @@ bool decryptPacket(uint8_t* data, size_t len, uint8_t* output) {
     
     mbedtls_aes_free(&aes);
     return true;
-}
-
-void encryptPacket(uint8_t* data, size_t len, uint8_t* output) {
-    if (len % 16 != 0) {
-        Serial.println("Error: Data length must be multiple of 16");
-        return;
-    }
-    
-    mbedtls_aes_context aes;
-    mbedtls_aes_init(&aes);
-    
-    // Set encryption key
-    if (mbedtls_aes_setkey_enc(&aes, encryptionKey, 128) != 0) {
-        Serial.println("Error: Failed to set encryption key");
-        mbedtls_aes_free(&aes);
-        return;
-    }
-    
-    // Encrypt each 16-byte block
-    for (size_t i = 0; i < len; i += 16) {
-        if (mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_ENCRYPT, data + i, output + i) != 0) {
-            Serial.println("Error: Encryption failed");
-            mbedtls_aes_free(&aes);
-            return;
-        }
-    }
-    
-    mbedtls_aes_free(&aes);
 }
 
 void printKey() {
@@ -803,4 +775,26 @@ bool validatePacket(uint8_t* data, size_t len) {
     }
     
     return true;
+}
+
+void simulateWheelRotation(int rotations) {
+    wheelRotation += rotations;
+    distanceTraveled += rotations * 2.0; // Assuming ~2m per rotation
+    
+    Serial.print("Wheel turned by ");
+    Serial.print(rotations);
+    Serial.print(" rotation(s) - Total: ");
+    Serial.print(wheelRotation);
+    Serial.print(" rotations, ");
+    Serial.print(distanceTraveled);
+    Serial.println(" m traveled");
+    
+    // Simulate small battery drain with distance
+    if (wheelRotation % 100 == 0 && batteryLevel > 0) {
+        batteryLevel--;
+        Serial.print("Battery drained to ");
+        Serial.print(batteryLevel);
+        Serial.println("%");
+        showBatteryLevel();
+    }
 }
