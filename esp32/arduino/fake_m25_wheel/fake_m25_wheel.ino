@@ -363,10 +363,31 @@ void handleCommand(uint8_t* data, size_t len) {
             Serial.println();
         }
         
-        // Decode common commands
+        // Extract command identifiers
         uint8_t serviceId = decryptedData[4];
         uint8_t paramId = decryptedData[5];
         
+        // Process commands and update state (ALWAYS, regardless of debug flags)
+        if (serviceId == 0x01 && sppLen > 6) {  // APP_MGMT service
+            if (paramId == 0x20) {  // DRIVE_MODE
+                uint8_t mode = decryptedData[6];
+                hillHold = (mode & 0x01) != 0;
+            } else if (paramId == 0x30 && sppLen >= 8) {  // REMOTE_SPEED
+                int16_t speed = ((int16_t)decryptedData[6] << 8) | decryptedData[7];
+                // Update current speed and check for direction change
+                bool directionChanged = (lastSpeed > 0 && speed < 0) || (lastSpeed < 0 && speed > 0);
+                if (directionChanged && abs(speed) > 5 && audioFeedbackEnabled) {
+                    playBeep(1);  // Beep on direction change
+                }
+                lastSpeed = currentSpeed;
+                currentSpeed = speed;
+            } else if (paramId == 0x40) {  // ASSIST_LEVEL
+                uint8_t level = decryptedData[6];
+                if (level < 3) assistLevel = level;
+            }
+        }
+        
+        // Debug logging (only when debug flags enabled)
         if (debugFlags & DBG_COMMANDS) {
             if (serviceId == 0x01) {  // APP_MGMT
                 if (paramId == 0x10) {
@@ -389,14 +410,6 @@ void handleCommand(uint8_t* data, size_t len) {
                         int16_t speed = ((int16_t)decryptedData[6] << 8) | decryptedData[7];
                         float percent = speed / 2.5;
                         Serial.printf(" = %d raw (%.1f%%)\n", speed, percent);
-                        
-                        // Update current speed and check for direction change
-                        bool directionChanged = (lastSpeed > 0 && speed < 0) || (lastSpeed < 0 && speed > 0);
-                        if (directionChanged && abs(speed) > 5 && audioFeedbackEnabled) {
-                            playBeep(1);  // Beep on direction change
-                        }
-                        lastSpeed = currentSpeed;
-                        currentSpeed = speed;
                     } else Serial.println();
                 } else if (paramId == 0x40) {
                     Serial.print("[CMD] ASSIST_LEVEL");
