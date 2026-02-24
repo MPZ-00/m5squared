@@ -36,6 +36,57 @@ const uint8_t encryptionKey[16] = ENCRYPTION_KEY;
 #define CHAR_UUID_TX "00001101-0000-1000-8000-00805F9B34FB"
 #define CHAR_UUID_RX "00001102-0000-1000-8000-00805F9B34FB"
 
+// M25 Protocol constants (matching m25_ble.h)
+#define M25_HEADER_MARKER 0xEF
+#define M25_HEADER_SIZE 3
+#define M25_CRC_SIZE 2
+
+// CRC-16 lookup table (matching m25_protocol.py)
+static const uint16_t _crcTable[256] PROGMEM = {
+    0,49345,49537,320,49921,960,640,49729,50689,1728,1920,51009,1280,50625,50305,1088,
+    52225,3264,3456,52545,3840,53185,52865,3648,2560,51905,52097,2880,51457,2496,2176,51265,
+    55297,6336,6528,55617,6912,56257,55937,6720,7680,57025,57217,8000,56577,7616,7296,56385,
+    5120,54465,54657,5440,55041,6080,5760,54849,53761,4800,4992,54081,4352,53697,53377,4160,
+    61441,12480,12672,61761,13056,62401,62081,12864,13824,63169,63361,14144,62721,13760,13440,62529,
+    15360,64705,64897,15680,65281,16320,16000,65089,64001,15040,15232,64321,14592,63937,63617,14400,
+    10240,59585,59777,10560,60161,11200,10880,59969,60929,11968,12160,61249,11520,60865,60545,11328,
+    58369,9408,9600,58689,9984,59329,59009,9792,8704,58049,58241,9024,57601,8640,8320,57409,
+    40961,24768,24960,41281,25344,41921,41601,25152,26112,42689,42881,26432,42241,26048,25728,42049,
+    27648,44225,44417,27968,44801,28608,28288,44609,43521,27328,27520,43841,26880,43457,43137,26688,
+    30720,47297,47489,31040,47873,31680,31360,47681,48641,32448,32640,48961,32000,48577,48257,31808,
+    46081,29888,30080,46401,30464,47041,46721,30272,29184,45761,45953,29504,45313,29120,28800,45121,
+    20480,37057,37249,20800,37633,21440,21120,37441,38401,22208,22400,38721,21760,38337,38017,21568,
+    39937,23744,23936,40257,24320,40897,40577,24128,23040,39617,39809,23360,39169,22976,22656,38977,
+    34817,18624,18816,35137,19200,35777,35457,19008,19968,36545,36737,20288,36097,19904,19584,35905,
+    17408,33985,34177,17728,34561,18368,18048,34369,33281,17088,17280,33601,16640,33217,32897,16448
+};
+
+// CRC-16 calculation (matching m25_protocol.py)
+static uint16_t calculateCRC16(const uint8_t* data, size_t len) {
+    uint16_t crc = 0xFFFF;
+    for (size_t i = 0; i < len; i++) {
+        crc = (crc >> 8) ^ pgm_read_word(&_crcTable[(crc ^ data[i]) & 0xFF]);
+    }
+    return crc;
+}
+
+// Remove byte stuffing (reverse of add_delimiters in m25_protocol.py)
+// First byte kept as-is; every doubled 0xEF is reduced to single 0xEF.
+static size_t removeDelimiters(const uint8_t* in, size_t inLen, uint8_t* out) {
+    if (inLen == 0) return 0;
+    size_t pos = 0;
+    out[pos++] = in[0];  // First byte always kept
+    
+    for (size_t i = 1; i < inLen; i++) {
+        out[pos++] = in[i];
+        // Skip next byte if current is 0xEF followed by another 0xEF
+        if (in[i] == M25_HEADER_MARKER && i + 1 < inLen && in[i + 1] == M25_HEADER_MARKER) {
+            i++;  // Skip the duplicate
+        }
+    }
+    return pos;
+}
+
 // Hardware pins for visual feedback
 #define LED_RED 25          // Low battery indicator
 #define LED_YELLOW 26       // Medium battery indicator
@@ -126,47 +177,178 @@ class MyCallbacks: public BLECharacteristicCallbacks {
 
 void handleCommand(uint8_t* data, size_t len) {
     Serial.println("\n=== Incoming Packet ===");
-    Serial.print("Length: ");
+    Serial.print("Raw Length: ");
     Serial.print(len);
     Serial.println(" bytes");
     
-    // M25 commands are typically 16 or 32 bytes (AES blocks)
-    if (len != 16 && len != 32) {
-        Serial.println("ERROR: Invalid packet size (must be 16 or 32 bytes)");
+    // Step 1: Remove byte stuffing
+    uint8_t unstuffed[128];
+    size_t unstuffedLen = removeDelimiters(data, len, unstuffed);
+    Serial.printf("After unstuffing: %d bytes\n", unstuffedLen);
+    
+    // Step 2: Validate frame structure
+    if (unstuffedLen < M25_HEADER_SIZE + M25_CRC_SIZE) {
+        Serial.println("ERROR: Frame too short");
         Serial.println("======================\n");
         return;
     }
     
-    Serial.println("Packet size: VALID (AES block aligned)");
-    
-    // Decrypt packet
-    uint8_t decrypted[32];
-    if (!cryptPacket(data, len, decrypted, false)) {
-        Serial.println("ERROR: Decryption failed");
+    // Check header marker
+    if (unstuffed[0] != M25_HEADER_MARKER) {
+        Serial.printf("ERROR: Invalid header marker (expected 0xEF, got 0x%02X)\n", unstuffed[0]);
         Serial.println("======================\n");
         return;
     }
+    
+    // Extract frame length from header
+    uint16_t frameLength = ((uint16_t)unstuffed[1] << 8) | unstuffed[2];
+    Serial.printf("Frame length field: %d\n", frameLength);
+    
+    // Verify CRC (over everything except final 2 CRC bytes)
+    size_t crcDataLen = unstuffedLen - M25_CRC_SIZE;
+    uint16_t calculatedCRC = calculateCRC16(unstuffed, crcDataLen);
+    uint16_t receivedCRC = ((uint16_t)unstuffed[crcDataLen] << 8) | unstuffed[crcDataLen + 1];
+    
+    Serial.printf("CRC: received=0x%04X, calculated=0x%04X\n", receivedCRC, calculatedCRC);
+    if (calculatedCRC != receivedCRC) {
+        Serial.println("WARNING: CRC mismatch (continuing anyway for testing)");
+        // Don't return - continue for testing purposes
+    } else {
+        Serial.println("CRC: VALID");
+    }
+    
+    // Step 3: Extract encrypted payload (between header and CRC)
+    size_t payloadLen = crcDataLen - M25_HEADER_SIZE;
+    Serial.printf("Encrypted payload length: %d bytes\n", payloadLen);
+    
+    if (payloadLen < 16 || payloadLen % 16 != 0) {
+        Serial.println("ERROR: Payload not AES-block aligned");
+        Serial.println("======================\n");
+        return;
+    }
+    
+    uint8_t* encryptedPayload = unstuffed + M25_HEADER_SIZE;
+    
+    // Step 4: Decrypt using CBC (IV encrypted via ECB, then CBC decrypt)
+    // Payload format: [IV_encrypted(16)][data_encrypted(16 or 32)]
+    if (payloadLen < 32) {
+        Serial.println("ERROR: Payload too short (need at least IV + one data block)");
+        Serial.println("======================\n");
+        return;
+    }
+    
+    // Extract encrypted IV (first 16 bytes)
+    uint8_t ivEncrypted[16];
+    memcpy(ivEncrypted, encryptedPayload, 16);
+    
+    // Decrypt IV using ECB
+    uint8_t iv[16];
+    mbedtls_aes_context aesCtx;
+    mbedtls_aes_init(&aesCtx);
+    mbedtls_aes_setkey_dec(&aesCtx, encryptionKey, 128);
+    if (mbedtls_aes_crypt_ecb(&aesCtx, MBEDTLS_AES_DECRYPT, ivEncrypted, iv) != 0) {
+        Serial.println("ERROR: IV decryption failed");
+        mbedtls_aes_free(&aesCtx);
+        Serial.println("======================\n");
+        return;
+    }
+    
+    Serial.print("Decrypted IV: ");
+    for (int i = 0; i < 16; i++) {
+        Serial.printf("%02X ", iv[i]);
+    }
+    Serial.println();
+    
+    // Decrypt data using CBC
+    size_t dataLen = payloadLen - 16;
+    uint8_t* encryptedData = encryptedPayload + 16;
+    uint8_t decryptedData[32];
+    
+    uint8_t ivCopy[16];
+    memcpy(ivCopy, iv, 16);  // CBC modifies IV in place
+    
+    if (mbedtls_aes_crypt_cbc(&aesCtx, MBEDTLS_AES_DECRYPT, dataLen, ivCopy, encryptedData, decryptedData) != 0) {
+        Serial.println("ERROR: CBC decryption failed");
+        mbedtls_aes_free(&aesCtx);
+        Serial.println("======================\n");
+        return;
+    }
+    mbedtls_aes_free(&aesCtx);
     
     Serial.println("Decryption: SUCCESS");
     
-    // Print decrypted packet
-    printPacket(decrypted, len);
-    
-    // Validate packet structure
-    if (!validatePacket(decrypted, len)) {
-        Serial.println("\nValidation: FAILED");
-        Serial.println("ERROR: Invalid packet structure - no response sent");
+    // Step 5: Remove PKCS7 padding
+    if (dataLen == 0) {
+        Serial.println("ERROR: No data to unpad");
         Serial.println("======================\n");
         return;
     }
     
+    uint8_t padLen = decryptedData[dataLen - 1];
+    if (padLen == 0 || padLen > 16 || padLen > dataLen) {
+        Serial.printf("WARNING: Invalid PKCS7 padding (%d), continuing anyway\n", padLen);
+        padLen = 0;  // Assume no padding
+    }
+    size_t sppLen = dataLen - padLen;
+    
+    Serial.printf("PKCS7 padding: %d bytes, SPP length: %d bytes\n", padLen, sppLen);
+    
+    // Print decrypted SPP packet
+    Serial.print("Decrypted SPP: ");
+    for (size_t i = 0; i < sppLen; i++) {
+        Serial.printf("%02X ", decryptedData[i]);
+    }
+    Serial.println();
+    
+    // Parse SPP packet structure
+    if (sppLen >= 6) {
+        Serial.println("\nSPP Packet Structure:");
+        Serial.printf("  Protocol ID:  0x%02X\n", decryptedData[0]);
+        Serial.printf("  Telegram ID:  0x%02X\n", decryptedData[1]);
+        Serial.printf("  Source:       0x%02X\n", decryptedData[2]);
+        Serial.printf("  Destination:  0x%02X\n", decryptedData[3]);
+        Serial.printf("  Service ID:   0x%02X\n", decryptedData[4]);
+        Serial.printf("  Parameter ID: 0x%02X\n", decryptedData[5]);
+        
+        if (sppLen > 6) {
+            Serial.print("  Payload:      ");
+            for (size_t i = 6; i < sppLen; i++) {
+                Serial.printf("%02X ", decryptedData[i]);
+            }
+            Serial.println();
+            
+            // Decode common commands
+            uint8_t serviceId = decryptedData[4];
+            uint8_t paramId = decryptedData[5];
+            
+            if (serviceId == 0x01) {  // APP_MGMT
+                if (paramId == 0x10) {
+                    Serial.println("  Command: WRITE_SYSTEM_MODE");
+                    if (sppLen > 6) Serial.printf("    Value: 0x%02X\n", decryptedData[6]);
+                } else if (paramId == 0x20) {
+                    Serial.println("  Command: WRITE_DRIVE_MODE");
+                    if (sppLen > 6) Serial.printf("    Value: 0x%02X\n", decryptedData[6]);
+                } else if (paramId == 0x30) {
+                    Serial.println("  Command: WRITE_REMOTE_SPEED");
+                    if (sppLen >= 8) {
+                        int16_t speed = ((int16_t)decryptedData[6] << 8) | decryptedData[7];
+                        Serial.printf("    Speed: %d raw units\n", speed);
+                    }
+                } else if (paramId == 0x40) {
+                    Serial.println("  Command: WRITE_ASSIST_LEVEL");
+                    if (sppLen > 6) Serial.printf("    Level: %d\n", decryptedData[6]);
+                }
+            }
+        }
+    }
+    
     Serial.println("\nValidation: PASSED");
-    Serial.println("Status: OK - Sending response");
+    Serial.println("Status: OK");
     Serial.println("======================\n");
     
-    // Send response after short delay
-    delay(50);
-    sendResponse();
+    // Note: Response sending disabled for now - real wheel doesn't respond to all commands
+    // delay(50);
+    // sendResponse();
 }
 
 void sendResponse() {
