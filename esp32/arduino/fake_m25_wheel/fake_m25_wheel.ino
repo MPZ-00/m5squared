@@ -92,9 +92,13 @@ static size_t removeDelimiters(const uint8_t* in, size_t inLen, uint8_t* out) {
 #define LED_YELLOW 26       // Medium battery indicator
 #define LED_GREEN 27        // High battery indicator
 #define LED_WHITE 32        // Connection status
-#define LED_BLUE 14         // Error state
+#define LED_BLUE 14         // Speed/direction indicator
 #define BUTTON_PIN 33       // Force advertising button
 #define BUTTON_DEBOUNCE 50  // Debounce delay in ms
+
+// Buzzer pins
+#define BUZZER_PASSIVE 23   // Passive buzzer (PWM capable pin)
+#define BUZZER_ACTIVE 22    // Active buzzer
 
 // LED states
 enum LEDState {
@@ -122,13 +126,19 @@ LEDState currentLEDState = LED_ADVERTISING;
 uint8_t debugFlags = DBG_COMMANDS;  // Default: only show decoded commands
 
 // Simulated wheel state
-int currentSpeed = 0;
-int batteryLevel = 85;  // 85%
-int assistLevel = 1;    // 0-2
+int16_t currentSpeed = 0;     // Current speed (-32768 to +32767 raw units)
+int16_t lastSpeed = 0;        // Previous speed (for change detection)
+int batteryLevel = 85;        // 85%
+int assistLevel = 1;          // 0-2
 bool hillHold = false;
-int driveProfile = 0;   // 0 = standard
-long wheelRotation = 0; // Total wheel rotations
+int driveProfile = 0;         // 0 = standard
+long wheelRotation = 0;       // Total wheel rotations
 float distanceTraveled = 0.0; // Distance in meters (approx 2m per rotation)
+
+// Visual/Audio feedback state
+unsigned long lastSpeedUpdate = 0;
+bool audioFeedbackEnabled = true;
+bool visualFeedbackEnabled = true;
 
 // Button state
 bool lastButtonState = HIGH;
@@ -148,6 +158,9 @@ bool validatePacket(uint8_t* data, size_t len);
 void printPacket(uint8_t* data, size_t len);
 void simulateWheelRotation(int rotations);
 void printDebugHelp();
+void updateSpeedIndicators();
+void playTone(uint16_t frequency, uint16_t duration);
+void playBeep(uint8_t count);
 
 // Server callbacks
 class MyServerCallbacks: public BLEServerCallbacks {
@@ -374,6 +387,14 @@ void handleCommand(uint8_t* data, size_t len) {
                         int16_t speed = ((int16_t)decryptedData[6] << 8) | decryptedData[7];
                         float percent = speed / 2.5;
                         Serial.printf(" = %d raw (%.1f%%)\n", speed, percent);
+                        
+                        // Update current speed and check for direction change
+                        bool directionChanged = (lastSpeed > 0 && speed < 0) || (lastSpeed < 0 && speed > 0);
+                        if (directionChanged && abs(speed) > 5 && audioFeedbackEnabled) {
+                            playBeep(1);  // Beep on direction change
+                        }
+                        lastSpeed = currentSpeed;
+                        currentSpeed = speed;
                     } else Serial.println();
                 } else if (paramId == 0x40) {
                     Serial.print("[CMD] ASSIST_LEVEL");
@@ -433,6 +454,11 @@ void setup() {
     pinMode(LED_BLUE, OUTPUT);
     pinMode(BUTTON_PIN, INPUT_PULLUP);  // Button with internal pullup
     
+    // Initialize buzzers
+    pinMode(BUZZER_ACTIVE, OUTPUT);
+    digitalWrite(BUZZER_ACTIVE, LOW);
+    ledcAttach(BUZZER_PASSIVE, 2000, 8);  // Pin, 2kHz frequency, 8-bit resolution
+    
     // All LEDs on briefly for test
     digitalWrite(LED_RED, HIGH);
     digitalWrite(LED_YELLOW, HIGH);
@@ -447,6 +473,9 @@ void setup() {
     digitalWrite(LED_WHITE, LOW);
     digitalWrite(LED_BLUE, LOW);
     
+    // Startup beep
+    playBeep(2);
+    
     // Show initial battery level (before connection)
     showBatteryLevel();
     
@@ -458,10 +487,12 @@ void setup() {
     Serial.println();
     Serial.println("Hardware:");
     Serial.println("  White LED (Pin " + String(LED_WHITE) + ") - Connection Status");
+    Serial.println("  Blue LED (Pin " + String(LED_BLUE) + ") - Speed Indicator");
     Serial.println("  Red LED (Pin " + String(LED_RED) + ") - Low Battery");
     Serial.println("  Yellow LED (Pin " + String(LED_YELLOW) + ") - Medium Battery");
     Serial.println("  Green LED (Pin " + String(LED_GREEN) + ") - High Battery");
-    Serial.println("  Blue LED (Pin " + String(LED_BLUE) + ") - Error State");
+    Serial.println("  Passive Buzzer - Speed Tone (frequency indicates speed)");
+    Serial.println("  Active Buzzer - Event Beeps");
     Serial.println("  Button (Pin " + String(BUTTON_PIN) + ") - Force Advertising");
     Serial.println();
 
@@ -528,6 +559,7 @@ void loop() {
         Serial.println("Ready to receive commands");
         Serial.println();
         setLEDState(LED_CONNECTED);
+        playBeep(2);  // Two beeps on connect
     }
     
     if (!deviceConnected && oldDeviceConnected) {
@@ -538,6 +570,8 @@ void loop() {
         Serial.println();
         oldDeviceConnected = deviceConnected;
         setLEDState(LED_ADVERTISING);
+        playBeep(1);  // One beep on disconnect
+        currentSpeed = 0;  // Reset speed on disconnect
     }
     
     // Update LED states
@@ -548,6 +582,9 @@ void loop() {
     
     // Handle serial commands
     handleSerialCommand();
+    
+    // Update speed indicators (RGB LED, buzzer, blue LED)
+    updateSpeedIndicators();
     
     // Simulate battery drain (very slow)
     static unsigned long lastBatteryUpdate = 0;
@@ -717,6 +754,8 @@ void handleSerialCommand() {
         Serial.print("Hill Hold: ");
         Serial.println(hillHold ? "ON" : "OFF");
         Serial.printf("Debug Flags: 0x%02X\n", debugFlags);
+        Serial.printf("Audio Feedback: %s\n", audioFeedbackEnabled ? "ON" : "OFF");
+        Serial.printf("Visual Feedback: %s\n", visualFeedbackEnabled ? "ON" : "OFF");
         Serial.print("Wheel Rotations: ");
         Serial.println(wheelRotation);
         Serial.print("Distance: ");
@@ -762,6 +801,54 @@ void handleSerialCommand() {
         distanceTraveled = 0.0;
         Serial.println("Wheel rotation counter reset");
     }
+    else if (command == "audio") {
+        if (arg == "on" || arg == "1") {
+            audioFeedbackEnabled = true;
+            Serial.println("Audio feedback enabled");
+            playBeep(1);
+        } else if (arg == "off" || arg == "0") {
+            audioFeedbackEnabled = false;
+            playTone(0, 0);  // Stop any playing tone
+            Serial.println("Audio feedback disabled");
+        } else {
+            audioFeedbackEnabled = !audioFeedbackEnabled;
+            Serial.print("Audio feedback: ");
+            Serial.println(audioFeedbackEnabled ? "ON" : "OFF");
+            if (audioFeedbackEnabled) playBeep(1);
+        }
+    }
+    else if (command == "visual") {
+        if (arg == "on" || arg == "1") {
+            visualFeedbackEnabled = true;
+            Serial.println("Visual feedback enabled");
+        } else if (arg == "off" || arg == "0") {
+            visualFeedbackEnabled = false;
+            digitalWrite(LED_BLUE, LOW);
+            Serial.println("Visual feedback disabled");
+        } else {
+            visualFeedbackEnabled = !visualFeedbackEnabled;
+            Serial.print("Visual feedback: ");
+            Serial.println(visualFeedbackEnabled ? "ON" : "OFF");
+        }
+    }
+    else if (command == "beep") {
+        int count = arg.length() > 0 ? arg.toInt() : 1;
+        if (count > 0 && count <= 10) {
+            playBeep(count);
+            Serial.printf("Playing %d beep(s)\n", count);
+        } else {
+            Serial.println("Beep count must be 1-10");
+        }
+    }
+    else if (command == "tone") {
+        int freq = arg.toInt();
+        if (freq >= 50 && freq <= 5000) {
+            playTone(freq, 500);
+            Serial.printf("Playing %d Hz tone\n", freq);
+        } else {
+            Serial.println("Frequency must be 50-5000 Hz");
+        }
+    }
     else {
         Serial.print("Unknown command: ");
         Serial.println(command);
@@ -783,6 +870,10 @@ void printHelp() {
     Serial.println("rotate [n]        - Simulate n wheel rotations (default=1)");
     Serial.println("reset             - Reset wheel rotation counter");
     Serial.println("debug [option]    - Control debug flags (use 'debug help')");
+    Serial.println("audio [on/off]    - Toggle audio feedback (buzzer)");
+    Serial.println("visual [on/off]   - Toggle visual feedback (Blue LED)");
+    Serial.println("beep [count]      - Play beeps (1-10)");
+    Serial.println("tone <freq>       - Play tone (50-5000 Hz)");
     Serial.println("send              - Send response packet now");
     Serial.println("disconnect        - Disconnect client");
     Serial.println("advertise         - Force restart BLE advertising");
@@ -1030,5 +1121,63 @@ void simulateWheelRotation(int rotations) {
         Serial.print(batteryLevel);
         Serial.println("%");
         showBatteryLevel();
+    }
+}
+
+// Play tone on passive buzzer
+void playTone(uint16_t frequency, uint16_t duration) {
+    if (!audioFeedbackEnabled || frequency == 0) {
+        ledcWriteTone(BUZZER_PASSIVE, 0);
+        return;
+    }
+    ledcWriteTone(BUZZER_PASSIVE, frequency);
+    ledcWrite(BUZZER_PASSIVE, 128);  // 50% duty cycle
+    if (duration > 0) {
+        delay(duration);
+        ledcWriteTone(BUZZER_PASSIVE, 0);
+    }
+}
+
+// Play beep(s) on active buzzer
+void playBeep(uint8_t count) {
+    if (!audioFeedbackEnabled) return;
+    for (uint8_t i = 0; i < count; i++) {
+        digitalWrite(BUZZER_ACTIVE, HIGH);
+        delay(50);
+        digitalWrite(BUZZER_ACTIVE, LOW);
+        if (i < count - 1) delay(100);
+    }
+}
+
+// Update visual and audio feedback based on current speed
+void updateSpeedIndicators() {
+    if (!visualFeedbackEnabled && !audioFeedbackEnabled) return;
+    
+    unsigned long now = millis();
+    
+    // Calculate speed percentage and direction
+    float speedPercent = abs(currentSpeed) / 2.5;  // M25_SPEED_SCALE = 2.5
+    bool moving = abs(currentSpeed) > 5;  // Deadzone threshold
+    
+    // --- Blue LED: Speed intensity (blink rate increases with speed) ---
+    if (visualFeedbackEnabled) {
+        if (moving) {
+            uint16_t blinkInterval = (uint16_t)constrain(500 - (speedPercent * 4), 50, 500);
+            if (now - lastSpeedUpdate >= blinkInterval) {
+                lastSpeedUpdate = now;
+                digitalWrite(LED_BLUE, !digitalRead(LED_BLUE));
+            }
+        } else {
+            digitalWrite(LED_BLUE, LOW);
+        }
+    }
+    
+    // --- Passive Buzzer: Tone frequency based on speed ---
+    if (audioFeedbackEnabled && moving) {
+        // Frequency range: 200Hz (slow) to 2000Hz (fast)
+        uint16_t frequency = (uint16_t)constrain(200 + (speedPercent * 18), 200, 2000);
+        playTone(frequency, 0);  // Continuous tone
+    } else {
+        playTone(0, 0);  // Stop tone
     }
 }
