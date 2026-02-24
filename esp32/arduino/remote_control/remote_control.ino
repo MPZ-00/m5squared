@@ -49,6 +49,12 @@ static uint32_t jsIdleSinceMs   = 0;   // when joystick first entered deadzone
 // Reconnect rate limiter
 static uint32_t lastBleTickMs = 0;
 
+// ERROR state: limit BLE stop retries so writeValue() can't block loop() forever.
+// We send up to BLE_ERROR_STOP_TRIES stops after entering ERROR, then give up.
+// The wheel's own remote-control watchdog will cut power if it hears nothing.
+#define BLE_ERROR_STOP_TRIES 3
+static uint8_t _errorStopsSent = 0;
+
 #ifdef ENABLE_BATTERY_MONITOR
 // Battery read interval
 static uint32_t lastBatteryMs = 0;
@@ -104,9 +110,11 @@ static void enterError(const char* reason) {
     sysState = STATE_ERROR;
     jsActiveSinceMs = 0;
     jsIdleSinceMs   = 0;
+    _errorStopsSent = 0;   // reset retry counter
     ledSetStatus(LED_BLINK_FAST);
     ledSetBle(false);
     bleSendStop();
+    _errorStopsSent++;
     Serial.printf("[State] -> ERROR  reason: %s\n", reason);
 }
 
@@ -359,6 +367,10 @@ void loop() {
             }
 
             // Watchdog warning and timeout
+            // Only active when ENABLE_IDLE_WATCHDOG is set (self-centering joystick).
+            // With a potentiometer the user holds positions indefinitely - the watchdog
+            // would fire every 5 s, so it is disabled by default.
+#ifdef ENABLE_IDLE_WATCHDOG
             uint32_t idle = now - lastActiveMs;
             if (idle >= WATCHDOG_TIMEOUT_MS) {
                 enterError("Watchdog timeout - no joystick input");
@@ -366,11 +378,13 @@ void loop() {
             } else if (idle >= WATCHDOG_WARN_MS && !watchdogWarnShown) {
                 watchdogWarnShown = true;
                 Serial.println("[Watchdog] WARNING: joystick inactive > 3 s");
-                // Brief fast-blink on status LED as visual warning
                 ledSetStatus(LED_BLINK_FAST);
             } else if (idle < WATCHDOG_WARN_MS) {
                 ledSetStatus(LED_ON);
             }
+#else
+            ledSetStatus(LED_ON);
+#endif
 
             // Send motor commands at 20 Hz
             if (now - lastCommandSentMs >= COMMAND_RATE_MS) {
@@ -390,10 +404,15 @@ void loop() {
 
         // ---- ERROR ----
         case STATE_ERROR:
-            // All movement blocked; E-stop handling is already at top of loop.
-            // Keep sending stop at reduced rate to be sure wheels halt.
-            if (now - lastCommandSentMs >= 200) {
-                bleSendStop();
+            // E-stop handling already at top of loop.
+            // Send a few more stop retries in case the first one was lost,
+            // then stop trying - repeated writeValue() calls can block loop()
+            // if the BLE TX queue fills or the connection is stressed.
+            // The wheel's own remote-control watchdog will cut power independently.
+            if (_errorStopsSent < BLE_ERROR_STOP_TRIES &&
+                now - lastCommandSentMs >= 200) {
+                if (bleAnyConnected()) bleSendStop();
+                _errorStopsSent++;
                 lastCommandSentMs = now;
             }
             break;

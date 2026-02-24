@@ -153,6 +153,11 @@
 #define WATCHDOG_WARN_MS      3000  // Visual warning starts at 3 s
 #define DEBOUNCE_MS           50    // Button debounce window
 
+// Set this when using a self-centering joystick (spring-loaded).
+// With a potentiometer the joystick never returns to center on its own, so
+// the idle watchdog would fire constantly.  Comment out for pot / bench use.
+// #define ENABLE_IDLE_WATCHDOG
+
 // Joystick state-change hysteresis
 // Prevents ADC noise at the deadzone boundary from bouncing between
 // READY and OPERATING.  Joystick must be outside / inside the deadzone
