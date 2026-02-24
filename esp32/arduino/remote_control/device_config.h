@@ -153,6 +153,13 @@
 #define WATCHDOG_WARN_MS      3000  // Visual warning starts at 3 s
 #define DEBOUNCE_MS           50    // Button debounce window
 
+// Joystick state-change hysteresis
+// Prevents ADC noise at the deadzone boundary from bouncing between
+// READY and OPERATING.  Joystick must be outside / inside the deadzone
+// continuously for these durations before a transition is accepted.
+#define JS_ACTIVATE_HOLD_MS   100   // deadzone -> OPERATING  (must push for 100 ms)
+#define JS_IDLE_HOLD_MS       300   // OPERATING -> deadzone -> READY (must center for 300 ms)
+
 // Blink periods
 #define BLINK_SLOW_MS         1000  // 1 Hz  (slow blink, e.g. learning mode)
 #define BLINK_FAST_MS         500   // 2 Hz  (fast blink, e.g. error / low bat)

@@ -42,6 +42,10 @@ static bool     watchdogWarnShown = false;
 // Command rate limiter
 static uint32_t lastCommandSentMs = 0;
 
+// Joystick transition hold timers (hysteresis, see JS_ACTIVATE/IDLE_HOLD_MS)
+static uint32_t jsActiveSinceMs = 0;   // when joystick first left deadzone
+static uint32_t jsIdleSinceMs   = 0;   // when joystick first entered deadzone
+
 // Reconnect rate limiter
 static uint32_t lastBleTickMs = 0;
 
@@ -98,6 +102,8 @@ static void enterOperating() {
 
 static void enterError(const char* reason) {
     sysState = STATE_ERROR;
+    jsActiveSinceMs = 0;
+    jsIdleSinceMs   = 0;
     ledSetStatus(LED_BLINK_FAST);
     ledSetBle(false);
     bleSendStop();
@@ -292,11 +298,19 @@ void loop() {
                 break;
             }
 
-            // Joystick activated -> OPERATING
+            // Joystick activated -> OPERATING (hold JS_ACTIVATE_HOLD_MS outside deadzone)
             if (!js.inDeadzone) {
-                enterOperating();
-                // Fall through to OPERATING to send first command immediately
+                if (jsActiveSinceMs == 0) jsActiveSinceMs = now;
+                if (now - jsActiveSinceMs >= JS_ACTIVATE_HOLD_MS) {
+                    jsActiveSinceMs = 0;
+                    jsIdleSinceMs   = 0;
+                    enterOperating();
+                    // Fall through to OPERATING to send first command immediately
+                } else {
+                    break;   // hold not yet met, stay in READY
+                }
             } else {
+                jsActiveSinceMs = 0;   // joystick back in deadzone, reset hold timer
                 // Periodic keepalive stop in READY state.
                 // Rate is deliberately slow (500 ms) to avoid saturating the
                 // BLE TX queue, which would block writeValue() and freeze loop().
@@ -332,12 +346,16 @@ void loop() {
             if (!js.inDeadzone) {
                 lastActiveMs      = now;
                 watchdogWarnShown = false;
+                jsIdleSinceMs     = 0;   // joystick active again, reset hold timer
             } else {
-                // Joystick returned to center -> back to READY
-                enterReady();
-                bleSendStop();
-                lastCommandSentMs = now;
-                break;
+                // Joystick returned to center -> back to READY after hold period
+                if (jsIdleSinceMs == 0) jsIdleSinceMs = now;
+                if (now - jsIdleSinceMs >= JS_IDLE_HOLD_MS) {
+                    jsIdleSinceMs   = 0;
+                    jsActiveSinceMs = 0;
+                    enterReady();
+                    break;
+                }
             }
 
             // Watchdog warning and timeout
