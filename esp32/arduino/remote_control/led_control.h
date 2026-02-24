@@ -8,8 +8,8 @@
  * LED mapping and behaviour (from spec):
  *
  *  Status LED (Red, GPIO 16)
- *    OFF          : remote control is off
- *    ON solid     : remote control on, no error
+ *    OFF          : normal operation, no error
+ *    SLOW (1 Hz)  : connecting/resetting after E-stop
  *    FAST (2 Hz)  : error, timeout, or E-stop activated
  *
  *  Battery LED (Red, GPIO 17)
@@ -142,7 +142,7 @@ inline void ledInit() {
 // Public API - Mode setters
 // ---------------------------------------------------------------------------
 
-// Status LED: solid on = normal, fast blink = error/estop
+// Status LED: off = normal, slow blink = connecting, fast blink = error/estop
 inline void ledSetStatus(LedMode mode) {
     _ledSetMode(_ledStatus, mode);
 }

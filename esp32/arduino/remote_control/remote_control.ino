@@ -98,7 +98,7 @@ static void enterConnecting() {
 
 static void enterReady() {
     sysState = STATE_READY;
-    ledSetStatus(LED_ON);
+    ledSetStatus(LED_OFF);
     ledSetBle(true);
     lastActiveMs      = millis();
     watchdogWarnShown = false;
@@ -439,10 +439,10 @@ void loop() {
                 Serial.println("[Watchdog] WARNING: joystick inactive > 3 s");
                 ledSetStatus(LED_BLINK_FAST);
             } else if (idle < WATCHDOG_WARN_MS) {
-                ledSetStatus(LED_ON);
+                ledSetStatus(LED_OFF);
             }
 #else
-            ledSetStatus(LED_ON);
+            ledSetStatus(LED_OFF);
 #endif
 
             // Send motor commands at 20 Hz
