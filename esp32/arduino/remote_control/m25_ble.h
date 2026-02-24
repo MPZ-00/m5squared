@@ -295,7 +295,15 @@ static size_t _buildAndEncrypt(int idx, uint8_t serviceId, uint8_t paramId,
 static bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
                           const uint8_t* payload = nullptr, uint8_t payloadLen = 0) {
     WheelConnState_t &w = _wheels[idx];
+    // Double-guard: w.connected is set by the BLE callback thread (may lag);
+    // client->isConnected() is the synchronous ground truth and prevents
+    // writeValue() from blocking on a dead GATT connection.
     if (!w.connected || w.rxChar == nullptr) return false;
+    if (w.client == nullptr || !w.client->isConnected()) {
+        w.connected     = false;   // sync flag with reality
+        w.protocolReady = false;
+        return false;
+    }
     uint8_t buf[128];
     size_t len = _buildAndEncrypt(idx, serviceId, paramId, payload, payloadLen, buf);
     if (len == 0) return false;

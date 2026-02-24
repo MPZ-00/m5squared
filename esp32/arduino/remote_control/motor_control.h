@@ -110,6 +110,14 @@ inline MotorCommand calculateMotorCommand(float x_norm, float y_norm,
 
     cmd.leftSpeed  = baseSigned * leftFactor;
     cmd.rightSpeed = baseSigned * rightFactor;
+
+    // If the calculation produces zero on both axes (e.g. Y=0 with X-only input)
+    // mark as stop so the caller uses bleSendStop() instead of sending an
+    // encrypted speed-0 motor packet at 20 Hz unnecessarily.
+    if (cmd.leftSpeed == 0.0f && cmd.rightSpeed == 0.0f) {
+        cmd.isStop = true;
+        return cmd;
+    }
     cmd.isStop     = false;
 
     // Safety clamp to [-100, +100]
