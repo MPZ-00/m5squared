@@ -183,13 +183,15 @@ class MyCallbacks: public BLECharacteristicCallbacks {
 
         if (len <= 0) return;
         
-        Serial.print("Received packet (" + String(len) + " bytes): ");
-        
-        // Print as hex
-        for (int i = 0; i < len; i++) {
-            Serial.printf("%02X ", rxValue[i]);
+        if (debugFlags & DBG_RAW_DATA) {
+            Serial.print("Received packet (" + String(len) + " bytes): ");
+            
+            // Print as hex
+            for (int i = 0; i < len; i++) {
+                Serial.printf("%02X ", rxValue[i]);
+            }
+            Serial.println();
         }
-        Serial.println();
         
         // Try to decode command (will be encrypted in real use)
         handleCommand(rxValue, len);
@@ -457,7 +459,15 @@ void setup() {
     // Initialize buzzers
     pinMode(BUZZER_ACTIVE, OUTPUT);
     digitalWrite(BUZZER_ACTIVE, LOW);
-    ledcAttach(BUZZER_PASSIVE, 2000, 8);  // Pin, 2kHz frequency, 8-bit resolution
+    
+    // Initialize passive buzzer with LEDC
+    // Returns actual frequency, 0 means error
+    double freq = ledcAttach(BUZZER_PASSIVE, 2000, 8);  // Pin, 2kHz frequency, 8-bit resolution
+    if (freq == 0) {
+        Serial.println("WARNING: Failed to attach LEDC to passive buzzer!");
+    } else {
+        Serial.printf("Passive buzzer initialized at %.2f Hz\n", freq);
+    }
     
     // All LEDs on briefly for test
     digitalWrite(LED_RED, HIGH);
@@ -473,8 +483,13 @@ void setup() {
     digitalWrite(LED_WHITE, LOW);
     digitalWrite(LED_BLUE, LOW);
     
-    // Startup beep
-    playBeep(2);
+    // Test buzzers at startup
+    Serial.println("\\nTesting buzzers...");
+    playBeep(2);  // Active buzzer test
+    delay(200);
+    Serial.println("Testing passive buzzer (1 kHz tone, 500ms)...");
+    playTone(1000, 500);  // Passive buzzer test
+    Serial.println("Buzzer tests complete\\n");
     
     // Show initial battery level (before connection)
     showBatteryLevel();
@@ -492,6 +507,7 @@ void setup() {
     Serial.println("  Yellow LED (Pin " + String(LED_YELLOW) + ") - Medium Battery");
     Serial.println("  Green LED (Pin " + String(LED_GREEN) + ") - High Battery");
     Serial.println("  Passive Buzzer - Speed Tone (frequency indicates speed)");
+    Serial.println("    Wiring: Pin 23 -> Buzzer+, Buzzer- -> GND");
     Serial.println("  Active Buzzer - Event Beeps");
     Serial.println("  Button (Pin " + String(BUTTON_PIN) + ") - Force Advertising");
     Serial.println();
@@ -1128,13 +1144,20 @@ void simulateWheelRotation(int rotations) {
 void playTone(uint16_t frequency, uint16_t duration) {
     if (!audioFeedbackEnabled || frequency == 0) {
         ledcWriteTone(BUZZER_PASSIVE, 0);
+        ledcWrite(BUZZER_PASSIVE, 0);  // Stop PWM
         return;
     }
-    ledcWriteTone(BUZZER_PASSIVE, frequency);
-    ledcWrite(BUZZER_PASSIVE, 128);  // 50% duty cycle
+    
+    // Set frequency and write 50% duty cycle (128 out of 255)
+    double actualFreq = ledcWriteTone(BUZZER_PASSIVE, frequency);
+    if (actualFreq > 0) {
+        ledcWrite(BUZZER_PASSIVE, 128);  // 50% duty cycle for passive buzzer
+    }
+    
     if (duration > 0) {
         delay(duration);
         ledcWriteTone(BUZZER_PASSIVE, 0);
+        ledcWrite(BUZZER_PASSIVE, 0);
     }
 }
 
