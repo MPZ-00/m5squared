@@ -9,11 +9,9 @@
  * ------------------
  *   help / ?                    List all commands
  *   status                      State snapshot: system, BLE, assist, hill-hold
- *   debug                       Show current debug output flags
- *   debug js                    Toggle joystick live output (~5 Hz)
- *   debug motor                 Toggle motor command live output (20 Hz)
- *   debug all                   Enable all debug flags
- *   debug off                   Disable all debug flags
+ *   debug                       Show all available debug flags with status
+ *   debug <flag>                Toggle specific flag (js, motor, heartbeat, ble, buttons, state)
+ *   debug all / off             Enable or disable all debug flags
  *   js                          One-shot joystick snapshot (raw + normalized)
  *   ble                         BLE connection status for each wheel
  *   assist <0|1|2>              Set assist level  0=indoor  1=outdoor  2=learning
@@ -25,15 +23,25 @@
  *
  * Debug output flags (check these before printing in the main sketch)
  * -------------------------------------------------------------------
- *   DBG_JS    0x01  live joystick raw + normalized values every 200 ms
- *   DBG_MOTOR 0x02  every motor command forwarded to the wheels (20 Hz)
+ *   DBG_JS         0x01  live joystick raw + normalized values every 200 ms
+ *   DBG_MOTOR      0x02  every motor command forwarded to the wheels (20 Hz)
+ *   DBG_HEARTBEAT  0x04  loop heartbeat every 5 seconds
+ *   DBG_BLE        0x08  BLE connection events and errors
+ *   DBG_BUTTONS    0x10  button press/release events
+ *   DBG_STATE      0x20  state transition detail logging
+ *
+ * Adding new debug flags
+ * ----------------------
+ *   1. Add #define DBG_YOURFLAG 0x40 (next available bit)
+ *   2. Add entry to _debugFlagTable[] array
+ *   3. Use in code: if (debugFlags & DBG_YOURFLAG) Serial.println(...);
  *
  * Integration in remote_control.ino
  * ----------------------------------
  *   1.  Declare a SerialContext and fill in all pointers (after state vars).
  *   2.  Call serialInit(ctx) at the end of setup().
  *   3.  Call serialTick(ctx) at the top of loop().
- *   4.  Gate motor prints on debugFlags:
+ *   4.  Gate debug prints on debugFlags:
  *         if (debugFlags & DBG_MOTOR) printMotorCommand(cmd);
  */
 
@@ -54,10 +62,31 @@
 // ---------------------------------------------------------------------------
 // Debug output flags - check these in the main sketch / motor send path
 // ---------------------------------------------------------------------------
-#define DBG_JS    0x01   // live joystick stream (~5 Hz)
-#define DBG_MOTOR 0x02   // motor command on every 20 Hz tick
+#define DBG_JS         0x01   // live joystick stream (~5 Hz)
+#define DBG_MOTOR      0x02   // motor command on every 20 Hz tick
+#define DBG_HEARTBEAT  0x04   // loop heartbeat every 5 seconds
+#define DBG_BLE        0x08   // BLE connection events and errors
+#define DBG_BUTTONS    0x10   // button press/release events
+#define DBG_STATE      0x20   // state transitions (already logged, adds detail)
 
-static uint8_t debugFlags = 0;   // all off by default
+uint8_t debugFlags = 0;   // all off by default, accessible globally
+
+// Debug flag metadata for better UI
+struct DebugFlagInfo {
+    uint8_t     mask;
+    const char* name;
+    const char* description;
+};
+
+static const DebugFlagInfo _debugFlagTable[] = {
+    { DBG_JS,        "js",        "Joystick values (~5 Hz)" },
+    { DBG_MOTOR,     "motor",     "Motor commands (20 Hz)" },
+    { DBG_HEARTBEAT, "heartbeat", "Loop heartbeat (5 s)" },
+    { DBG_BLE,       "ble",       "BLE events & errors" },
+    { DBG_BUTTONS,   "buttons",   "Button press events" },
+    { DBG_STATE,     "state",     "State transition details" },
+};
+static const uint8_t _debugFlagCount = sizeof(_debugFlagTable) / sizeof(_debugFlagTable[0]);
 
 // ---------------------------------------------------------------------------
 // Caller-supplied context: pointers into state in remote_control.ino
@@ -95,11 +124,9 @@ static void _scPrintHelp() {
     Serial.println(F("  help / ?                  This message"));
     Serial.println(F("  status                    System state snapshot"));
     Serial.println(F("  sysinfo                   Chip, heap, uptime, WiFi/BT status"));
-    Serial.println(F("  debug                     Show debug output flags"));
-    Serial.println(F("  debug js                  Toggle joystick live (~5 Hz)"));
-    Serial.println(F("  debug motor               Toggle motor command live (20 Hz)"));
-    Serial.println(F("  debug all                 Enable all debug output"));
-    Serial.println(F("  debug off                 Disable all debug output"));
+    Serial.println(F("  debug                     Show all debug flags (with usage)"));
+    Serial.println(F("  debug <flag>              Toggle flag (js|motor|heartbeat|ble|buttons|state)"));
+    Serial.println(F("  debug all / off           Enable/disable all debug output"));
     Serial.println(F("  js                        One-shot joystick snapshot"));
     Serial.println(F("  buttons                   Debug button hardware & state"));
     Serial.println(F("  ble                       Quick BLE connection status"));
@@ -122,10 +149,39 @@ static void _scPrintHelp() {
 }
 
 static void _scPrintDebugFlags() {
-    Serial.printf("[Debug] flags=0x%02X  JS=%s  MOTOR=%s\n",
-        debugFlags,
-        (debugFlags & DBG_JS)    ? "ON" : "off",
-        (debugFlags & DBG_MOTOR) ? "ON" : "off");
+    Serial.println(F("--- Debug Flags ---"));
+    Serial.printf("Current: 0x%02X", debugFlags);
+    if (debugFlags == 0) {
+        Serial.println(F("  (all disabled)"));
+    } else {
+        Serial.print(F("  ("));
+        bool first = true;
+        for (uint8_t i = 0; i < _debugFlagCount; i++) {
+            if (debugFlags & _debugFlagTable[i].mask) {
+                if (!first) Serial.print(F(", "));
+                Serial.print(_debugFlagTable[i].name);
+                first = false;
+            }
+        }
+        Serial.println(F(")"));
+    }
+    Serial.println();
+    Serial.println(F("Flag       Status  Description"));
+    Serial.println(F("---------- ------- ----------------------------------"));
+    
+    for (uint8_t i = 0; i < _debugFlagCount; i++) {
+        bool enabled = (debugFlags & _debugFlagTable[i].mask) != 0;
+        Serial.printf("%-10s [%s]  %s\n",
+            _debugFlagTable[i].name,
+            enabled ? "ON " : "off",
+            _debugFlagTable[i].description);
+    }
+    
+    Serial.println(F("\nUsage:"));
+    Serial.println(F("  debug              Show this list"));
+    Serial.println(F("  debug <flag>       Toggle specific flag (e.g., 'debug js')"));
+    Serial.println(F("  debug all          Enable all flags"));
+    Serial.println(F("  debug off          Disable all flags"));
 }
 
 static void _scPrintStatus(const SerialContext &ctx) {
@@ -144,7 +200,22 @@ static void _scPrintStatus(const SerialContext &ctx) {
         Serial.printf("[Status] Battery: %d %%\n", *ctx.batteryPct);
     }
 #endif
-    _scPrintDebugFlags();
+    
+    // Compact debug flags summary
+    if (debugFlags == 0) {
+        Serial.println(F("[Status] Debug: off  (use 'debug' to see options)"));
+    } else {
+        Serial.print(F("[Status] Debug: "));
+        bool first = true;
+        for (uint8_t i = 0; i < _debugFlagCount; i++) {
+            if (debugFlags & _debugFlagTable[i].mask) {
+                if (!first) Serial.print(F(", "));
+                Serial.print(_debugFlagTable[i].name);
+                first = false;
+            }
+        }
+        Serial.printf("  (0x%02X)\n", debugFlags);
+    }
 }
 
 static void _scPrintBle() {
@@ -246,37 +317,58 @@ static void _scDispatch(const char* cmd, const SerialContext &ctx) {
         return;
     }
 
-    // debug (show flags)
-    if (strcmp(cmd, "debug") == 0) {
-        _scPrintDebugFlags();
-        return;
-    }
-
-    // debug off
-    if (strcmp(cmd, "debug off") == 0) {
-        debugFlags = 0;
-        Serial.println(F("[Debug] all output disabled"));
-        return;
-    }
-
-    // debug all
-    if (strcmp(cmd, "debug all") == 0) {
-        debugFlags = DBG_JS | DBG_MOTOR;
-        _scPrintDebugFlags();
-        return;
-    }
-
-    // debug js
-    if (strcmp(cmd, "debug js") == 0) {
-        debugFlags ^= DBG_JS;
-        _scPrintDebugFlags();
-        return;
-    }
-
-    // debug motor
-    if (strcmp(cmd, "debug motor") == 0) {
-        debugFlags ^= DBG_MOTOR;
-        _scPrintDebugFlags();
+    // debug (show flags or toggle specific flag)
+    if (strncmp(cmd, "debug", 5) == 0) {
+        const char* arg = cmd + 5;
+        
+        // Skip whitespace
+        while (*arg == ' ') arg++;
+        
+        // No argument: show all flags
+        if (*arg == '\0') {
+            _scPrintDebugFlags();
+            return;
+        }
+        
+        // debug off
+        if (strcmp(arg, "off") == 0) {
+            debugFlags = 0;
+            Serial.println(F("[Debug] All flags disabled"));
+            _scPrintDebugFlags();
+            return;
+        }
+        
+        // debug all
+        if (strcmp(arg, "all") == 0) {
+            debugFlags = 0xFF;  // Enable all flags
+            Serial.println(F("[Debug] All flags enabled"));
+            _scPrintDebugFlags();
+            return;
+        }
+        
+        // Try to find matching flag name in table
+        bool found = false;
+        for (uint8_t i = 0; i < _debugFlagCount; i++) {
+            if (strcmp(arg, _debugFlagTable[i].name) == 0) {
+                debugFlags ^= _debugFlagTable[i].mask;  // Toggle
+                bool nowEnabled = (debugFlags & _debugFlagTable[i].mask) != 0;
+                Serial.printf("[Debug] %s -> %s\n", 
+                    _debugFlagTable[i].name,
+                    nowEnabled ? "ON" : "off");
+                found = true;
+                break;
+            }
+        }
+        
+        if (!found) {
+            Serial.printf("[Debug] Unknown flag: '%s'\n", arg);
+            Serial.println(F("[Debug] Available flags:"));
+            for (uint8_t i = 0; i < _debugFlagCount; i++) {
+                Serial.printf("  %-10s  %s\n", 
+                    _debugFlagTable[i].name,
+                    _debugFlagTable[i].description);
+            }
+        }
         return;
     }
 

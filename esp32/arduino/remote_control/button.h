@@ -30,8 +30,12 @@ struct Button {
     // Call once in setup()
     void init() {
         pinMode(pin, INPUT_PULLUP);
-        lastStableState    = true;   // assume released at startup
-        currentReading     = true;
+        delay(10);  // Allow pull-up to settle
+        
+        // Read actual initial state instead of assuming released
+        bool initialState = (digitalRead(pin) == HIGH);
+        lastStableState    = initialState;
+        currentReading     = initialState;
         readingChangeTime  = 0;
         pressedEvent       = false;
     }
@@ -88,6 +92,21 @@ inline void buttonsInit() {
     btnEstop.init();
     btnHillHold.init();
     btnAssist.init();
+    
+    // Diagnostic: check if all buttons are stuck LOW (wiring problem)
+    delay(50);  // Extra settle time
+    int e = digitalRead(BTN_ESTOP_PIN);
+    int h = digitalRead(BTN_HILL_HOLD_PIN);
+    int a = digitalRead(BTN_ASSIST_PIN);
+    
+    if (e == LOW && h == LOW && a == LOW) {
+        Serial.println("[Button] WARNING: All buttons read LOW at startup!");
+        Serial.println("[Button] Check wiring:");
+        Serial.println("[Button]   - Pins 14,25,26 should connect to button terminals");
+        Serial.println("[Button]   - Other button terminals should connect to GND");
+        Serial.println("[Button]   - Use normally-open (NO) buttons, not normally-closed (NC)");
+        Serial.println("[Button]   - Check for shorts to GND on breadboard");
+    }
 }
 
 inline void buttonsTick() {

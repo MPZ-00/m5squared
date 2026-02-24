@@ -90,6 +90,9 @@ static void enterConnecting() {
     ledSetStatus(LED_BLINK_SLOW);
     ledSetBle(false);
     Serial.println("[State] -> CONNECTING");
+    if (debugFlags & DBG_STATE) {
+        Serial.println("[State] Initiating BLE connection sequence...");
+    }
     bleConnect();
 }
 
@@ -102,6 +105,9 @@ static void enterReady() {
     bleSendStop();   // one explicit stop on transition; resets the keepalive timer
     lastCommandSentMs = millis();
     Serial.println("[State] -> READY");
+    if (debugFlags & DBG_STATE) {
+        Serial.println("[State] Wheels ready, joystick monitoring active");
+    }
 }
 
 static void enterOperating() {
@@ -109,6 +115,9 @@ static void enterOperating() {
     lastActiveMs      = millis();
     watchdogWarnShown = false;
     Serial.println("[State] -> OPERATING");
+    if (debugFlags & DBG_STATE) {
+        Serial.println("[State] Joystick active, motor commands enabled");
+    }
 }
 
 static void enterError(const char* reason) {
@@ -121,6 +130,9 @@ static void enterError(const char* reason) {
     bleSendStop();
     _errorStopsSent++;
     Serial.printf("[State] -> ERROR  reason: %s\n", reason);
+    if (debugFlags & DBG_STATE) {
+        Serial.println("[State] Motors stopped, press E-stop to reset");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -216,7 +228,7 @@ static SerialContext _serialCtx = {
 void setup() {
     Serial.begin(115200);
     delay(200);
-    Serial.println("\n[Boot] M25 Remote Control starting...");
+    Serial.println("\n\n[Boot] M25 Remote Control starting...");
 
     // Peripheral init
     ledInit();
@@ -251,17 +263,17 @@ void setup() {
 void loop() {
     uint32_t now = millis();
     loopCounter++;
+    
+    const char* stateName = (sysState == STATE_BOOT) ? "BOOT" :
+                       (sysState == STATE_CONNECTING) ? "CONNECTING" :
+                       (sysState == STATE_READY) ? "READY" :
+                       (sysState == STATE_OPERATING) ? "OPERATING" :
+                       (sysState == STATE_ERROR) ? "ERROR" : "?";
 
     // --- Heartbeat (every 5 seconds, proves loop is running) ---
-    if (now - lastHeartbeatMs >= 5000) {
+    if (now - lastHeartbeatMs >= 5000 && debugFlags & DBG_HEARTBEAT) {
         lastHeartbeatMs = now;
-        Serial.printf("[Heartbeat] loop running, count=%u  state=%s\n",
-                      (unsigned)loopCounter,
-                      sysState == STATE_BOOT ? "BOOT" :
-                      sysState == STATE_CONNECTING ? "CONNECTING" :
-                      sysState == STATE_READY ? "READY" :
-                      sysState == STATE_OPERATING ? "OPERATING" :
-                      sysState == STATE_ERROR ? "ERROR" : "?");
+        Serial.printf("[Heartbeat] loop running, count=%u  state=%s\n", loopCounter, stateName);
     }
 
     // --- Serial command processing (input + live debug output) ---
@@ -275,20 +287,17 @@ void loop() {
     bool estopPressed    = btnEstop.wasPressed();
     bool hillHoldPressed = btnHillHold.wasPressed();
     bool assistPressed   = btnAssist.wasPressed();
-    const char* stateName = (sysState == STATE_BOOT) ? "BOOT" :
-                       (sysState == STATE_CONNECTING) ? "CONNECTING" :
-                       (sysState == STATE_READY) ? "READY" :
-                       (sysState == STATE_OPERATING) ? "OPERATING" :
-                       (sysState == STATE_ERROR) ? "ERROR" : "?";
 
-    if (estopPressed) {
-        Serial.printf("[Button] E-STOP pressed  (state=%s)\n", stateName);
-    }
-    if (hillHoldPressed) {
-        Serial.printf("[Button] HILL-HOLD pressed  (state=%s)\n", stateName);
-    }
-    if (assistPressed) {
-        Serial.printf("[Button] ASSIST pressed  (state=%s)\n", stateName);
+    if (debugFlags & DBG_BUTTONS) {
+        if (estopPressed) {
+            Serial.printf("[Button] E-STOP pressed  (state=%s)\n", stateName);
+        }
+        if (hillHoldPressed) {
+            Serial.printf("[Button] HILL-HOLD pressed  (state=%s)\n", stateName);
+        }
+        if (assistPressed) {
+            Serial.printf("[Button] ASSIST pressed  (state=%s)\n", stateName);
+        }
     }
 
     // --- Emergency stop: highest priority, any state ---
