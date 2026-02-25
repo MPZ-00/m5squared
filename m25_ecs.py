@@ -44,6 +44,7 @@ from m25_protocol_data import (
     # Parameter IDs - Write commands
     PARAM_ID_WRITE_ASSIST_LEVEL, PARAM_ID_WRITE_DRIVE_MODE,
     PARAM_ID_WRITE_DRIVE_PROFILE, PARAM_ID_WRITE_DRIVE_PROFILE_PARAMS,
+    PARAM_ID_WRITE_REMOTE_SPEED,
     # Drive mode flags
     DRIVE_MODE_BIT_AUTO_HOLD, DRIVE_MODE_BIT_CRUISE, DRIVE_MODE_BIT_REMOTE,
     # Profile IDs and names
@@ -117,6 +118,22 @@ class ECSPacketBuilder(PacketBuilderBase):
         """
         return self.build_packet(SERVICE_ID_APP_MGMT, PARAM_ID_WRITE_DRIVE_PROFILE,
                                  bytes([profile_id]))
+    
+    def build_write_remote_speed(self, speed):
+        """Build WRITE_REMOTE_SPEED packet (send motor speed command)
+        
+        Args:
+            speed: signed 16-bit speed value (-32768 to 32767)
+                   Typically use range like -100 to 100 for percentage-based control
+        """
+        # Convert to signed 16-bit big-endian
+        if speed < -32768 or speed > 32767:
+            raise ValueError(f"Speed {speed} out of range (-32768 to 32767)")
+        
+        # Pack as signed 16-bit big-endian
+        payload = speed.to_bytes(2, byteorder='big', signed=True)
+        return self.build_packet(SERVICE_ID_APP_MGMT, PARAM_ID_WRITE_REMOTE_SPEED,
+                                 payload)
 
     def build_write_drive_profile_params(self, assist_level, max_torque, max_speed,
                                           p_factor, speed_bias, speed_factor,
