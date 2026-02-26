@@ -93,12 +93,15 @@ static void enterConnecting() {
     sysState = STATE_CONNECTING;
     ledSetStatus(LED_BLINK_SLOW);
     ledSetBle(false);
+    buzzerPlay(BUZZ_CONNECTING);
     Serial.println("[State] -> CONNECTING");
     if (debugFlags & DBG_STATE) {
         Serial.println("[State] Initiating BLE connection sequence...");
     }
     // Ensure clean state: disconnect any existing connections
     // This clears stale BLE buffers that may contain old encrypted data
+    // On first boot/power-on, this safely does nothing (no active connections)
+    // On reconnect or after E-Stop reset, this clears old connection state
     bleDisconnect();
     bleConnect();
 }
