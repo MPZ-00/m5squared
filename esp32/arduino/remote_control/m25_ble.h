@@ -498,16 +498,33 @@ static void _notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size
                              w.name, length);
             }
             
-            if (debugFlags & 0x08) {  // DBG_BLE
-                Serial.printf("[BLE] %s wheel notification: %zu bytes raw\n", w.name, length);
+            // Always show raw data for debugging decryption issues
+            Serial.print("[BLE] Raw data: ");
+            for (size_t i = 0; i < length && i < 48; i++) {
+                Serial.printf("%02X ", pData[i]);
             }
+            if (length > 48) Serial.print("...");
+            Serial.println();
             
             // Remove byte stuffing
             uint8_t unstuffed[128];
             size_t unstuffedLen = _removeDelimiters(pData, length, unstuffed, sizeof(unstuffed));
             
-            if (debugFlags & 0x08) {
-                Serial.printf("[BLE] After byte unstuffing: %zu bytes\n", unstuffedLen);
+            Serial.printf("[BLE] After unstuffing: %zu bytes\n", unstuffedLen);
+            if (unstuffedLen != length) {
+                Serial.print("  Unstuffed: ");
+                for (size_t i = 0; i < unstuffedLen && i < 48; i++) {
+                    Serial.printf("%02X ", unstuffed[i]);
+                }
+                if (unstuffedLen > 48) Serial.print("...");
+                Serial.println();
+            }
+            
+            // Check minimum frame size before attempting decrypt
+            if (unstuffedLen < M25_HEADER_SIZE + 16 + 16 + M25_CRC_SIZE) {
+                Serial.printf("[BLE] %s wheel: Frame too short (%zu bytes, need >= 37)\n", 
+                             w.name, unstuffedLen);
+                break;
             }
             
             // Decrypt frame
@@ -518,13 +535,6 @@ static void _notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size
                 _parseSppPacket(sppPacket, sppLen, w.name);
             } else {
                 Serial.printf("[BLE] %s wheel: Decryption failed\n", w.name);
-                if (debugFlags & 0x08) {
-                    Serial.print("  Raw data: ");
-                    for (size_t i = 0; i < length && i < 32; i++) {
-                        Serial.printf("%02X ", pData[i]);
-                    }
-                    Serial.println();
-                }
             }
             
             break;
