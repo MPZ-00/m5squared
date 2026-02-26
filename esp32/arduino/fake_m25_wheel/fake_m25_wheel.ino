@@ -124,6 +124,7 @@ uint16_t stalePacketCount = 0;  // Count of stale packets discarded after connec
 // Longer period handles remote power-cycle scenarios where old encrypted
 // packets may still be in BLE characteristic buffers
 #define CONNECTION_GRACE_PERIOD_MS 3000  // Extended to 3 seconds for safety
+#define STALE_DATA_TIMEOUT_MS 15000      // If still getting bad data after 15s, give up
 
 // Debug flags (bitfield)
 #define DBG_PROTOCOL    0x01  // Protocol parsing details
@@ -274,6 +275,19 @@ void handleCommand(uint8_t* data, size_t len) {
         if (!firstValidPacketReceived) {
             stalePacketCount++;
             unsigned long elapsed = millis() - connectionTime;
+            
+            // Timeout: if we've been getting bad data for too long, give up
+            if (elapsed > STALE_DATA_TIMEOUT_MS) {
+                Serial.printf("ERROR: Timeout - received %d invalid packets over %ld seconds\n", stalePacketCount, elapsed/1000);
+                Serial.println("ERROR: Remote appears to be sending corrupt data continuously");
+                Serial.println("ERROR: Disconnecting to force reconnection...");
+                // Force disconnect to trigger reconnection
+                if (pServer) {
+                    pServer->disconnect(pServer->getConnId());
+                }
+                return;
+            }
+            
             // Only log every 10th packet to reduce spam
             if (stalePacketCount % 10 == 1) {
                 if (elapsed < CONNECTION_GRACE_PERIOD_MS) {
@@ -312,6 +326,19 @@ void handleCommand(uint8_t* data, size_t len) {
         if (!firstValidPacketReceived) {
             stalePacketCount++;
             unsigned long elapsed = millis() - connectionTime;
+            
+            // Timeout: if we've been getting bad data for too long, give up
+            if (elapsed > STALE_DATA_TIMEOUT_MS) {
+                Serial.printf("ERROR: Timeout - received %d invalid packets over %ld seconds\n", stalePacketCount, elapsed/1000);
+                Serial.println("ERROR: Remote appears to be sending corrupt data continuously");
+                Serial.println("ERROR: Disconnecting to force reconnection...");
+                // Force disconnect to trigger reconnection
+                if (pServer) {
+                    pServer->disconnect(pServer->getConnId());
+                }
+                return;
+            }
+            
             // Only log every 10th packet to reduce spam
             if (stalePacketCount % 10 == 1) {
                 if (elapsed < CONNECTION_GRACE_PERIOD_MS) {

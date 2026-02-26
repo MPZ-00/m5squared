@@ -214,6 +214,20 @@ static bool _m25Encrypt(const uint8_t* key, const uint8_t* spp, uint8_t sppLen,
     // 2. Random IV
     uint8_t iv[16];
     esp_fill_random(iv, sizeof(iv));
+    
+    // Verify RNG is working (all zeros would indicate uninitialized RNG)
+    bool allZeros = true;
+    for (int i = 0; i < 16; i++) {
+        if (iv[i] != 0) {
+            allZeros = false;
+            break;
+        }
+    }
+    if (allZeros) {
+        Serial.println("[BLE-ENC] WARNING: RNG returned all zeros, retrying...");
+        delay(50);
+        esp_fill_random(iv, sizeof(iv));
+    }
 
     // 3. Encrypt IV with AES-128-ECB  (iv_encrypted = AES_ECB(key).encrypt(iv))
     uint8_t ivEnc[16];
@@ -347,6 +361,27 @@ inline void bleInit(const char* deviceName = "M25-Remote") {
 
     BLEDevice::init(deviceName);
     Serial.println("[BLE] Device initialized");
+    
+    // Ensure hardware RNG is seeded after BLE init
+    // (esp_fill_random needs BLE radio active for entropy)
+    delay(100);
+    
+    // Test RNG is working by generating test values
+    uint32_t testRandom[4];
+    esp_fill_random(testRandom, sizeof(testRandom));
+    bool rngWorking = false;
+    for (int i = 0; i < 4; i++) {
+        if (testRandom[i] != 0 && testRandom[i] != 0xFFFFFFFF) {
+            rngWorking = true;
+            break;
+        }
+    }
+    if (!rngWorking) {
+        Serial.println("[BLE] WARNING: RNG may not be seeded, waiting longer...");
+        delay(500);
+    } else {
+        Serial.println("[BLE] RNG verified");
+    }
 
     for (int i = 0; i < WHEEL_COUNT; i++) {
         _callbacks[i].wheelIdx = (uint8_t)i;
@@ -393,6 +428,9 @@ static bool _connectWheel(int idx) {
     }
 
     w.connected = true;
+
+    // Small delay to ensure BLE GATT is fully established
+    delay(50);
 
     // M25 protocol init sequence (m25_parking.py connect())
     // Step 0: WRITE_SYSTEM_MODE = 0x01 (initialize communication)
