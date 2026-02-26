@@ -76,6 +76,7 @@ void sendResponse();
 void handleButton();
 bool cryptPacket(uint8_t* data, size_t len, uint8_t* output, bool encrypt);
 void updateSpeedIndicators();
+size_t addDelimiters(const uint8_t* in, size_t inLen, uint8_t* out);
 
 // Server callbacks
 class MyServerCallbacks: public BLEServerCallbacks {
@@ -433,38 +434,151 @@ void handleCommand(uint8_t* data, size_t len) {
 void sendResponse() {
     if (!deviceConnected) return;
     
-    // Build simple SPP ACK packet (6 bytes minimum)
-    uint8_t spp[16] = {
-        0x23,              // Protocol ID (matching received)
-        0x01,              // Telegram ID
-        0x10,              // Source: Wheel
-        0x01,              // Dest: Remote
-        0x01,              // Service: APP_MGMT
-        0xFF,              // Param: ACK
+    // Step 1: Build SPP ACK packet (9 bytes)
+    uint8_t spp[9] = {
+        0x23,                    // Protocol ID (matching received)
+        0x01,                    // Telegram ID
+        0x10,                    // Source: Wheel
+        0x01,                    // Dest: Remote
+        0x01,                    // Service: APP_MGMT
+        0xFF,                    // Param: ACK
         wheel.batteryLevel,      // Battery level
         wheel.assistLevel,       // Assist level
-        wheel.driveProfile,      // Drive profile
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00  // Padding
+        wheel.driveProfile       // Drive profile
     };
-    
-    // Encrypt using same method as incoming packets (but for now use simple ECB for testing)
-    // TODO: Implement full M25 encryption (IV + CBC) for proper responses
-    uint8_t encrypted[16];
-    if (!cryptPacket(spp, 16, encrypted, true)) {
-        Serial.println("[ACK] Encryption failed, cannot send response");
-        return;
-    }
+    size_t sppLen = 9;
     
     if (debugFlags & DBG_PROTOCOL) {
-        Serial.print("[ACK] Sending response: ");
-        for (int i = 0; i < 16; i++) {
-            Serial.printf("%02X ", encrypted[i]);
+        Serial.print("[ACK] SPP packet: ");
+        for (size_t i = 0; i < sppLen; i++) {
+            Serial.printf("%02X ", spp[i]);
         }
         Serial.println();
     }
     
-    pTxCharacteristic->setValue(encrypted, 16);
+    // Step 2: Apply PKCS7 padding to make it 16 bytes
+    uint8_t paddedSpp[16];
+    memcpy(paddedSpp, spp, sppLen);
+    uint8_t padLen = 16 - sppLen;
+    for (size_t i = sppLen; i < 16; i++) {
+        paddedSpp[i] = padLen;
+    }
+    
+    if (debugFlags & DBG_CRYPTO) {
+        Serial.printf("[ACK] After PKCS7 padding (%d bytes): ", padLen);
+        for (int i = 0; i < 16; i++) {
+            Serial.printf("%02X ", paddedSpp[i]);
+        }
+        Serial.println();
+    }
+    
+    // Step 3: Generate random IV
+    uint8_t iv[16];
+    for (int i = 0; i < 16; i++) {
+        iv[i] = random(0, 256);
+    }
+    
+    if (debugFlags & DBG_CRYPTO) {
+        Serial.print("[ACK] Generated IV: ");
+        for (int i = 0; i < 16; i++) {
+            Serial.printf("%02X ", iv[i]);
+        }
+        Serial.println();
+    }
+    
+    // Step 4: Encrypt IV using ECB
+    uint8_t ivEncrypted[16];
+    mbedtls_aes_context aesCtx;
+    mbedtls_aes_init(&aesCtx);
+    mbedtls_aes_setkey_enc(&aesCtx, encryptionKey, 128);
+    
+    if (mbedtls_aes_crypt_ecb(&aesCtx, MBEDTLS_AES_ENCRYPT, iv, ivEncrypted) != 0) {
+        Serial.println("[ACK] ERROR: IV encryption failed");
+        mbedtls_aes_free(&aesCtx);
+        return;
+    }
+    
+    if (debugFlags & DBG_CRYPTO) {
+        Serial.print("[ACK] Encrypted IV: ");
+        for (int i = 0; i < 16; i++) {
+            Serial.printf("%02X ", ivEncrypted[i]);
+        }
+        Serial.println();
+    }
+    
+    // Step 5: Encrypt padded SPP data using CBC
+    uint8_t encryptedData[16];
+    uint8_t ivCopy[16];
+    memcpy(ivCopy, iv, 16);  // CBC modifies IV in place
+    
+    if (mbedtls_aes_crypt_cbc(&aesCtx, MBEDTLS_AES_ENCRYPT, 16, ivCopy, paddedSpp, encryptedData) != 0) {
+        Serial.println("[ACK] ERROR: CBC encryption failed");
+        mbedtls_aes_free(&aesCtx);
+        return;
+    }
+    mbedtls_aes_free(&aesCtx);
+    
+    if (debugFlags & DBG_CRYPTO) {
+        Serial.print("[ACK] Encrypted data: ");
+        for (int i = 0; i < 16; i++) {
+            Serial.printf("%02X ", encryptedData[i]);
+        }
+        Serial.println();
+    }
+    
+    // Step 6: Build M25 frame: [header][encrypted_IV][encrypted_data]
+    size_t payloadLen = 32;  // 16 (IV) + 16 (data)
+    size_t frameLen = M25_HEADER_SIZE + payloadLen;  // Without CRC
+    uint8_t frame[64];
+    
+    // Header
+    frame[0] = M25_HEADER_MARKER;  // 0xEF
+    frame[1] = (frameLen >> 8) & 0xFF;  // Length high byte
+    frame[2] = frameLen & 0xFF;         // Length low byte
+    
+    // Encrypted payload
+    memcpy(frame + M25_HEADER_SIZE, ivEncrypted, 16);
+    memcpy(frame + M25_HEADER_SIZE + 16, encryptedData, 16);
+    
+    // Step 7: Calculate CRC16 over the frame
+    uint16_t crc = calculateCRC16(frame, frameLen);
+    
+    if (debugFlags & DBG_CRC) {
+        Serial.printf("[ACK] Calculated CRC: 0x%04X\n", crc);
+    }
+    
+    // Step 8: Append CRC
+    frame[frameLen] = (crc >> 8) & 0xFF;  // CRC high byte
+    frame[frameLen + 1] = crc & 0xFF;     // CRC low byte
+    frameLen += M25_CRC_SIZE;
+    
+    if (debugFlags & DBG_PROTOCOL) {
+        Serial.printf("[ACK] Frame before stuffing (%d bytes): ", frameLen);
+        for (size_t i = 0; i < frameLen; i++) {
+            Serial.printf("%02X ", frame[i]);
+        }
+        Serial.println();
+    }
+    
+    // Step 9: Apply byte stuffing
+    uint8_t stuffed[128];
+    size_t stuffedLen = addDelimiters(frame, frameLen, stuffed);
+    
+    if (debugFlags & DBG_PROTOCOL) {
+        Serial.printf("[ACK] Frame after stuffing (%d bytes): ", stuffedLen);
+        for (size_t i = 0; i < stuffedLen; i++) {
+            Serial.printf("%02X ", stuffed[i]);
+        }
+        Serial.println();
+    }
+    
+    // Step 10: Send via BLE
+    pTxCharacteristic->setValue(stuffed, stuffedLen);
     pTxCharacteristic->notify();
+    
+    if (debugFlags & DBG_PROTOCOL) {
+        Serial.printf("[ACK] Response sent (%d bytes)\n", stuffedLen);
+    }
 }
 
 void setup() {
@@ -661,6 +775,25 @@ bool cryptPacket(uint8_t* data, size_t len, uint8_t* output, bool encrypt) {
     
     mbedtls_aes_free(&aes);
     return true;
+}
+
+/**
+ * Add byte stuffing (matching add_delimiters in m25_protocol.py)
+ * First byte kept as-is; every 0xEF after first position is doubled.
+ */
+size_t addDelimiters(const uint8_t* in, size_t inLen, uint8_t* out) {
+    if (inLen == 0) return 0;
+    size_t pos = 0;
+    out[pos++] = in[0];  // First byte (0xEF header) always kept as-is
+    
+    for (size_t i = 1; i < inLen; i++) {
+        out[pos++] = in[i];
+        // Double any 0xEF bytes after the first position
+        if (in[i] == M25_HEADER_MARKER) {
+            out[pos++] = M25_HEADER_MARKER;
+        }
+    }
+    return pos;
 }
 
 void updateSpeedIndicators() {
