@@ -73,7 +73,6 @@ static void printHelp() {
     Serial.println("rotate [n]        - Simulate n wheel rotations (default=1)");
     Serial.println("reset             - Reset wheel rotation counter");
     Serial.println("debug [flag]      - Show/toggle debug flags (use 'debug' to list)");
-    Serial.println("debug [flag]      - Show/toggle debug flags (use 'debug' to list)");
     Serial.println("audio [on/off]    - Toggle audio feedback (buzzer)");
     Serial.println("visual [on/off]   - Toggle visual feedback (Blue LED)");
     Serial.println("beep [count]      - Play beeps (1-10)");
@@ -86,43 +85,9 @@ static void printHelp() {
 
 /**
  * Print debug flags with status
- * Print debug flags with status
  */
 static void printDebugFlags() {
-static void printDebugFlags() {
     Serial.println("\n=== Debug Flags ===");
-    Serial.printf("Current: 0x%02X", debugFlags);
-    if (debugFlags == 0) {
-        Serial.println("  (all disabled)");
-    } else {
-        Serial.print("  (");
-        bool first = true;
-        for (uint8_t i = 0; i < _debugFlagCount; i++) {
-            if (debugFlags & _debugFlagTable[i].mask) {
-                if (!first) Serial.print(", ");
-                Serial.print(_debugFlagTable[i].name);
-                first = false;
-            }
-        }
-        Serial.println(")");
-    }
-    Serial.println();
-    Serial.println("Flag       Status  Description");
-    Serial.println("---------- ------- ----------------------------------");
-    
-    for (uint8_t i = 0; i < _debugFlagCount; i++) {
-        bool enabled = (debugFlags & _debugFlagTable[i].mask) != 0;
-        Serial.printf("%-10s [%s]  %s\n",
-            _debugFlagTable[i].name,
-            enabled ? "ON " : "off",
-            _debugFlagTable[i].description);
-    }
-    
-    Serial.println("\nUsage:");
-    Serial.println("  debug              Show this list");
-    Serial.println("  debug <flag>       Toggle specific flag");
-    Serial.println("  debug all          Enable all flags");
-    Serial.println("  debug none         Disable all flags");
     Serial.printf("Current: 0x%02X", debugFlags);
     if (debugFlags == 0) {
         Serial.println("  (all disabled)");
