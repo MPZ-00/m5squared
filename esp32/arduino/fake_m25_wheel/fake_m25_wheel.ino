@@ -458,9 +458,16 @@ void handleCommand(uint8_t* data, size_t len) {
         
         // Process commands and update state (ALWAYS, regardless of debug flags)
         if (serviceId == 0x01 && sppLen > 6) {  // APP_MGMT service
-            if (paramId == 0x20) {  // DRIVE_MODE
+            if (paramId == 0x10) {  // SYSTEM_MODE
+                // Send ACK for SYSTEM_MODE command
+                delay(10);
+                sendResponse();
+            } else if (paramId == 0x20) {  // DRIVE_MODE
                 uint8_t mode = decryptedData[6];
                 hillHold = (mode & 0x01) != 0;
+                // Send ACK for DRIVE_MODE command
+                delay(10);
+                sendResponse();
             } else if (paramId == 0x30 && sppLen >= 8) {  // REMOTE_SPEED
                 int16_t speed = ((int16_t)decryptedData[6] << 8) | decryptedData[7];
                 // Update current speed and check for direction change
@@ -515,32 +522,40 @@ void handleCommand(uint8_t* data, size_t len) {
             }
         }
     }
-    
-    // Note: Response sending disabled for now - real wheel doesn't respond to all commands
-    // delay(50);
-    // sendResponse();
 }
 
 void sendResponse() {
     if (!deviceConnected) return;
     
-    // Build unencrypted response (16 bytes)
-    uint8_t plainResponse[16] = {
-        0xAA, 0xBB, 0xCC, 0xDD, 
-        0x00, 0x00, 0x00, 0x00,
-        batteryLevel, assistLevel, driveProfile, 0x00,
-        0x11, 0x22, 0x33, 0x44
+    // Build simple SPP ACK packet (6 bytes minimum)
+    uint8_t spp[16] = {
+        0x23,              // Protocol ID (matching received)
+        0x01,              // Telegram ID
+        0x10,              // Source: Wheel
+        0x01,              // Dest: Remote
+        0x01,              // Service: APP_MGMT
+        0xFF,              // Param: ACK
+        batteryLevel,      // Battery level
+        assistLevel,       // Assist level
+        driveProfile,      // Drive profile
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00  // Padding
     };
     
-    // Encrypt response
+    // Encrypt using same method as incoming packets (but for now use simple ECB for testing)
+    // TODO: Implement full M25 encryption (IV + CBC) for proper responses
     uint8_t encrypted[16];
-    cryptPacket(plainResponse, 16, encrypted, true);
-    
-    Serial.print("Sending encrypted response: ");
-    for (int i = 0; i < 16; i++) {
-        Serial.printf("%02X ", encrypted[i]);
+    if (!cryptPacket(spp, 16, encrypted, true)) {
+        Serial.println("[ACK] Encryption failed, cannot send response");
+        return;
     }
-    Serial.println();
+    
+    if (debugFlags & DBG_PROTOCOL) {
+        Serial.print("[ACK] Sending response: ");
+        for (int i = 0; i < 16; i++) {
+            Serial.printf("%02X ", encrypted[i]);
+        }
+        Serial.println();
+    }
     
     pTxCharacteristic->setValue(encrypted, 16);
     pTxCharacteristic->notify();

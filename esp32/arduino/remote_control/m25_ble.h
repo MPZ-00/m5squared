@@ -152,7 +152,9 @@ struct WheelConnState_t {
     uint8_t                      telegramId;         // SPP sequence counter
     uint8_t                      driveModeBits;      // current DRIVE_MODE byte
     BLEClient*                   client;
-    BLERemoteCharacteristic*     rxChar;
+    BLERemoteCharacteristic*     rxChar;             // For writing commands to wheel
+    BLERemoteCharacteristic*     txChar;             // For receiving responses from wheel
+    bool                         receivedFirstAck;   // Track if we got a response (encryption validated)
     uint32_t                     lastConnectAttemptMs;
     uint8_t                      consecutiveFails;   // resets on success; auto-reconnect stops at BLE_MAX_RECONNECT_FAILS
 };
@@ -329,6 +331,28 @@ static bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
 }
 
 // ---------------------------------------------------------------------------
+// BLE notification callback - receives responses from wheels
+// ---------------------------------------------------------------------------
+static void _notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size_t length, bool isNotify) {
+    // Find which wheel this notification is for
+    for (int i = 0; i < WHEEL_COUNT; i++) {
+        if (_wheels[i].txChar == pChar) {
+            WheelConnState_t &w = _wheels[i];
+            if (!w.receivedFirstAck) {
+                w.receivedFirstAck = true;
+                Serial.printf("[BLE] %s wheel: First response received (%zu bytes) - encryption validated\n", 
+                             w.name, length);
+            }
+            // For now just log that we got something - could decrypt and parse later
+            if (debugFlags & 0x08) {  // DBG_BLE
+                Serial.printf("[BLE] %s wheel notification: %zu bytes\n", w.name, length);
+            }
+            break;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // BLE disconnect callback
 // ---------------------------------------------------------------------------
 class M25DisconnectCallback : public BLEClientCallbacks {
@@ -426,6 +450,14 @@ static bool _connectWheel(int idx) {
         w.consecutiveFails++;
         return false;
     }
+    
+    // Get TX characteristic for receiving notifications (optional - wheel may not send)
+    w.txChar = svc->getCharacteristic(BLEUUID(M25_CHAR_TX_UUID));
+    if (w.txChar && w.txChar->canNotify()) {
+        w.txChar->registerForNotify(_notifyCallback);
+        Serial.printf("[BLE] %s wheel: Notifications enabled\n", w.name);
+    }
+    w.receivedFirstAck = false;  // Reset ACK flag
 
     w.connected = true;
 
