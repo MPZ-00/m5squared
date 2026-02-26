@@ -398,13 +398,30 @@ static bool _connectWheel(int idx) {
     // Step 0: WRITE_SYSTEM_MODE = 0x01 (initialize communication)
     uint8_t sysMode = M25_SYSTEM_MODE_CONNECT;
     _sendCommand(idx, M25_SRV_APP_MGMT, M25_PARAM_WRITE_SYSTEM_MODE, &sysMode, 1);
-    delay(300);   // wait for ACK per m25_parking.py (blocking, only at connect)
+    
+    // Wait for ACK per m25_parking.py (non-blocking loop to allow buzzer/LED updates)
+    uint32_t waitStart = millis();
+    while (millis() - waitStart < 300) {
+        extern void ledTick();
+        extern void buzzerTick();
+        ledTick();
+        buzzerTick();
+        delay(1);
+    }
 
     // Step 1: WRITE_DRIVE_MODE = 0x04 (enable remote bit)
     uint8_t driveMode = M25_DRIVE_MODE_REMOTE;
     _sendCommand(idx, M25_SRV_APP_MGMT, M25_PARAM_WRITE_DRIVE_MODE, &driveMode, 1);
     w.driveModeBits = M25_DRIVE_MODE_REMOTE;
-    delay(300);
+    
+    waitStart = millis();
+    while (millis() - waitStart < 300) {
+        extern void ledTick();
+        extern void buzzerTick();
+        ledTick();
+        buzzerTick();
+        delay(1);
+    }
 
     w.protocolReady = true;
     w.consecutiveFails = 0;
@@ -436,7 +453,17 @@ inline void bleDisconnect() {
             // Step 3: WRITE_REMOTE_SPEED = 0  (stop)
             uint8_t spd[2] = { 0, 0 };
             _sendCommand(i, M25_SRV_APP_MGMT, M25_PARAM_WRITE_REMOTE_SPEED, spd, 2);
-            delay(50);
+            
+            // Wait briefly for command to send (non-blocking loop)
+            uint32_t waitStart = millis();
+            while (millis() - waitStart < 50) {
+                extern void ledTick();
+                extern void buzzerTick();
+                ledTick();
+                buzzerTick();
+                delay(1);
+            }
+            
             // Step 4: WRITE_DRIVE_MODE = 0x00  (normal / release remote bit)
             uint8_t norm = M25_DRIVE_MODE_NORMAL;
             _sendCommand(i, M25_SRV_APP_MGMT, M25_PARAM_WRITE_DRIVE_MODE, &norm, 1);
