@@ -25,6 +25,7 @@
 #include "motor_control.h"
 #include "m25_ble.h"
 #include "serial_commands.h"
+#include "buzzer.h"
 
 // SystemState enum is defined in device_config.h
 static SystemState sysState = STATE_BOOT;
@@ -92,6 +93,7 @@ static void enterConnecting() {
     sysState = STATE_CONNECTING;
     ledSetStatus(LED_BLINK_SLOW);
     ledSetBle(false);
+    buzzerPlay(BUZZ_CONNECTING);
     Serial.println("[State] -> CONNECTING");
     if (debugFlags & DBG_STATE) {
         Serial.println("[State] Initiating BLE connection sequence...");
@@ -103,6 +105,7 @@ static void enterReady() {
     sysState = STATE_READY;
     ledSetStatus(LED_OFF);
     ledSetBle(true);
+    buzzerPlay(BUZZ_READY);
     lastActiveMs      = millis();
     watchdogWarnShown = false;
     bleSendStop();   // one explicit stop on transition; resets the keepalive timer
@@ -115,6 +118,7 @@ static void enterReady() {
 
 static void enterOperating() {
     sysState = STATE_OPERATING;
+    buzzerPlay(BUZZ_OPERATING);
     lastActiveMs      = millis();
     watchdogWarnShown = false;
     Serial.println("[State] -> OPERATING");
@@ -129,6 +133,7 @@ static void enterError(const char* reason) {
     jsIdleSinceMs   = 0;
     _errorStopsSent = 0;   // reset retry counter
     ledSetStatus(LED_BLINK_FAST);
+    buzzerPlay(BUZZ_ERROR);
     ledSetBle(false);
     bleSendStop();
     _errorStopsSent++;
@@ -144,6 +149,7 @@ static void enterOff() {
     jsIdleSinceMs   = 0;
     bleSendStop();
     bleDisconnect();
+    buzzerPlay(BUZZ_POWER_OFF);
     
     // Turn off all LEDs
     ledSetStatus(LED_OFF);
@@ -155,6 +161,13 @@ static void enterOff() {
     
     Serial.println("[State] -> OFF  (entering deep sleep)");
     Serial.println("[Power] Press power button to wake up");
+    Serial.flush();  // Wait for serial output to complete
+    
+    // Wait for buzzer pattern to complete before sleep
+    while (buzzerIsActive()) {
+        buzzerTick();
+        delay(10);
+    };
     Serial.flush();  // Wait for serial output to complete
     
     delay(100);  // Give BLE and serial time to finish
@@ -274,6 +287,9 @@ void setup() {
         case ESP_SLEEP_WAKEUP_EXT0:
             Serial.println("[Boot] Wake-up from deep sleep via power button");
             break;
+    
+    buzzerInit();
+    buzzerPlay(BUZZ_POWER_ON);
         case ESP_SLEEP_WAKEUP_UNDEFINED:
         default:
             Serial.println("[Boot] Cold boot or reset");
@@ -424,6 +440,7 @@ void loop() {
             if (hillHoldPressed) {
                 hillHoldOn = !hillHoldOn;
                 ledSetHillHold(hillHoldOn);
+                buzzerPlay(BUZZ_BUTTON);
                 bleSendHillHold(hillHoldOn);
                 Serial.printf("[HillHold] %s\n", hillHoldOn ? "ON" : "OFF");
             }
@@ -432,6 +449,7 @@ void loop() {
             if (assistPressed) {
                 assistLevel = (assistLevel + 1) % ASSIST_COUNT;
                 ledSetAssistLevel(assistLevel);
+                buzzerPlay(BUZZ_CONFIRM);
                 bleSendAssistLevel(assistLevel);
                 Serial.printf("[Assist] -> %s  (Vmax fwd %d %%)\n",
                               assistConfigs[assistLevel].name,
@@ -474,11 +492,13 @@ void loop() {
         case STATE_OPERATING: {
             // Hill hold NOT allowed while wheels are moving
             if (hillHoldPressed) {
+                buzzerPlay(BUZZ_WARNING);
                 Serial.println("[HillHold] Ignored - motors active");
             }
 
             // Assist level NOT allowed while wheels are moving
             if (assistPressed) {
+                buzzerPlay(BUZZ_WARNING);
                 Serial.println("[Assist] Ignored - motors active, stop first");
             }
 
@@ -515,6 +535,7 @@ void loop() {
                 break;
             } else if (idle >= WATCHDOG_WARN_MS && !watchdogWarnShown) {
                 watchdogWarnShown = true;
+                buzzerPlay(BUZZ_WARNING);
                 Serial.println("[Watchdog] WARNING: joystick inactive > 3 s");
                 ledSetStatus(LED_BLINK_FAST);
             } else if (idle < WATCHDOG_WARN_MS) {
@@ -585,16 +606,23 @@ void loop() {
         batteryPct    = readBatteryPct();
         ledSetBattery(batteryPct);
         Serial.printf("[Battery] %d %%\n", batteryPct);
-
+        
         // Critical battery: force safe shutdown
         if (batteryPct <= BATT_AUTO_OFF_PCT && sysState != STATE_ERROR && sysState != STATE_OFF) {
             Serial.println("[Battery] CRITICAL - forcing disconnect");
             bleSendStop();
             bleDisconnect();
+            buzzerPlay(BUZZ_ERROR);
             enterError("Battery critical - auto shutdown");
         }
     }
 #endif
+
+    // --- LED tick (handles blinking) ---
+    ledTick();
+    
+    // --- Buzzer tick (handles pattern playback) ---
+    buzzerTick();
 
     // --- LED tick (handles blinking) ---
     ledTick();

@@ -107,6 +107,13 @@
 #define LED_ASSIST_PIN     19   // Green  - assist level indicator
 #define LED_BATTERY_PIN    27   // Red    - battery charge level indicator
 
+// ---------------------------------------------------------------------------
+// Active Buzzer Output (optional audio feedback)
+// ---------------------------------------------------------------------------
+// Recommended pins: 23, 22, 21, 5
+// Comment out to disable buzzer support
+#define BUZZER_PIN         23   // Active buzzer for audio feedback
+
 // LEDC channel assignments (0-7 are available in single-core mode)
 #define LEDC_CH_STATUS     0
 #define LEDC_CH_BATTERY    1
