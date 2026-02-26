@@ -150,9 +150,16 @@ class M25BluetoothBLE:
                 # Discover TX/RX characteristics
                 await self._discover_characteristics()
                 
-                # Initialize notification queue if not already done
+                # Initialize notification queue (or clear if reconnecting)
                 if self._notification_queue is None:
                     self._notification_queue = asyncio.Queue()
+                else:
+                    # Clear any stale data from previous connection
+                    while not self._notification_queue.empty():
+                        try:
+                            self._notification_queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
                 
                 if self.debug:
                     print(f"[{self.name}] Ready (encryption={'enabled' if self.encryptor else 'disabled'})")
@@ -179,6 +186,14 @@ class M25BluetoothBLE:
             finally:
                 self.connected = False
                 self.client = None
+                
+                # Clear notification queue to prevent stale data on reconnect
+                if self._notification_queue is not None:
+                    while not self._notification_queue.empty():
+                        try:
+                            self._notification_queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
                 
             if self.debug:
                 print(f"[{self.name}] Disconnected")

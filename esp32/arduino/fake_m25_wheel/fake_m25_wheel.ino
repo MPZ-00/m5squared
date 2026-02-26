@@ -116,6 +116,10 @@ BLECharacteristic* pRxCharacteristic = NULL;
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
 LEDState currentLEDState = LED_ADVERTISING;
+unsigned long connectionTime = 0;  // Time when client connected (for grace period)
+
+// Grace period after connection to ignore stale packets (milliseconds)
+#define CONNECTION_GRACE_PERIOD_MS 500
 
 // Debug flags (bitfield)
 #define DBG_PROTOCOL    0x01  // Protocol parsing details
@@ -166,11 +170,13 @@ void playBeep(uint8_t count);
 class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
         deviceConnected = true;
+        connectionTime = millis();  // Track connection time for grace period
         Serial.println("Client connected!");
     }
 
     void onDisconnect(BLEServer* pServer) {
         deviceConnected = false;
+        connectionTime = 0;
         Serial.println("Client disconnected!");
     }
 };
@@ -247,6 +253,14 @@ void handleCommand(uint8_t* data, size_t len) {
         Serial.printf("CRC: received=0x%04X, calculated=0x%04X\n", receivedCRC, calculatedCRC);
     }
     if (calculatedCRC != receivedCRC) {
+        // Check if we're in grace period after connection
+        bool inGracePeriod = (connectionTime > 0) && ((millis() - connectionTime) < CONNECTION_GRACE_PERIOD_MS);
+        if (inGracePeriod) {
+            if (debugFlags & DBG_PROTOCOL) {
+                Serial.println("INFO: CRC mismatch during grace period (likely stale data from previous session) - ignoring");
+            }
+            return;  // Silently discard during grace period
+        }
         Serial.println("WARNING: CRC mismatch");
         // Don't return - continue for testing purposes
     } else if (debugFlags & DBG_CRC) {
@@ -260,6 +274,14 @@ void handleCommand(uint8_t* data, size_t len) {
     }
     
     if (payloadLen < 16 || payloadLen % 16 != 0) {
+        // Check if we're in grace period after connection
+        bool inGracePeriod = (connectionTime > 0) && ((millis() - connectionTime) < CONNECTION_GRACE_PERIOD_MS);
+        if (inGracePeriod) {
+            if (debugFlags & DBG_PROTOCOL) {
+                Serial.println("INFO: Payload not AES-block aligned during grace period (likely stale data) - ignoring");
+            }
+            return;  // Silently discard during grace period
+        }
         Serial.println("ERROR: Payload not AES-block aligned");
         return;
     }

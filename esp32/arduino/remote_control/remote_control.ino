@@ -98,6 +98,9 @@ static void enterConnecting() {
     if (debugFlags & DBG_STATE) {
         Serial.println("[State] Initiating BLE connection sequence...");
     }
+    // Ensure clean state: disconnect any existing connections
+    // This clears stale BLE buffers that may contain old encrypted data
+    bleDisconnect();
     bleConnect();
 }
 
@@ -399,7 +402,8 @@ void loop() {
     if (estopPressed) {
         if (sysState == STATE_ERROR) {
             // Second press: reset from error
-            Serial.println("[E-Stop] Reset: reconnecting...");
+            Serial.println("[E-Stop] Reset: disconnecting and reconnecting...");
+            bleDisconnect();  // Clean up old connections and clear stale buffers
             enterConnecting();
         } else {
             enterError("E-stop pressed");
