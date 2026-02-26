@@ -117,11 +117,13 @@ bool deviceConnected = false;
 bool oldDeviceConnected = false;
 LEDState currentLEDState = LED_ADVERTISING;
 unsigned long connectionTime = 0;  // Time when client connected (for grace period)
+bool firstValidPacketReceived = false;  // Track if we've seen a valid packet after connection
+uint16_t stalePacketCount = 0;  // Count of stale packets discarded after connection
 
 // Grace period after connection to ignore stale packets (milliseconds)
 // Longer period handles remote power-cycle scenarios where old encrypted
 // packets may still be in BLE characteristic buffers
-#define CONNECTION_GRACE_PERIOD_MS 1000
+#define CONNECTION_GRACE_PERIOD_MS 3000  // Extended to 3 seconds for safety
 
 // Debug flags (bitfield)
 #define DBG_PROTOCOL    0x01  // Protocol parsing details
@@ -173,12 +175,21 @@ class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
         deviceConnected = true;
         connectionTime = millis();  // Track connection time for grace period
+        firstValidPacketReceived = false;  // Reset valid packet flag
+        stalePacketCount = 0;  // Reset stale packet counter
+        // Clear RX characteristic buffer to prevent stale data
+        if (pRxCharacteristic) {
+            pRxCharacteristic->setValue("");
+        }
         Serial.println("Client connected!");
+        Serial.println("INFO: Ignoring invalid packets until first valid packet received...");
     }
 
     void onDisconnect(BLEServer* pServer) {
         deviceConnected = false;
         connectionTime = 0;
+        firstValidPacketReceived = false;  // Reset on disconnect
+        stalePacketCount = 0;  // Reset counter
         // Clear RX characteristic buffer to prevent stale data on reconnect
         if (pRxCharacteristic) {
             pRxCharacteristic->setValue("");
@@ -259,17 +270,35 @@ void handleCommand(uint8_t* data, size_t len) {
         Serial.printf("CRC: received=0x%04X, calculated=0x%04X\n", receivedCRC, calculatedCRC);
     }
     if (calculatedCRC != receivedCRC) {
-        // Check if we're in grace period after connection
-        bool inGracePeriod = (connectionTime > 0) && ((millis() - connectionTime) < CONNECTION_GRACE_PERIOD_MS);
-        if (inGracePeriod) {
+        // Ignore all invalid packets until we see first valid one after connection
+        if (!firstValidPacketReceived) {
+            stalePacketCount++;
             unsigned long elapsed = millis() - connectionTime;
-            Serial.printf("INFO: CRC mismatch %ldms after connect (stale data from previous session) - ignoring\n", elapsed);
-            return;  // Silently discard during grace period
+            // Only log every 10th packet to reduce spam
+            if (stalePacketCount % 10 == 1) {
+                if (elapsed < CONNECTION_GRACE_PERIOD_MS) {
+                    Serial.printf("INFO: Discarding stale packets (CRC mismatch) - %d packets, %ldms after connect\n", stalePacketCount, elapsed);
+                } else {
+                    Serial.printf("INFO: Still draining stale buffer (CRC mismatch) - %d packets, %ldms after connect\n", stalePacketCount, elapsed);
+                }
+            }
+            return;  // Discard until first valid packet
         }
         Serial.println("WARNING: CRC mismatch");
         // Don't return - continue for testing purposes
     } else if (debugFlags & DBG_CRC) {
         Serial.println("CRC: VALID");
+    }
+    
+    // Mark that we've received our first valid packet after connection
+    if (!firstValidPacketReceived && calculatedCRC == receivedCRC) {
+        firstValidPacketReceived = true;
+        unsigned long elapsed = millis() - connectionTime;
+        if (stalePacketCount > 0) {
+            Serial.printf("INFO: First valid packet received after discarding %d stale packets (%ldms after connect) - connection stable\n", stalePacketCount, elapsed);
+        } else {
+            Serial.printf("INFO: First valid packet received %ldms after connect - connection stable\n", elapsed);
+        }
     }
     
     // Step 3: Extract encrypted payload (between header and CRC)
@@ -279,12 +308,19 @@ void handleCommand(uint8_t* data, size_t len) {
     }
     
     if (payloadLen < 16 || payloadLen % 16 != 0) {
-        // Check if we're in grace period after connection
-        bool inGracePeriod = (connectionTime > 0) && ((millis() - connectionTime) < CONNECTION_GRACE_PERIOD_MS);
-        if (inGracePeriod) {
+        // Ignore all invalid packets until we see first valid one after connection
+        if (!firstValidPacketReceived) {
+            stalePacketCount++;
             unsigned long elapsed = millis() - connectionTime;
-            Serial.printf("INFO: AES alignment error %ldms after connect (stale data) - ignoring\n", elapsed);
-            return;  // Silently discard during grace period
+            // Only log every 10th packet to reduce spam
+            if (stalePacketCount % 10 == 1) {
+                if (elapsed < CONNECTION_GRACE_PERIOD_MS) {
+                    Serial.printf("INFO: Discarding stale packets (AES alignment) - %d packets, %ldms after connect\n", stalePacketCount, elapsed);
+                } else {
+                    Serial.printf("INFO: Still draining stale buffer (AES alignment) - %d packets, %ldms after connect\n", stalePacketCount, elapsed);
+                }
+            }
+            return;  // Discard until first valid packet
         }
         Serial.println("ERROR: Payload not AES-block aligned");
         return;
