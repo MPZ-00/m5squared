@@ -32,9 +32,6 @@
 #include <esp_system.h>     // esp_fill_random()
 #include "device_config.h"
 
-// Forward declaration - defined in serial_commands.h
-extern uint8_t debugFlags;
-
 // ---------------------------------------------------------------------------
 // M25 SPP Service / Characteristic UUIDs (m25_bluetooth.py)
 // ---------------------------------------------------------------------------
@@ -858,7 +855,7 @@ inline void bleTick() {
         if (!w.connected) {
             if (now - w.lastConnectAttemptMs >= BLE_RECONNECT_DELAY_MS) {
                 w.lastConnectAttemptMs = now;
-                if (debugFlags & 0x08) {  // DBG_BLE
+                if (debugFlags & DBG_BLE) {  // DBG_BLE
                     Serial.printf("[BLE] Attempting reconnect to %s wheel... (attempt %u/%u)\n",
                                   w.name, (unsigned)(w.consecutiveFails + 1),
                                   (unsigned)BLE_MAX_RECONNECT_FAILS);

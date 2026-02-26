@@ -211,4 +211,18 @@ enum SystemState : uint8_t {
     STATE_OFF        = 5,
 };
 
+// ---------------------------------------------------------------------------
+// Debug output flags (check these before printing debug information)
+// Defined here for use throughout the codebase, actual variable in serial_commands.h
+// ---------------------------------------------------------------------------
+#define DBG_JS         0x01   // live joystick stream (~5 Hz)
+#define DBG_MOTOR      0x02   // motor command on every 20 Hz tick
+#define DBG_HEARTBEAT  0x04   // loop heartbeat every 5 seconds
+#define DBG_BLE        0x08   // BLE connection events and errors
+#define DBG_BUTTONS    0x10   // button press/release events
+#define DBG_STATE      0x20   // state transitions (already logged, adds detail)
+
+// Global debug flags variable (defined in serial_commands.h)
+extern uint8_t debugFlags;
+
 #endif // DEVICE_CONFIG_H

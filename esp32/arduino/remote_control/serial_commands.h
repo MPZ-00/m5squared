@@ -61,15 +61,8 @@
 // if WiFi status is needed in sysinfo.
 
 // ---------------------------------------------------------------------------
-// Debug output flags - check these in the main sketch / motor send path
+// Debug output flags - definitions in device_config.h
 // ---------------------------------------------------------------------------
-#define DBG_JS         0x01   // live joystick stream (~5 Hz)
-#define DBG_MOTOR      0x02   // motor command on every 20 Hz tick
-#define DBG_HEARTBEAT  0x04   // loop heartbeat every 5 seconds
-#define DBG_BLE        0x08   // BLE connection events and errors
-#define DBG_BUTTONS    0x10   // button press/release events
-#define DBG_STATE      0x20   // state transitions (already logged, adds detail)
-
 uint8_t debugFlags = 0;   // all off by default, accessible globally
 
 // Debug flag metadata for better UI
