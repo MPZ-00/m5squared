@@ -170,8 +170,7 @@ static void enterOff() {
     while (buzzerIsActive()) {
         buzzerTick();
         delay(10);
-    };
-    Serial.flush();  // Wait for serial output to complete
+    }
     
     delay(100);  // Give BLE and serial time to finish
     
@@ -254,6 +253,7 @@ static bool powerOnSafetyCheck() {
 #endif
 
         ledTick();
+        buzzerTick();
         delay(10);
     }
     return false; // unreachable
@@ -290,9 +290,6 @@ void setup() {
         case ESP_SLEEP_WAKEUP_EXT0:
             Serial.println("[Boot] Wake-up from deep sleep via power button");
             break;
-    
-    buzzerInit();
-    buzzerPlay(BUZZ_POWER_ON);
         case ESP_SLEEP_WAKEUP_UNDEFINED:
         default:
             Serial.println("[Boot] Cold boot or reset");
@@ -302,6 +299,9 @@ void setup() {
     // Peripheral init
     ledInit();
     ledStartupTest();
+    
+    buzzerInit();
+    buzzerPlay(BUZZ_POWER_ON);
 
     buttonsInit();
     joystickInit();
@@ -627,7 +627,4 @@ void loop() {
     
     // --- Buzzer tick (handles pattern playback) ---
     buzzerTick();
-
-    // --- LED tick (handles blinking) ---
-    ledTick();
 }
