@@ -331,6 +331,160 @@ static bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
 }
 
 // ---------------------------------------------------------------------------
+// Remove byte stuffing from received packet
+// ---------------------------------------------------------------------------
+static size_t _removeDelimiters(const uint8_t* in, size_t inLen, uint8_t* out, size_t outMax) {
+    if (inLen == 0) return 0;
+    
+    size_t pos = 0;
+    bool lastWasEF = false;
+    
+    for (size_t i = 0; i < inLen && pos < outMax; i++) {
+        if (in[i] == M25_HEADER_MARKER) {
+            if (lastWasEF) {
+                // This is the second 0xEF in a row, skip it
+                lastWasEF = false;
+            } else {
+                // First 0xEF
+                out[pos++] = in[i];
+                lastWasEF = true;
+            }
+        } else {
+            out[pos++] = in[i];
+            lastWasEF = false;
+        }
+    }
+    return pos;
+}
+
+// ---------------------------------------------------------------------------
+// Decrypt M25 BLE frame into plaintext SPP packet
+// Frame structure: [0xEF][len_hi][len_lo][iv_ecb(16)][aes_cbc(padded_spp)][crc_hi][crc_lo]
+// ---------------------------------------------------------------------------
+static bool _m25Decrypt(const uint8_t* key, const uint8_t* frame, size_t frameLen,
+                         uint8_t* sppOut, size_t* sppLen) {
+    // Verify frame has minimum size
+    if (frameLen < M25_HEADER_SIZE + 16 + 16 + M25_CRC_SIZE) {
+        return false;
+    }
+    
+    // Parse header
+    if (frame[0] != M25_HEADER_MARKER) return false;
+    uint16_t declaredLen = ((uint16_t)frame[1] << 8) | frame[2];
+    
+    // Verify CRC (over everything before the CRC bytes)
+    size_t crcPos = frameLen - M25_CRC_SIZE;
+    uint16_t expectedCrc = _m25Crc16(frame, crcPos);
+    uint16_t receivedCrc = ((uint16_t)frame[crcPos] << 8) | frame[crcPos + 1];
+    if (expectedCrc != receivedCrc) {
+        Serial.printf("[BLE-DEC] CRC mismatch: expected 0x%04X, got 0x%04X\n", 
+                     expectedCrc, receivedCrc);
+        return false;
+    }
+    
+    // Extract encrypted IV (16 bytes after header)
+    const uint8_t* ivEnc = frame + M25_HEADER_SIZE;
+    
+    // Calculate encrypted data length (payload - IV - CRC)
+    size_t encDataLen = frameLen - M25_HEADER_SIZE - 16 - M25_CRC_SIZE;
+    if (encDataLen == 0 || encDataLen % 16 != 0) return false;
+    const uint8_t* encData = ivEnc + 16;
+    
+    // Decrypt IV with AES-128-ECB
+    uint8_t iv[16];
+    {
+        mbedtls_aes_context ctx;
+        mbedtls_aes_init(&ctx);
+        mbedtls_aes_setkey_dec(&ctx, key, 128);
+        mbedtls_aes_crypt_ecb(&ctx, MBEDTLS_AES_DECRYPT, ivEnc, iv);
+        mbedtls_aes_free(&ctx);
+    }
+    
+    // Decrypt data with AES-128-CBC
+    uint8_t decrypted[64];
+    {
+        uint8_t ivCopy[16];
+        memcpy(ivCopy, iv, 16);
+        mbedtls_aes_context ctx;
+        mbedtls_aes_init(&ctx);
+        mbedtls_aes_setkey_dec(&ctx, key, 128);
+        mbedtls_aes_crypt_cbc(&ctx, MBEDTLS_AES_DECRYPT, encDataLen,
+                               ivCopy, encData, decrypted);
+        mbedtls_aes_free(&ctx);
+    }
+    
+    // Remove PKCS7 padding
+    uint8_t padLen = decrypted[encDataLen - 1];
+    if (padLen == 0 || padLen > 16 || padLen > encDataLen) {
+        Serial.printf("[BLE-DEC] Invalid PKCS7 padding: %d\n", padLen);
+        return false;
+    }
+    
+    // Verify padding bytes
+    for (size_t i = encDataLen - padLen; i < encDataLen; i++) {
+        if (decrypted[i] != padLen) {
+            Serial.printf("[BLE-DEC] PKCS7 padding verification failed\n");
+            return false;
+        }
+    }
+    
+    *sppLen = encDataLen - padLen;
+    memcpy(sppOut, decrypted, *sppLen);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Parse SPP packet structure
+// SPP format: [protocol_id][telegram_id][src_id][dest_id][service_id][param_id][payload...]
+// ---------------------------------------------------------------------------
+static void _parseSppPacket(const uint8_t* spp, size_t sppLen, const char* wheelName) {
+    if (sppLen < 6) {
+        Serial.printf("[BLE] %s wheel: SPP too short (%zu bytes)\n", wheelName, sppLen);
+        return;
+    }
+    
+    uint8_t protocolId = spp[0];
+    uint8_t telegramId = spp[1];
+    uint8_t srcId      = spp[2];
+    uint8_t destId     = spp[3];
+    uint8_t serviceId  = spp[4];
+    uint8_t paramId    = spp[5];
+    size_t payloadLen  = sppLen - 6;
+    
+    Serial.printf("[BLE] %s wheel response:\n", wheelName);
+    Serial.printf("  Protocol: 0x%02X, Telegram: 0x%02X\n", protocolId, telegramId);
+    Serial.printf("  Src: 0x%02X, Dest: 0x%02X\n", srcId, destId);
+    Serial.printf("  Service: 0x%02X, Param: 0x%02X\n", serviceId, paramId);
+    
+    if (payloadLen > 0) {
+        Serial.printf("  Payload (%zu bytes): ", payloadLen);
+        for (size_t i = 0; i < payloadLen && i < 16; i++) {
+            Serial.printf("%02X ", spp[6 + i]);
+        }
+        if (payloadLen > 16) Serial.print("...");
+        Serial.println();
+    }
+    
+    // Parse specific response types
+    if (serviceId == M25_SRV_APP_MGMT) {
+        if (paramId == M25_PARAM_WRITE_SYSTEM_MODE && payloadLen >= 1) {
+            Serial.printf("    System Mode ACK: 0x%02X\n", spp[6]);
+        } else if (paramId == M25_PARAM_WRITE_DRIVE_MODE && payloadLen >= 1) {
+            uint8_t mode = spp[6];
+            Serial.printf("    Drive Mode ACK: 0x%02X (", mode);
+            if (mode & M25_DRIVE_MODE_REMOTE) Serial.print("REMOTE ");
+            if (mode & M25_DRIVE_MODE_CRUISE) Serial.print("CRUISE ");
+            if (mode & M25_DRIVE_MODE_AUTO_HOLD) Serial.print("AUTO_HOLD ");
+            if (mode == 0) Serial.print("NORMAL");
+            Serial.println(")");
+        } else if (paramId == M25_PARAM_WRITE_REMOTE_SPEED && payloadLen >= 2) {
+            int16_t speed = ((int16_t)spp[6] << 8) | spp[7];
+            Serial.printf("    Speed ACK: %d raw\n", speed);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // BLE notification callback - receives responses from wheels
 // ---------------------------------------------------------------------------
 static void _notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size_t length, bool isNotify) {
@@ -343,10 +497,36 @@ static void _notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size
                 Serial.printf("[BLE] %s wheel: First response received (%zu bytes) - encryption validated\n", 
                              w.name, length);
             }
-            // For now just log that we got something - could decrypt and parse later
+            
             if (debugFlags & 0x08) {  // DBG_BLE
-                Serial.printf("[BLE] %s wheel notification: %zu bytes\n", w.name, length);
+                Serial.printf("[BLE] %s wheel notification: %zu bytes raw\n", w.name, length);
             }
+            
+            // Remove byte stuffing
+            uint8_t unstuffed[128];
+            size_t unstuffedLen = _removeDelimiters(pData, length, unstuffed, sizeof(unstuffed));
+            
+            if (debugFlags & 0x08) {
+                Serial.printf("[BLE] After byte unstuffing: %zu bytes\n", unstuffedLen);
+            }
+            
+            // Decrypt frame
+            uint8_t sppPacket[64];
+            size_t sppLen = 0;
+            if (_m25Decrypt(w.key, unstuffed, unstuffedLen, sppPacket, &sppLen)) {
+                // Parse SPP packet structure
+                _parseSppPacket(sppPacket, sppLen, w.name);
+            } else {
+                Serial.printf("[BLE] %s wheel: Decryption failed\n", w.name);
+                if (debugFlags & 0x08) {
+                    Serial.print("  Raw data: ");
+                    for (size_t i = 0; i < length && i < 32; i++) {
+                        Serial.printf("%02X ", pData[i]);
+                    }
+                    Serial.println();
+                }
+            }
+            
             break;
         }
     }
