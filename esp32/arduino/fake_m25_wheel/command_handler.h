@@ -23,6 +23,22 @@
 // Global debug flags
 static uint8_t debugFlags = DBG_COMMANDS;  // Default: only show decoded commands
 
+// Debug flag metadata for better UI
+struct DebugFlagInfo {
+    uint8_t     mask;
+    const char* name;
+    const char* description;
+};
+
+static const DebugFlagInfo _debugFlagTable[] = {
+    { DBG_PROTOCOL, "protocol", "Protocol parsing details" },
+    { DBG_CRYPTO,   "crypto",   "Encryption/decryption steps" },
+    { DBG_CRC,      "crc",      "CRC validation" },
+    { DBG_COMMANDS, "commands", "Command interpretation" },
+    { DBG_RAW_DATA, "raw",      "Raw hex dumps" },
+};
+static const uint8_t _debugFlagCount = sizeof(_debugFlagTable) / sizeof(_debugFlagTable[0]);
+
 // External references (set by main sketch)
 static BLEServer* g_pServer = NULL;
 static BLECharacteristic* g_pTxCharacteristic = NULL;
@@ -56,7 +72,8 @@ static void printHelp() {
     Serial.println("hillhold [on/off] - Toggle hill hold");
     Serial.println("rotate [n]        - Simulate n wheel rotations (default=1)");
     Serial.println("reset             - Reset wheel rotation counter");
-    Serial.println("debug [option]    - Control debug flags (use 'debug help')");
+    Serial.println("debug [flag]      - Show/toggle debug flags (use 'debug' to list)");
+    Serial.println("debug [flag]      - Show/toggle debug flags (use 'debug' to list)");
     Serial.println("audio [on/off]    - Toggle audio feedback (buzzer)");
     Serial.println("visual [on/off]   - Toggle visual feedback (Blue LED)");
     Serial.println("beep [count]      - Play beeps (1-10)");
@@ -68,19 +85,76 @@ static void printHelp() {
 }
 
 /**
- * Print debug help text
+ * Print debug flags with status
+ * Print debug flags with status
  */
-static void printDebugHelp() {
+static void printDebugFlags() {
+static void printDebugFlags() {
     Serial.println("\n=== Debug Flags ===");
-    Serial.println("debug [status]       - Show current flags");
-    Serial.println("debug help           - This help");
-    Serial.println("debug all            - Enable all flags");
-    Serial.println("debug none           - Disable all flags");
-    Serial.println("debug protocol       - Toggle protocol parsing (0x01)");
-    Serial.println("debug crypto         - Toggle encryption steps (0x02)");
-    Serial.println("debug crc            - Toggle CRC validation (0x04)");
-    Serial.println("debug commands       - Toggle command decode (0x08)");
-    Serial.println("debug raw            - Toggle raw hex dumps (0x10)");
+    Serial.printf("Current: 0x%02X", debugFlags);
+    if (debugFlags == 0) {
+        Serial.println("  (all disabled)");
+    } else {
+        Serial.print("  (");
+        bool first = true;
+        for (uint8_t i = 0; i < _debugFlagCount; i++) {
+            if (debugFlags & _debugFlagTable[i].mask) {
+                if (!first) Serial.print(", ");
+                Serial.print(_debugFlagTable[i].name);
+                first = false;
+            }
+        }
+        Serial.println(")");
+    }
+    Serial.println();
+    Serial.println("Flag       Status  Description");
+    Serial.println("---------- ------- ----------------------------------");
+    
+    for (uint8_t i = 0; i < _debugFlagCount; i++) {
+        bool enabled = (debugFlags & _debugFlagTable[i].mask) != 0;
+        Serial.printf("%-10s [%s]  %s\n",
+            _debugFlagTable[i].name,
+            enabled ? "ON " : "off",
+            _debugFlagTable[i].description);
+    }
+    
+    Serial.println("\nUsage:");
+    Serial.println("  debug              Show this list");
+    Serial.println("  debug <flag>       Toggle specific flag");
+    Serial.println("  debug all          Enable all flags");
+    Serial.println("  debug none         Disable all flags");
+    Serial.printf("Current: 0x%02X", debugFlags);
+    if (debugFlags == 0) {
+        Serial.println("  (all disabled)");
+    } else {
+        Serial.print("  (");
+        bool first = true;
+        for (uint8_t i = 0; i < _debugFlagCount; i++) {
+            if (debugFlags & _debugFlagTable[i].mask) {
+                if (!first) Serial.print(", ");
+                Serial.print(_debugFlagTable[i].name);
+                first = false;
+            }
+        }
+        Serial.println(")");
+    }
+    Serial.println();
+    Serial.println("Flag       Status  Description");
+    Serial.println("---------- ------- ----------------------------------");
+    
+    for (uint8_t i = 0; i < _debugFlagCount; i++) {
+        bool enabled = (debugFlags & _debugFlagTable[i].mask) != 0;
+        Serial.printf("%-10s [%s]  %s\n",
+            _debugFlagTable[i].name,
+            enabled ? "ON " : "off",
+            _debugFlagTable[i].description);
+    }
+    
+    Serial.println("\nUsage:");
+    Serial.println("  debug              Show this list");
+    Serial.println("  debug <flag>       Toggle specific flag");
+    Serial.println("  debug all          Enable all flags");
+    Serial.println("  debug none         Disable all flags");
     Serial.println("===================\n");
 }
 
@@ -242,45 +316,48 @@ static void handleSerialCommand(WheelState& wheel) {
         wheel.resetRotation();
     }
     else if (command == "debug") {
-        if (arg == "help") {
-            printDebugHelp();
-        } else if (arg == "status" || arg.length() == 0) {
-            Serial.println("\n=== Debug Status ===");
-            Serial.printf("Flags: 0x%02X\n", debugFlags);
-            Serial.print("Protocol: "); Serial.println(debugFlags & DBG_PROTOCOL ? "ON" : "OFF");
-            Serial.print("Crypto: "); Serial.println(debugFlags & DBG_CRYPTO ? "ON" : "OFF");
-            Serial.print("CRC: "); Serial.println(debugFlags & DBG_CRC ? "ON" : "OFF");
-            Serial.print("Commands: "); Serial.println(debugFlags & DBG_COMMANDS ? "ON" : "OFF");
-            Serial.print("Raw Data: "); Serial.println(debugFlags & DBG_RAW_DATA ? "ON" : "OFF");
-            Serial.println("===================\n");
-        } else if (arg == "all") {
-            debugFlags = 0xFF;
-            Serial.println("All debug flags enabled");
-        } else if (arg == "none") {
+        arg.toLowerCase();
+        
+        // No argument: show all flags
+        if (arg.length() == 0) {
+            printDebugFlags();
+        }
+        // debug none
+        else if (arg == "none") {
             debugFlags = 0;
             Serial.println("All debug flags disabled");
-        } else if (arg == "protocol") {
-            debugFlags ^= DBG_PROTOCOL;
-            Serial.print("Protocol debug: ");
-            Serial.println(debugFlags & DBG_PROTOCOL ? "ON" : "OFF");
-        } else if (arg == "crypto") {
-            debugFlags ^= DBG_CRYPTO;
-            Serial.print("Crypto debug: ");
-            Serial.println(debugFlags & DBG_CRYPTO ? "ON" : "OFF");
-        } else if (arg == "crc") {
-            debugFlags ^= DBG_CRC;
-            Serial.print("CRC debug: ");
-            Serial.println(debugFlags & DBG_CRC ? "ON" : "OFF");
-        } else if (arg == "commands") {
-            debugFlags ^= DBG_COMMANDS;
-            Serial.print("Commands debug: ");
-            Serial.println(debugFlags & DBG_COMMANDS ? "ON" : "OFF");
-        } else if (arg == "raw") {
-            debugFlags ^= DBG_RAW_DATA;
-            Serial.print("Raw data debug: ");
-            Serial.println(debugFlags & DBG_RAW_DATA ? "ON" : "OFF");
-        } else {
-            Serial.println("Unknown debug option. Use 'debug help'");
+            printDebugFlags();
+        }
+        // debug all
+        else if (arg == "all") {
+            debugFlags = 0xFF;
+            Serial.println("All debug flags enabled");
+            printDebugFlags();
+        }
+        // Try to find matching flag name in table
+        else {
+            bool found = false;
+            for (uint8_t i = 0; i < _debugFlagCount; i++) {
+                if (arg == _debugFlagTable[i].name) {
+                    debugFlags ^= _debugFlagTable[i].mask;  // Toggle
+                    bool nowEnabled = (debugFlags & _debugFlagTable[i].mask) != 0;
+                    Serial.printf("%s debug -> %s\n", 
+                        _debugFlagTable[i].name,
+                        nowEnabled ? "ON" : "OFF");
+                    found = true;
+                    break;
+                }
+            }
+            
+            if (!found) {
+                Serial.printf("Unknown flag: '%s'\n", arg.c_str());
+                Serial.println("Available flags:");
+                for (uint8_t i = 0; i < _debugFlagCount; i++) {
+                    Serial.printf("  %-10s  %s\n", 
+                        _debugFlagTable[i].name,
+                        _debugFlagTable[i].description);
+                }
+            }
         }
     }
     else if (command == "audio") {
