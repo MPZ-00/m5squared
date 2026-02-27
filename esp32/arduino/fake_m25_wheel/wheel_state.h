@@ -13,7 +13,7 @@
 struct WheelState {
     int16_t currentSpeed = 0;      // Current speed (-32768 to +32767 raw units)
     int16_t lastSpeed = 0;         // Previous speed (for change detection)
-    int batteryLevel = 85;         // Battery percentage (0-100)
+    int batteryLevel = 100;        // Battery percentage (0-100)
     int assistLevel = 1;           // Assist level (0-2)
     bool hillHold = false;         // Hill hold active
     int driveProfile = 0;          // Drive profile (0 = standard)
