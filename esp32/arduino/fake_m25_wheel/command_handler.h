@@ -9,6 +9,7 @@
 
 #include <Arduino.h>
 #include <BLEDevice.h>
+#include <esp_sleep.h>
 #include "wheel_state.h"
 #include "led_control.h"
 #include "buzzer_control.h"
@@ -80,6 +81,9 @@ static void printHelp() {
     Serial.println("send              - Send response packet now");
     Serial.println("disconnect        - Disconnect client");
     Serial.println("advertise         - Force restart BLE advertising");
+    Serial.println("power off         - Turn device off (deep sleep)");
+    Serial.println("power on          - Wake device (only works if deep sleep disabled)");
+    Serial.println("restart           - Restart ESP32");
     Serial.println("========================\n");
 }
 
@@ -397,6 +401,25 @@ static void handleSerialCommand(WheelState& wheel) {
         Serial.println("Restarting BLE advertising...");
         BLEDevice::startAdvertising();
         Serial.println("Advertising restarted");
+    }
+    else if (command == "power") {
+        arg.toLowerCase();
+        if (arg == "off") {
+            Serial.println("Turning OFF (entering deep sleep)...");
+            Serial.println("Press RESET button to wake up");
+            delay(500);
+            esp_deep_sleep_start();  // Never returns
+        } else if (arg == "on") {
+            Serial.println("Note: Device uses deep sleep. RESET button causes reboot.");
+            Serial.println("This command only works if deep sleep is disabled.");
+        } else {
+            Serial.println("Usage: power <on|off>");
+        }
+    }
+    else if (command == "restart") {
+        Serial.println("Restarting ESP32...");
+        delay(500);
+        ESP.restart();
     }
     else {
         Serial.println("Unknown command. Type 'help' for available commands.");
