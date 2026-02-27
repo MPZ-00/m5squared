@@ -731,7 +731,19 @@ void handleButton() {
         if (deviceConnected) {
             Serial.println("Disconnecting client...");
             pServer->disconnect(pServer->getConnId());
+            delay(100);  // Wait for disconnect to complete
         }
+        
+        // Force clear RX buffer to prevent stale data on reconnect
+        if (pRxCharacteristic) {
+            pRxCharacteristic->setValue("");
+            Serial.println("Cleared RX buffer");
+        }
+        
+        // Reset connection state
+        firstValidPacketReceived = false;
+        stalePacketCount = 0;
+        connectionTime = 0;
         
         Serial.println("Force advertising...");
         BLEDevice::startAdvertising();

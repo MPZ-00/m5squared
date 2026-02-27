@@ -93,7 +93,7 @@ static void enterConnecting() {
     sysState = STATE_CONNECTING;
     ledSetStatus(LED_BLINK_SLOW);
     ledSetBle(false);
-    buzzerPlay(BUZZ_CONNECTING);
+    // buzzerPlay(BUZZ_CONNECTING);
     Serial.println("[State] -> CONNECTING");
     if (debugFlags & DBG_STATE) {
         Serial.println("[State] Initiating BLE connection sequence...");
