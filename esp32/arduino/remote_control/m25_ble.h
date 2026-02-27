@@ -489,32 +489,31 @@ static void _notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size
     for (int i = 0; i < WHEEL_COUNT; i++) {
         if (_wheels[i].txChar == pChar) {
             WheelConnState_t &w = _wheels[i];
-            if (!w.receivedFirstAck) {
-                w.receivedFirstAck = true;
-                Serial.printf("[BLE] %s wheel: First response received (%zu bytes) - encryption validated\n", 
-                             w.name, length);
-            }
             
             // Always show raw data for debugging decryption issues
-            Serial.print("[BLE] Raw data: ");
-            for (size_t i = 0; i < length && i < 48; i++) {
-                Serial.printf("%02X ", pData[i]);
+            if (debugFlags & DBG_BLE) {
+                Serial.print("[BLE] Raw data: ");
+                for (size_t i = 0; i < length && i < 48; i++) {
+                    Serial.printf("%02X ", pData[i]);
+                }
+                if (length > 48) Serial.print("...");
+                Serial.println();
             }
-            if (length > 48) Serial.print("...");
-            Serial.println();
             
             // Remove byte stuffing
             uint8_t unstuffed[128];
             size_t unstuffedLen = _removeDelimiters(pData, length, unstuffed, sizeof(unstuffed));
             
-            Serial.printf("[BLE] After unstuffing: %zu bytes\n", unstuffedLen);
-            if (unstuffedLen != length) {
-                Serial.print("  Unstuffed: ");
-                for (size_t i = 0; i < unstuffedLen && i < 48; i++) {
-                    Serial.printf("%02X ", unstuffed[i]);
+            if (debugFlags & DBG_BLE) {
+                Serial.printf("[BLE] After unstuffing: %zu bytes\n", unstuffedLen);
+                if (unstuffedLen != length) {
+                    Serial.print("  Unstuffed: ");
+                    for (size_t i = 0; i < unstuffedLen && i < 48; i++) {
+                        Serial.printf("%02X ", unstuffed[i]);
+                    }
+                    if (unstuffedLen > 48) Serial.print("...");
+                    Serial.println();
                 }
-                if (unstuffedLen > 48) Serial.print("...");
-                Serial.println();
             }
             
             // Check minimum frame size before attempting decrypt
@@ -528,6 +527,13 @@ static void _notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size
             uint8_t sppPacket[64];
             size_t sppLen = 0;
             if (_m25Decrypt(w.key, unstuffed, unstuffedLen, sppPacket, &sppLen)) {
+                // Mark first successful decryption (encryption validated)
+                if (!w.receivedFirstAck) {
+                    w.receivedFirstAck = true;
+                    Serial.printf("[BLE] %s wheel: First response received (%zu bytes) - encryption validated\n", 
+                                 w.name, length);
+                }
+                
                 // Parse SPP packet structure
                 _parseSppPacket(sppPacket, sppLen, w.name);
             } else {
@@ -656,14 +662,22 @@ static bool _connectWheel(int idx) {
     uint8_t sysMode = M25_SYSTEM_MODE_CONNECT;
     _sendCommand(idx, M25_SRV_APP_MGMT, M25_PARAM_WRITE_SYSTEM_MODE, &sysMode, 1);
     
-    // Wait for ACK per m25_parking.py (non-blocking loop to allow buzzer/LED updates)
+    // Wait for first ACK response to validate encryption (non-blocking loop)
     uint32_t waitStart = millis();
-    while (millis() - waitStart < 300) {
+    while (!w.receivedFirstAck && (millis() - waitStart < 2000)) {
         extern void ledTick();
         extern void buzzerTick();
         ledTick();
         buzzerTick();
-        delay(1);
+        delay(10);
+    }
+    
+    if (!w.receivedFirstAck) {
+        Serial.printf("[BLE] %s wheel: No response to SYSTEM_MODE (encryption validation failed)\n", w.name);
+        w.client->disconnect();
+        w.consecutiveFails++;
+        w.connected = false;
+        return false;
     }
 
     // Step 1: WRITE_DRIVE_MODE = 0x04 (enable remote bit)
@@ -671,8 +685,9 @@ static bool _connectWheel(int idx) {
     _sendCommand(idx, M25_SRV_APP_MGMT, M25_PARAM_WRITE_DRIVE_MODE, &driveMode, 1);
     w.driveModeBits = M25_DRIVE_MODE_REMOTE;
     
+    // Brief delay for drive mode to take effect
     waitStart = millis();
-    while (millis() - waitStart < 300) {
+    while (millis() - waitStart < 200) {
         extern void ledTick();
         extern void buzzerTick();
         ledTick();
