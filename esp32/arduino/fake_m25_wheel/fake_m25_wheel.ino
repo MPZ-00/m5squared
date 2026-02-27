@@ -373,15 +373,10 @@ void handleCommand(uint8_t* data, size_t len) {
         // Process commands and update state (ALWAYS, regardless of debug flags)
         if (serviceId == 0x01 && sppLen > 6) {  // APP_MGMT service
             if (paramId == 0x10) {  // SYSTEM_MODE
-                // Send ACK for SYSTEM_MODE command
-                delay(10);
-                sendResponse();
+                // No state to update for SYSTEM_MODE
             } else if (paramId == 0x20) {  // DRIVE_MODE
                 uint8_t mode = decryptedData[6];
                 wheel.hillHold = (mode & 0x01) != 0;
-                // Send ACK for DRIVE_MODE command
-                delay(10);
-                sendResponse();
             } else if (paramId == 0x30 && sppLen >= 8) {  // REMOTE_SPEED
                 int16_t speed = ((int16_t)decryptedData[6] << 8) | decryptedData[7];
                 // Update current speed and check for direction change
@@ -394,6 +389,12 @@ void handleCommand(uint8_t* data, size_t len) {
             } else if (paramId == 0x40) {  // ASSIST_LEVEL
                 uint8_t level = decryptedData[6];
                 if (level < 3) wheel.assistLevel = level;
+            }
+            
+            // Send ACK for all commands except REMOTE_SPEED (0x30), too many
+            if (paramId != 0x30) {
+                delay(10);
+                sendResponse();
             }
         }
         
