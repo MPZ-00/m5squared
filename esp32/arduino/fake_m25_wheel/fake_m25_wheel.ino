@@ -6,19 +6,26 @@
  * 
  * Hardware: ESP32-WROOM-32 or similar
  * 
+ * IMPORTANT: Each M25 wheel has unique encryption keys!
+ *   - Configure device_config.h with the correct DEVICE_NAME and ENCRYPTION_KEY
+ *   - For LEFT wheel: Use M25_LEFT_KEY from .env
+ *   - For RIGHT wheel: Use M25_RIGHT_KEY from .env
+ *   - See README.md for detailed setup instructions
+ * 
  * Features:
  * - BLE advertising as M25 wheel
- * - Simulates basic SPP (Serial Port Profile) communication
+ * - Full M25 protocol support (CBC encryption, CRC-16, byte stuffing)
  * - Responds to commands with realistic data
- * - Handles encrypted packets (displays received data)
+ * - Handles encrypted packets with proper frame structure
  * - Serial monitor shows all activity
  * 
  * Usage:
- * 1. Upload to ESP32
- * 2. Open Serial Monitor at 115200 baud
- * 3. Use m5squared Python code to connect
- * 4. Type 'help' for available commands
- * 5. Type 'hardware' to see pin configuration
+ * 1. Configure device_config.h for LEFT or RIGHT wheel
+ * 2. Upload to ESP32
+ * 3. Open Serial Monitor at 115200 baud
+ * 4. Use m5squared Python code to connect
+ * 5. Type 'help' for available commands
+ * 6. Type 'hardware' to see pin configuration
  */
 
 #include <BLEDevice.h>
