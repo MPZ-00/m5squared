@@ -387,10 +387,23 @@ void handleCommand(uint8_t* data, size_t len) {
                 }
                 wheel.lastSpeed = wheel.currentSpeed;
                 wheel.currentSpeed = speed;
+                
+                // Simulate wheel rotation based on speed (rough estimate)
+                // Speed scale: 250 raw units = 100% = ~10 km/h
+                // Update every 5 seconds of movement at current speed
+                unsigned long now = millis();
+                if (abs(speed) > 5 && (now - wheel.lastSpeedUpdate) > 5000) {
+                    // Rotation estimate: higher speed = more rotations
+                    int rotations = abs(speed) / 50;  // ~5 rotations at max speed
+                    if (rotations > 0) {
+                        wheel.simulateRotation(rotations);
+                    }
+                    wheel.lastSpeedUpdate = now;
+                }
             } else if (paramId == 0x40) {  // ASSIST_LEVEL
                 uint8_t level = decryptedData[6];
                 if (level < 3) wheel.assistLevel = level;
-                playBeep(1);
+                playBeep(level + 1);  // Beep based on assist level
             }
             
             // Send ACK for all commands except REMOTE_SPEED (0x30), too many
@@ -702,9 +715,10 @@ void loop() {
     // Update speed indicators (LED and buzzer)
     updateSpeedIndicators();
     
-    // Simulate battery drain (very slow)
+    // Simulate battery drain (faster when active)
     static unsigned long lastBatteryUpdate = 0;
-    if (millis() - lastBatteryUpdate > 60000) {  // Every minute
+    unsigned long batteryInterval = (abs(wheel.currentSpeed) > 5) ? 15000 : 30000;  // 15s when moving, 30s idle
+    if (millis() - lastBatteryUpdate > batteryInterval) {
         if (wheel.batteryLevel > 0) {
             int oldLevel = wheel.batteryLevel;
             wheel.updateBattery();

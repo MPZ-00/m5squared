@@ -21,7 +21,7 @@
 #define DBG_RAW_DATA    0x10  // Raw hex dumps
 
 // Global debug flags
-static uint8_t debugFlags = DBG_COMMANDS;  // Default: only show decoded commands
+static uint8_t debugFlags = 0;
 
 // Debug flag metadata for better UI
 struct DebugFlagInfo {

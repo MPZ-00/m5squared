@@ -80,11 +80,11 @@ struct WheelState {
     }
     
     /**
-     * Simulate slow battery drain over time
+     * Simulate battery drain over time (faster drain rate)
      */
     void updateBattery() {
         if (batteryLevel > 5) {
-            batteryLevel--;
+            batteryLevel -= 2;  // Drain 2% per update
             Serial.printf("Battery drained to %d%% (time)\n", batteryLevel);
         } else if (batteryLevel > 0) {
             batteryLevel--;
