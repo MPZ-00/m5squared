@@ -535,17 +535,20 @@ void sendResponse() {
     
     // Step 6: Build M25 frame: [header][encrypted_IV][encrypted_data]
     size_t payloadLen = 32;  // 16 (IV) + 16 (data)
-    size_t frameLen = M25_HEADER_SIZE + payloadLen;  // Without CRC
     uint8_t frame[64];
+    
+    // Calculate frame length (matches remote's format: header + payload + CRC - 1)
+    uint16_t frameLength = (uint16_t)(M25_HEADER_SIZE + payloadLen + M25_CRC_SIZE - 1);
     
     // Header
     frame[0] = M25_HEADER_MARKER;  // 0xEF
-    frame[1] = (frameLen >> 8) & 0xFF;  // Length high byte
-    frame[2] = frameLen & 0xFF;         // Length low byte
+    frame[1] = (frameLength >> 8) & 0xFF;  // Length high byte
+    frame[2] = frameLength & 0xFF;          // Length low byte
     
     // Encrypted payload
     memcpy(frame + M25_HEADER_SIZE, ivEncrypted, 16);
     memcpy(frame + M25_HEADER_SIZE + 16, encryptedData, 16);
+    size_t frameLen = M25_HEADER_SIZE + payloadLen;  // Actual frame size before CRC
     
     // Step 7: Calculate CRC16 over the frame
     uint16_t crc = calculateCRC16(frame, frameLen);
