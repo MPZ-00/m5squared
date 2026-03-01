@@ -13,7 +13,8 @@
  * Open Serial Monitor at 115200 baud to see results.
  */
 
-#include "mapper.h"
+#include "../../remote_control/types.h"
+#include "../../remote_control/mapper.h"
 
 // Test result tracking
 static int testsPassed = 0;

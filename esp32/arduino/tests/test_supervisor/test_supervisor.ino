@@ -17,6 +17,7 @@
  */
 
 // Include dependencies
+#include "../../remote_control/types.h"
 #include "../../remote_control/mapper.h"
 #include "../../remote_control/supervisor.h"
 
