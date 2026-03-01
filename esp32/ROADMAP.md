@@ -20,18 +20,24 @@
 ## Phase 1: Core Safety
 **Priority:** CRITICAL | **Dependencies:** None
 
-### 1.1 Port Mapper
+### 1.1 Port Mapper ✓ COMPLETE
 **Reference:** `core/mapper.py`
 
-- [ ] Response curves (exponential/quadratic for fine control)
-- [ ] Deadzone handling
-- [ ] Acceleration ramping with delta-time tracking
-- [ ] Differential drive kinematics
-- [ ] Speed limiting per mode (slow/normal/fast)
-- [ ] Safety interlocks
+- [x] Response curves (exponential/quadratic for fine control)
+- [x] Deadzone handling
+- [x] Acceleration ramping with delta-time tracking
+- [x] Differential drive kinematics
+- [x] Speed limiting per mode (slow/normal/fast)
+- [x] Safety interlocks
 
-**Deliverable:** `mapper.h` - Smooth, predictable control
+**Deliverable:** `mapper.h`, `mapper.cpp` - Smooth, predictable control
 **Success Criteria:** No jerky movements, smooth turns
+**Status:** Implemented 2026-03-01
+**Files:** 
+- `esp32/arduino/remote_control/mapper.h` - Header and interface
+- `esp32/arduino/remote_control/mapper.cpp` - Implementation
+- `esp32/arduino/tests/test_mapper/` - Unit tests (isolated)
+**Testing:** Automated via `esp32/arduino/tests/run_tests.ps1`
 
 ### 1.2 Port Supervisor
 **Reference:** `core/supervisor.py`
