@@ -172,6 +172,14 @@ public:
      * Update configuration.
      */
     void setConfig(const MapperConfig& config) { _config = config; }
+    
+    /**
+     * Get last command (for heartbeat).
+     * Returns stop command if no previous command exists.
+     */
+    CommandFrame getLastCommand() const { 
+        return _hasLastCommand ? _lastCommand : CommandFrame::stop(); 
+    }
 
 private:
     MapperConfig  _config;
