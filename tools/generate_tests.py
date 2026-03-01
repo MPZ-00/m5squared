@@ -169,13 +169,14 @@ def generate_mapper_tests(output_path: str):
 #include "types.h"
 
 // Test configuration (matches Python test config)
-static MapperConfig test_config = {
-    .deadzone = 0.15f,
-    .curve = 2.0f,
-    .ramp_rate = 50.0f,
-    .max_speed_slow = 30,
-    .max_speed_normal = 60,
-    .max_speed_fast = 100
+// C++11 compatible initialization (field order must match struct definition)
+static MapperConfig test_config{
+    0.15f,  // deadzone
+    2.0f,   // curve
+    30,     // max_speed_slow
+    60,     // max_speed_normal
+    100,    // max_speed_fast
+    50.0f   // ramp_rate
 };
 
 static Mapper* mapper = nullptr;
