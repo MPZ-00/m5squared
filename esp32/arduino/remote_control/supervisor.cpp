@@ -101,9 +101,15 @@ bool Supervisor::update() {
 // ---------------------------------------------------------------------------
 void Supervisor::requestConnect(const char* leftAddr, const char* rightAddr,
                                 const uint8_t* leftKey, const uint8_t* rightKey) {
-    // Store connection parameters
+    if (!leftAddr || !rightAddr || !leftKey || !rightKey) {
+        Serial.println("[Supervisor] ERROR: NULL connection parameters provided");
+        return;
+    }
+    
     strncpy(_leftAddr, leftAddr, sizeof(_leftAddr) - 1);
+    _leftAddr[sizeof(_leftAddr) - 1] = '\0';
     strncpy(_rightAddr, rightAddr, sizeof(_rightAddr) - 1);
+    _rightAddr[sizeof(_rightAddr) - 1] = '\0';
     memcpy(_leftKey, leftKey, 16);
     memcpy(_rightKey, rightKey, 16);
     

@@ -202,6 +202,11 @@ static inline bool _wheelActive(int idx) {
 // ---------------------------------------------------------------------------
 static bool _m25Encrypt(const uint8_t* key, const uint8_t* spp, uint8_t sppLen,
                          uint8_t* out, size_t* outLen) {
+    if (!key || !spp || !out || !outLen) {
+        Serial.println("[BLE-ENC] ERROR: NULL parameter provided");
+        return false;
+    }
+    
     // 1. PKCS7 pad SPP to 16-byte boundary
     uint8_t padLen    = (uint8_t)(16 - (sppLen % 16));
     uint8_t paddedLen = sppLen + padLen;   // always 16 or 32 for our packets
@@ -360,6 +365,11 @@ static size_t _removeDelimiters(const uint8_t* in, size_t inLen, uint8_t* out, s
 // ---------------------------------------------------------------------------
 static bool _m25Decrypt(const uint8_t* key, const uint8_t* frame, size_t frameLen,
                          uint8_t* sppOut, size_t* sppLen) {
+    if (!key || !frame || !sppOut || !sppLen) {
+        Serial.println("[BLE-DEC] ERROR: NULL parameter provided");
+        return false;
+    }
+    
     // Verify frame has minimum size
     if (frameLen < M25_HEADER_SIZE + 16 + 16 + M25_CRC_SIZE) {
         return false;
@@ -578,6 +588,7 @@ inline void bleInit(const char* deviceName = "M25-Remote") {
 
     BLEDevice::init(deviceName);
     Serial.println("[BLE] Device initialized");
+    Serial.printf("[BLE] Wheel mode: %s\n", WHEEL_MODE_NAME);
     
     // Ensure hardware RNG is seeded after BLE init
     // (esp_fill_random needs BLE radio active for entropy)
@@ -624,9 +635,11 @@ static bool _connectWheel(int idx) {
             w.consecutiveFails++;
             return false;
         }
+        Serial.println("[BLE] Setting client callbacks...");
         w.client->setClientCallbacks(&_callbacks[idx]);
     }
 
+    Serial.printf("[BLE] Connecting to BLE address %s...\n", w.mac);
     if (!w.client->connect(BLEAddress(w.mac))) {
         Serial.printf("[BLE] %s wheel: GATT connect FAILED\n", w.name);
         w.consecutiveFails++;
@@ -918,6 +931,15 @@ inline bool bleGetAutoReconnect() {
 // ---------------------------------------------------------------------------
 inline void bleSetMac(int idx, const char* mac) {
     if (idx < 0 || idx >= WHEEL_COUNT) return;
+    if (!_wheelActive(idx)) {
+        Serial.printf("[BLE] bleSetMac: Skipping inactive wheel %d\n", idx);
+        return;
+    }
+    if (!mac) {
+        Serial.println("[BLE] ERROR: NULL MAC address provided");
+        return;
+    }
+    Serial.printf("[BLE] bleSetMac(%d, %s)\n", idx, mac);
     WheelConnState_t &w = _wheels[idx];
     if (w.client && w.client->isConnected()) {
         w.client->disconnect();
@@ -936,6 +958,15 @@ inline void bleSetMac(int idx, const char* mac) {
 // ---------------------------------------------------------------------------
 inline void bleSetKey(int idx, const uint8_t* newKey) {
     if (idx < 0 || idx >= WHEEL_COUNT) return;
+    if (!_wheelActive(idx)) {
+        Serial.printf("[BLE] bleSetKey: Skipping inactive wheel %d\n", idx);
+        return;
+    }
+    if (!newKey) {
+        Serial.println("[BLE] ERROR: NULL key provided");
+        return;
+    }
+    Serial.printf("[BLE] bleSetKey(%d, [key data])\n", idx);
     memcpy(_wheels[idx].key, newKey, 16);
     Serial.printf("[BLE] %s wheel key updated  (reconnect required)\n",
                   _wheels[idx].name);
