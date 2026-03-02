@@ -577,6 +577,9 @@ static M25DisconnectCallback _callbacks[WHEEL_COUNT];
 inline void bleInit(const char* deviceName = "M25-Remote") {
     // Populate mutable wheel config from compile-time device_config.h defaults
     memset(_wheels, 0, sizeof(_wheels));
+    Serial.printf("[BLE] Wheels array after memset: %p (size: %d bytes)\n", 
+                  (void*)_wheels, sizeof(_wheels));
+    
     strncpy(_wheels[WHEEL_LEFT].mac,  LEFT_WHEEL_MAC,  17);
     strncpy(_wheels[WHEEL_RIGHT].mac, RIGHT_WHEEL_MAC, 17);
     _wheels[WHEEL_LEFT].name   = "Left";
@@ -585,6 +588,13 @@ inline void bleInit(const char* deviceName = "M25-Remote") {
     memcpy(_wheels[WHEEL_RIGHT].key, _keyDefaultRight, 16);
     _wheels[WHEEL_LEFT].telegramId  = M25_TELEGRAM_ID_START;
     _wheels[WHEEL_RIGHT].telegramId = M25_TELEGRAM_ID_START;
+    
+    // Verify initialization
+    for (int i = 0; i < WHEEL_COUNT; i++) {
+        Serial.printf("[BLE] _wheels[%d]: name=%s, mac=%s, client=%p\n",
+                      i, _wheels[i].name ? _wheels[i].name : "NULL",
+                      _wheels[i].mac, (void*)_wheels[i].client);
+    }
 
     BLEDevice::init(deviceName);
     Serial.println("[BLE] Device initialized");
@@ -955,10 +965,22 @@ inline void bleSetMac(int idx, const char* mac) {
         return;
     }
     Serial.printf("[BLE] bleSetMac(%d, %s)\n", idx, mac);
+    
+    // Validate array access
+    Serial.printf("[BLE] Accessing _wheels[%d]...\n", idx);
     WheelConnState_t &w = _wheels[idx];
-    if (w.client && w.client->isConnected()) {
-        w.client->disconnect();
+    Serial.printf("[BLE] Got reference to wheel struct (name=%s)\n", w.name ? w.name : "NULL");
+    
+    // Safely check and disconnect existing client
+    Serial.printf("[BLE] Checking client pointer: %p\n", (void*)w.client);
+    if (w.client != nullptr) {
+        Serial.println("[BLE] Client exists, checking connection...");
+        if (w.client->isConnected()) {
+            Serial.println("[BLE] Disconnecting...");
+            w.client->disconnect();
+        }
     }
+    Serial.println("[BLE] Updating wheel state...");
     w.connected     = false;
     w.protocolReady = false;
     w.consecutiveFails = 0;
