@@ -1033,9 +1033,25 @@ inline void bleSetKey(int idx, const uint8_t* newKey) {
     if (debugFlags & DBG_BLE) {
         Serial.printf("[BLE] bleSetKey(%d, [key data])\n", idx);
     }
-    memcpy(_wheels[idx].key, newKey, 16);
-    Serial.printf("[BLE] %s wheel key updated  (reconnect required)\n",
-                  _wheels[idx].name);
+    
+    // Validate destination before memcpy
+    WheelConnState_t &w = _wheels[idx];
+    if (debugFlags & DBG_BLE) {
+        Serial.printf("[BLE] _wheels[%d].key address: %p\n", idx, (void*)w.key);
+        Serial.printf("[BLE] _wheels[%d].name before: %s\n", idx, w.name ? w.name : "NULL");
+    }
+    
+    memcpy(w.key, newKey, 16);
+    
+    if (debugFlags & DBG_BLE) {
+        Serial.printf("[BLE] _wheels[%d].name after: %s\n", idx, w.name ? w.name : "NULL");
+    }
+    
+    if (w.name) {
+        Serial.printf("[BLE] %s wheel key updated  (reconnect required)\n", w.name);
+    } else {
+        Serial.printf("[BLE] Wheel %d key updated  (reconnect required)\n", idx);
+    }
 }
 
 // ---------------------------------------------------------------------------
