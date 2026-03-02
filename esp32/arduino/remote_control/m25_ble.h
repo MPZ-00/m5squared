@@ -67,6 +67,40 @@ extern uint8_t debugFlags;
 #define M25_PARAM_WRITE_REMOTE_SPEED  0x30
 #define M25_PARAM_WRITE_ASSIST_LEVEL  0x40
 
+// Parameter IDs - Read commands (APP_MGMT)
+#define M25_PARAM_READ_ASSIST_LEVEL   0x42
+#define M25_PARAM_READ_DRIVE_MODE     0x22
+#define M25_PARAM_READ_CRUISE_VALUES  0xD1
+
+// Parameter IDs - Status responses (APP_MGMT)
+#define M25_PARAM_STATUS_ASSIST_LEVEL 0x41
+#define M25_PARAM_STATUS_DRIVE_MODE   0x21
+#define M25_PARAM_CRUISE_VALUES       0xD0
+
+// Parameter IDs - Battery (BATT_MGMT service 0x08)
+#define M25_PARAM_READ_SOC            0x01
+#define M25_PARAM_STATUS_SOC          0x00
+
+// Parameter IDs - Version (VERSION_MGMT service 0x0A)
+#define M25_PARAM_READ_SW_VERSION     0x01
+#define M25_PARAM_STATUS_SW_VERSION   0x00
+
+// Service IDs
+#define M25_SRV_BATT_MGMT             0x08
+#define M25_SRV_VERSION_MGMT          0x0A
+
+// ACK/NACK response codes
+#define M25_PARAM_ACK                 0xFF
+#define M25_NACK_GENERAL              0x80  // General error
+#define M25_NACK_SID                  0x81  // Invalid service ID
+#define M25_NACK_PID                  0x82  // Invalid parameter ID
+#define M25_NACK_LENGTH               0x83  // Invalid length
+#define M25_NACK_CHKSUM               0x84  // Checksum error
+#define M25_NACK_COND                 0x85  // Condition not met
+#define M25_NACK_SEC_ACC              0x86  // Security/access denied
+#define M25_NACK_CMD_NOT_EXEC         0x87  // Command not executed
+#define M25_NACK_CMD_INTERNAL_ERROR   0x88  // Internal error
+
 // Drive mode bit flags (DRIVE_MODE_BIT_* in m25_protocol_data.py)
 #define M25_DRIVE_MODE_NORMAL     0x00
 #define M25_DRIVE_MODE_AUTO_HOLD  0x01   // hill hold
@@ -139,6 +173,114 @@ static size_t _addDelimiters(const uint8_t* in, size_t inLen, uint8_t* out) {
         if (in[i] == M25_HEADER_MARKER) out[pos++] = M25_HEADER_MARKER;
     }
     return pos;
+}
+
+// ---------------------------------------------------------------------------
+// Response parsing structures
+// ---------------------------------------------------------------------------
+
+// SPP packet header (6 bytes minimum)
+struct ResponseHeader {
+    uint8_t protocolId;  // Protocol version (0x01 = standard)
+    uint8_t telegramId;  // Sequence number
+    uint8_t sourceId;    // Source device ID
+    uint8_t destId;      // Destination device ID
+    uint8_t serviceId;   // Service/subsystem ID
+    uint8_t paramId;     // Parameter/command ID
+    const uint8_t* payload;  // Pointer to payload start
+    size_t payloadLen;   // Payload length in bytes
+};
+
+// Parsed response data (union for different types)
+struct ResponseData {
+    bool isAck;
+    bool isNack;
+    uint8_t nackCode;  // Only valid if isNack=true
+    
+    union {
+        struct {
+            uint8_t batteryPercent;
+        } soc;
+        
+        struct {
+            uint8_t level;  // 0=indoor, 1=outdoor, 2=learning
+        } assistLevel;
+        
+        struct {
+            uint8_t mode;
+            bool autoHold;
+            bool cruise;
+            bool remote;
+        } driveMode;
+        
+        struct {
+            uint8_t devState;
+            uint8_t major;
+            uint8_t minor;
+            uint8_t patch;
+        } swVersion;
+        
+        struct {
+            uint32_t distanceMm;     // Overall distance in 0.01m
+            float distanceKm;        // Converted to km
+            uint16_t speed;          // Current speed
+            uint16_t pushCounter;    // Push count
+        } cruiseValues;
+    };
+};
+
+// ---------------------------------------------------------------------------
+// Type-safe payload parsing helpers
+// ---------------------------------------------------------------------------
+
+static inline uint8_t _parseUint8(const uint8_t* payload, size_t offset) {
+    return payload[offset];
+}
+
+static inline int16_t _parseInt16BE(const uint8_t* payload, size_t offset) {
+    return (int16_t)(((uint16_t)payload[offset] << 8) | payload[offset + 1]);
+}
+
+static inline uint16_t _parseUint16BE(const uint8_t* payload, size_t offset) {
+    return ((uint16_t)payload[offset] << 8) | payload[offset + 1];
+}
+
+static inline uint32_t _parseUint32BE(const uint8_t* payload, size_t offset) {
+    return ((uint32_t)payload[offset] << 24) |
+           ((uint32_t)payload[offset + 1] << 16) |
+           ((uint32_t)payload[offset + 2] << 8) |
+           (uint32_t)payload[offset + 3];
+}
+
+static inline int32_t _parseInt32BE(const uint8_t* payload, size_t offset) {
+    return (int32_t)_parseUint32BE(payload, offset);
+}
+
+// ---------------------------------------------------------------------------
+// NACK error code interpretation
+// ---------------------------------------------------------------------------
+
+static const char* _nackCodeToString(uint8_t code) {
+    switch (code) {
+        case M25_NACK_GENERAL:            return "General error";
+        case M25_NACK_SID:                return "Invalid service ID";
+        case M25_NACK_PID:                return "Invalid parameter ID";
+        case M25_NACK_LENGTH:             return "Invalid length";
+        case M25_NACK_CHKSUM:             return "Checksum error";
+        case M25_NACK_COND:               return "Condition not met";
+        case M25_NACK_SEC_ACC:            return "Security/access denied";
+        case M25_NACK_CMD_NOT_EXEC:       return "Command not executed";
+        case M25_NACK_CMD_INTERNAL_ERROR: return "Internal error";
+        default:                          return "Unknown NACK";
+    }
+}
+
+static inline bool _isNack(uint8_t paramId) {
+    return paramId >= M25_NACK_GENERAL && paramId <= M25_NACK_CMD_INTERNAL_ERROR;
+}
+
+static inline bool _isAck(uint8_t paramId) {
+    return paramId == M25_PARAM_ACK;
 }
 
 // ---------------------------------------------------------------------------
@@ -455,54 +597,195 @@ static bool _m25Decrypt(const uint8_t* key, const uint8_t* frame, size_t frameLe
 }
 
 // ---------------------------------------------------------------------------
-// Parse SPP packet structure
-// SPP format: [protocol_id][telegram_id][src_id][dest_id][service_id][param_id][payload...]
+// Parse SPP packet header
+// ---------------------------------------------------------------------------
+static bool _parseResponseHeader(const uint8_t* spp, size_t sppLen, ResponseHeader* hdr) {
+    if (!spp || !hdr || sppLen < 6) {
+        return false;
+    }
+    
+    hdr->protocolId = spp[0];
+    hdr->telegramId = spp[1];
+    hdr->sourceId   = spp[2];
+    hdr->destId     = spp[3];
+    hdr->serviceId  = spp[4];
+    hdr->paramId    = spp[5];
+    hdr->payload    = (sppLen > 6) ? (spp + 6) : nullptr;
+    hdr->payloadLen = (sppLen > 6) ? (sppLen - 6) : 0;
+    
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Parse response data based on service and parameter IDs
+// ---------------------------------------------------------------------------
+static bool _parseResponseData(const ResponseHeader* hdr, ResponseData* data) {
+    if (!hdr || !data) return false;
+    
+    memset(data, 0, sizeof(ResponseData));
+    
+    // Check for ACK/NACK
+    data->isAck = _isAck(hdr->paramId);
+    data->isNack = _isNack(hdr->paramId);
+    
+    if (data->isNack) {
+        data->nackCode = hdr->paramId;
+        return true;
+    }
+    
+    if (data->isAck) {
+        return true;  // Simple ACK with no payload
+    }
+    
+    const uint8_t* p = hdr->payload;
+    size_t len = hdr->payloadLen;
+    
+    // Parse based on service and parameter ID
+    if (hdr->serviceId == M25_SRV_BATT_MGMT) {
+        if (hdr->paramId == M25_PARAM_STATUS_SOC && len >= 1) {
+            data->soc.batteryPercent = _parseUint8(p, 0);
+            return true;
+        }
+    }
+    else if (hdr->serviceId == M25_SRV_APP_MGMT) {
+        if (hdr->paramId == M25_PARAM_STATUS_ASSIST_LEVEL && len >= 1) {
+            data->assistLevel.level = _parseUint8(p, 0);
+            return true;
+        }
+        else if (hdr->paramId == M25_PARAM_STATUS_DRIVE_MODE && len >= 1) {
+            data->driveMode.mode = _parseUint8(p, 0);
+            data->driveMode.autoHold = (data->driveMode.mode & M25_DRIVE_MODE_AUTO_HOLD) != 0;
+            data->driveMode.cruise = (data->driveMode.mode & M25_DRIVE_MODE_CRUISE) != 0;
+            data->driveMode.remote = (data->driveMode.mode & M25_DRIVE_MODE_REMOTE) != 0;
+            return true;
+        }
+        else if (hdr->paramId == M25_PARAM_CRUISE_VALUES && len >= 12) {
+            // Parse cruise values: distance (4 bytes BE), speed (2 bytes BE), push counter (2 bytes BE)
+            data->cruiseValues.distanceMm = _parseUint32BE(p, 0);
+            data->cruiseValues.distanceKm = (float)data->cruiseValues.distanceMm * 0.00001f;  // 0.01mm to km
+            data->cruiseValues.speed = _parseUint16BE(p, 4);
+            data->cruiseValues.pushCounter = _parseUint16BE(p, 6);
+            return true;
+        }
+        // Also handle write command echoes (ACKs with payload)
+        else if (hdr->paramId == M25_PARAM_WRITE_SYSTEM_MODE && len >= 1) {
+            // System mode ACK - echoes back the mode value
+            return true;
+        }
+        else if (hdr->paramId == M25_PARAM_WRITE_DRIVE_MODE && len >= 1) {
+            // Drive mode ACK - echoes back the mode bits
+            data->driveMode.mode = _parseUint8(p, 0);
+            data->driveMode.autoHold = (data->driveMode.mode & M25_DRIVE_MODE_AUTO_HOLD) != 0;
+            data->driveMode.cruise = (data->driveMode.mode & M25_DRIVE_MODE_CRUISE) != 0;
+            data->driveMode.remote = (data->driveMode.mode & M25_DRIVE_MODE_REMOTE) != 0;
+            return true;
+        }
+        else if (hdr->paramId == M25_PARAM_WRITE_REMOTE_SPEED && len >= 2) {
+            // Speed ACK - echoes back the speed value
+            return true;
+        }
+    }
+    else if (hdr->serviceId == M25_SRV_VERSION_MGMT) {
+        if (hdr->paramId == M25_PARAM_STATUS_SW_VERSION && len >= 4) {
+            data->swVersion.devState = _parseUint8(p, 0);
+            data->swVersion.major = _parseUint8(p, 1);
+            data->swVersion.minor = _parseUint8(p, 2);
+            data->swVersion.patch = _parseUint8(p, 3);
+            return true;
+        }
+    }
+    
+    return false;  // Unknown response type
+}
+
+// ---------------------------------------------------------------------------
+// Format response for human-readable output
+// ---------------------------------------------------------------------------
+static void _printResponse(const char* wheelName, const ResponseHeader* hdr, const ResponseData* data) {
+    if (!wheelName || !hdr) return;
+    
+    if (debugFlags & DBG_BLE) {
+        Serial.printf("[BLE] %s wheel response:\n", wheelName);
+        Serial.printf("  Protocol: 0x%02X, Telegram: 0x%02X\n", hdr->protocolId, hdr->telegramId);
+        Serial.printf("  Src: 0x%02X, Dest: 0x%02X\n", hdr->sourceId, hdr->destId);
+        Serial.printf("  Service: 0x%02X, Param: 0x%02X\n", hdr->serviceId, hdr->paramId);
+        
+        if (hdr->payloadLen > 0) {
+            Serial.printf("  Payload (%zu bytes): ", hdr->payloadLen);
+            for (size_t i = 0; i < hdr->payloadLen && i < 16; i++) {
+                Serial.printf("%02X ", hdr->payload[i]);
+            }
+            if (hdr->payloadLen > 16) Serial.print("...");
+            Serial.println();
+        }
+    }
+    
+    if (!data) return;
+    
+    // Interpret response
+    if (data->isNack) {
+        Serial.printf("[BLE] %s wheel NACK: 0x%02X - %s\n",
+                     wheelName, data->nackCode, _nackCodeToString(data->nackCode));
+    }
+    else if (data->isAck) {
+        if (debugFlags & DBG_BLE) {
+            Serial.printf("[BLE] %s wheel ACK\n", wheelName);
+        }
+    }
+    else {
+        // Print parsed data based on response type
+        if (hdr->serviceId == M25_SRV_BATT_MGMT && hdr->paramId == M25_PARAM_STATUS_SOC) {
+            Serial.printf("[BLE] %s wheel battery: %d%%\n", wheelName, data->soc.batteryPercent);
+        }
+        else if (hdr->serviceId == M25_SRV_APP_MGMT) {
+            if (hdr->paramId == M25_PARAM_STATUS_ASSIST_LEVEL) {
+                const char* levelName = (data->assistLevel.level == 0) ? "Indoor" :
+                                       (data->assistLevel.level == 1) ? "Outdoor" :
+                                       (data->assistLevel.level == 2) ? "Learning" : "Unknown";
+                Serial.printf("[BLE] %s wheel assist level: %s\n", wheelName, levelName);
+            }
+            else if (hdr->paramId == M25_PARAM_STATUS_DRIVE_MODE || 
+                     hdr->paramId == M25_PARAM_WRITE_DRIVE_MODE) {
+                Serial.printf("[BLE] %s wheel drive mode: 0x%02X (", wheelName, data->driveMode.mode);
+                if (data->driveMode.remote) Serial.print("REMOTE ");
+                if (data->driveMode.cruise) Serial.print("CRUISE ");
+                if (data->driveMode.autoHold) Serial.print("AUTO_HOLD ");
+                if (data->driveMode.mode == 0) Serial.print("NORMAL");
+                Serial.println(")");
+            }
+            else if (hdr->paramId == M25_PARAM_CRUISE_VALUES) {
+                Serial.printf("[BLE] %s wheel cruise: %.2f km, speed %d, push %d\n",
+                             wheelName, data->cruiseValues.distanceKm,
+                             data->cruiseValues.speed, data->cruiseValues.pushCounter);
+            }
+        }
+        else if (hdr->serviceId == M25_SRV_VERSION_MGMT && hdr->paramId == M25_PARAM_STATUS_SW_VERSION) {
+            Serial.printf("[BLE] %s wheel firmware: %d.%d.%d (dev state %d)\n",
+                         wheelName, data->swVersion.major, data->swVersion.minor,
+                         data->swVersion.patch, data->swVersion.devState);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Parse SPP packet (main entry point)
 // ---------------------------------------------------------------------------
 static void _parseSppPacket(const uint8_t* spp, size_t sppLen, const char* wheelName) {
-    if (sppLen < 6) {
-        Serial.printf("[BLE] %s wheel: SPP too short (%zu bytes)\n", wheelName, sppLen);
+    ResponseHeader hdr;
+    if (!_parseResponseHeader(spp, sppLen, &hdr)) {
+        Serial.printf("[BLE] %s wheel: Failed to parse SPP header\n", wheelName);
         return;
     }
     
-    uint8_t protocolId = spp[0];
-    uint8_t telegramId = spp[1];
-    uint8_t srcId      = spp[2];
-    uint8_t destId     = spp[3];
-    uint8_t serviceId  = spp[4];
-    uint8_t paramId    = spp[5];
-    size_t payloadLen  = sppLen - 6;
+    ResponseData data;
+    bool parsed = _parseResponseData(&hdr, &data);
     
-    Serial.printf("[BLE] %s wheel response:\n", wheelName);
-    Serial.printf("  Protocol: 0x%02X, Telegram: 0x%02X\n", protocolId, telegramId);
-    Serial.printf("  Src: 0x%02X, Dest: 0x%02X\n", srcId, destId);
-    Serial.printf("  Service: 0x%02X, Param: 0x%02X\n", serviceId, paramId);
-    
-    if (payloadLen > 0) {
-        Serial.printf("  Payload (%zu bytes): ", payloadLen);
-        for (size_t i = 0; i < payloadLen && i < 16; i++) {
-            Serial.printf("%02X ", spp[6 + i]);
-        }
-        if (payloadLen > 16) Serial.print("...");
-        Serial.println();
+    if (!parsed && debugFlags & DBG_BLE) {
+        Serial.printf("[BLE] %s wheel: Unknown response type (srv=0x%02X, param=0x%02X)\n",
+                     wheelName, hdr.serviceId, hdr.paramId);
     }
     
-    // Parse specific response types
-    if (serviceId == M25_SRV_APP_MGMT) {
-        if (paramId == M25_PARAM_WRITE_SYSTEM_MODE && payloadLen >= 1) {
-            Serial.printf("    System Mode ACK: 0x%02X\n", spp[6]);
-        } else if (paramId == M25_PARAM_WRITE_DRIVE_MODE && payloadLen >= 1) {
-            uint8_t mode = spp[6];
-            Serial.printf("    Drive Mode ACK: 0x%02X (", mode);
-            if (mode & M25_DRIVE_MODE_REMOTE) Serial.print("REMOTE ");
-            if (mode & M25_DRIVE_MODE_CRUISE) Serial.print("CRUISE ");
-            if (mode & M25_DRIVE_MODE_AUTO_HOLD) Serial.print("AUTO_HOLD ");
-            if (mode == 0) Serial.print("NORMAL");
-            Serial.println(")");
-        } else if (paramId == M25_PARAM_WRITE_REMOTE_SPEED && payloadLen >= 2) {
-            int16_t speed = ((int16_t)spp[6] << 8) | spp[7];
-            Serial.printf("    Speed ACK: %d raw\n", speed);
-        }
-    }
+    _printResponse(wheelName, &hdr, parsed ? &data : nullptr);
 }
 
 // ---------------------------------------------------------------------------
