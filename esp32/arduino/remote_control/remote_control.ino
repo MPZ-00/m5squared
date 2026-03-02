@@ -19,6 +19,9 @@
 #include <Arduino.h>
 #include <esp_sleep.h>
 #include "device_config.h"
+#include "types.h"
+#include "mapper.h"
+#include "supervisor.h"
 #include "joystick.h"
 #include "led_control.h"
 #include "button.h"
@@ -27,7 +30,6 @@
 #include "serial_commands.h"
 #include "buzzer.h"
 
-// SystemState enum is defined in device_config.h
 static SystemState sysState = STATE_BOOT;
 
 // ---------------------------------------------------------------------------
@@ -62,6 +64,72 @@ static uint32_t loopCounter = 0;
 // The wheel's own remote-control watchdog will cut power if it hears nothing.
 #define BLE_ERROR_STOP_TRIES 3
 static uint8_t _errorStopsSent = 0;
+
+static MapperConfig mapperConfig;
+static Mapper mapper(mapperConfig);
+static SupervisorConfig supervisorConfig;
+static Supervisor supervisor(mapper, supervisorConfig);
+
+// ---------------------------------------------------------------------------
+// Supervisor state change callback (LED and buzzer feedback)
+// ---------------------------------------------------------------------------
+static void onSupervisorStateChange(SupervisorState oldState, SupervisorState newState) {
+    const char* newName = (newState == SUPERVISOR_DISCONNECTED) ? "DISCONNECTED" :
+                          (newState == SUPERVISOR_CONNECTING) ? "CONNECTING" :
+                          (newState == SUPERVISOR_PAIRED) ? "PAIRED" :
+                          (newState == SUPERVISOR_ARMED) ? "ARMED" :
+                          (newState == SUPERVISOR_DRIVING) ? "DRIVING" :
+                          (newState == SUPERVISOR_FAILSAFE) ? "FAILSAFE" : "?";
+    
+    Serial.printf("[Supervisor] State change: %s\n", newName);
+    
+    // Update legacy sysState for serial commands compatibility
+    if (newState == SUPERVISOR_DISCONNECTED || newState == SUPERVISOR_CONNECTING) {
+        sysState = STATE_CONNECTING;
+    } else if (newState == SUPERVISOR_PAIRED) {
+        sysState = STATE_READY;
+    } else if (newState == SUPERVISOR_ARMED || newState == SUPERVISOR_DRIVING) {
+        sysState = STATE_OPERATING;
+    } else if (newState == SUPERVISOR_FAILSAFE) {
+        sysState = STATE_ERROR;
+    }
+    
+    // LED and buzzer feedback for state transitions
+    switch (newState) {
+        case SUPERVISOR_DISCONNECTED:
+            ledSetStatus(LED_OFF);
+            ledSetBle(false);
+            break;
+            
+        case SUPERVISOR_CONNECTING:
+            ledSetStatus(LED_BLINK_SLOW);
+            ledSetBle(false);
+            if (oldState == SUPERVISOR_DISCONNECTED) {
+                buzzerPlay(BUZZ_CONNECTING);
+            }
+            break;
+            
+        case SUPERVISOR_PAIRED:
+            ledSetStatus(LED_OFF);
+            ledSetBle(true);
+            buzzerPlay(BUZZ_CONFIRM);
+            break;
+            
+        case SUPERVISOR_ARMED:
+            ledSetStatus(LED_OFF);
+            break;
+            
+        case SUPERVISOR_DRIVING:
+            ledSetStatus(LED_OFF);
+            break;
+            
+        case SUPERVISOR_FAILSAFE:
+            ledSetStatus(LED_BLINK_FAST);
+            buzzerPlay(BUZZ_ERROR);
+            ledSetBle(false);
+            break;
+    }
+}
 
 #ifdef ENABLE_BATTERY_MONITOR
 // Battery read interval
@@ -324,7 +392,13 @@ void setup() {
     ledSetAssistLevel(assistLevel);
     ledSetHillHold(hillHoldOn);
 
-    enterConnecting();
+    // Initialize Supervisor (this will handle state machine)
+    static const uint8_t leftKey[] = ENCRYPTION_KEY_LEFT;
+    static const uint8_t rightKey[] = ENCRYPTION_KEY_RIGHT;
+    supervisor.begin();
+    supervisor.addStateCallback(onSupervisorStateChange);
+    supervisor.requestConnect(LEFT_WHEEL_MAC, RIGHT_WHEEL_MAC, leftKey, rightKey);
+    
     serialInit(_serialCtx);
 }
 

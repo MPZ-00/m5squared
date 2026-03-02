@@ -200,7 +200,8 @@
 #define ASSIST_COUNT    3
 
 // ---------------------------------------------------------------------------
-// System state machine (shared with serial_commands.h)
+// System state machine (legacy - kept for serial commands compatibility)
+// When using Supervisor, the actual state is SupervisorState from types.h
 // ---------------------------------------------------------------------------
 enum SystemState : uint8_t {
     STATE_BOOT       = 0,
