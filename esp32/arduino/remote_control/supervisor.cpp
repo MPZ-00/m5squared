@@ -263,15 +263,22 @@ void Supervisor::handleConnecting() {
     bleConnect();
     
     // Check if connection was successful
-    bool success = bleAllConnected();
+    // Use bleAnyConnected() to allow partial connectivity in dual mode
+    // (one wheel working while other is off/dead/out of range)
+    // Background reconnection via bleTick() will keep trying to connect missing wheels
+    bool success = bleAnyConnected();
     
     if (success) {
-        Serial.println("[Supervisor] Connected successfully");
+        if (bleAllConnected()) {
+            Serial.println("[Supervisor] Connected successfully (all wheels)");
+        } else {
+            Serial.println("[Supervisor] Connected successfully (partial - some wheels unreachable)");
+        }
         _reconnectAttempts = 0;
         transitionTo(SUPERVISOR_PAIRED);
         _lastLinkTimeMs = millis();
     } else {
-        Serial.println("[Supervisor] Connection failed");
+        Serial.println("[Supervisor] Connection failed (no wheels responding)");
         _reconnectAttempts++;
         
         if (_reconnectAttempts >= _config.maxReconnectAttempts) {
@@ -285,9 +292,9 @@ void Supervisor::handleConnecting() {
 
 void Supervisor::handlePaired() {
     // Connected but not armed - just maintain connection
-    // Check if we lost connection
-    if (!bleAllConnected()) {
-        Serial.println("[Supervisor] Lost connection in PAIRED state");
+    // Check if we lost ALL connections (partial connectivity OK)
+    if (!bleAnyConnected()) {
+        Serial.println("[Supervisor] Lost all connections in PAIRED state");
         transitionTo(SUPERVISOR_DISCONNECTED);
         return;
     }
@@ -298,9 +305,9 @@ void Supervisor::handlePaired() {
 
 void Supervisor::handleArmed() {
     // Ready to drive, waiting for input
-    // Check if we lost connection
-    if (!bleAllConnected()) {
-        Serial.println("[Supervisor] Lost connection in ARMED state");
+    // Check if we lost ALL connections (partial connectivity OK)
+    if (!bleAnyConnected()) {
+        Serial.println("[Supervisor] Lost all connections in ARMED state");
         enterFailsafe("Connection lost");
         return;
     }
@@ -310,9 +317,9 @@ void Supervisor::handleArmed() {
 
 void Supervisor::handleDriving() {
     // Actively controlling vehicles
-    // Check if we lost connection
-    if (!bleAllConnected()) {
-        Serial.println("[Supervisor] Lost connection while driving");
+    // Check if we lost ALL connections (partial connectivity OK)
+    if (!bleAnyConnected()) {
+        Serial.println("[Supervisor] Lost all connections while driving");
         enterFailsafe("Connection lost");
         return;
     }
@@ -448,7 +455,8 @@ void Supervisor::notifyStateCallbacks(SupervisorState oldState, SupervisorState 
 // Public Accessors
 // ---------------------------------------------------------------------------
 bool Supervisor::isConnected() const {
-    return bleAllConnected();
+    // Return true if any wheel is connected (supports partial connectivity)
+    return bleAnyConnected();
 }
 
 uint32_t Supervisor::getTimeSinceLastInput() const {
@@ -472,10 +480,11 @@ bool Supervisor::isLinkTimeout() const {
 void Supervisor::notifyConnectionChange() {
     // Called when a wheel connects or disconnects
     // Check if we should transition based on connection state
+    // Only failsafe if ALL wheels disconnect (partial connectivity supported)
     if (_state == SUPERVISOR_PAIRED || _state == SUPERVISOR_ARMED || _state == SUPERVISOR_DRIVING) {
-        if (!bleAllConnected()) {
-            Serial.println("[Supervisor] Connection lost, entering failsafe");
-            enterFailsafe("Wheel disconnected");
+        if (!bleAnyConnected()) {
+            Serial.println("[Supervisor] All connections lost, entering failsafe");
+            enterFailsafe("All wheels disconnected");
         }
     }
 }
