@@ -41,18 +41,6 @@ static bool    hillHoldOn   = false;
 static int     batteryPct   = 100;
 #endif
 
-// Watchdog: tracks last non-zero joystick event (legacy - Supervisor handles this now)
-// static uint32_t lastActiveMs      = 0;
-// static bool     watchdogWarnShown = false;
-
-// Command rate limiter (legacy - Supervisor handles this now)
-// static uint32_t lastCommandSentMs = 0;
-
-// Joystick transition hold timers (legacy - Supervisor handles this now)
-// static uint32_t jsActiveSinceMs = 0;   // when joystick first left deadzone
-// static uint32_t jsIdleSinceMs   = 0;   // when joystick first entered deadzone
-
-// Reconnect rate limiter (legacy - may still be needed for bleTick)
 static uint32_t lastBleTickMs = 0;
 
 // Loop heartbeat (debug - shows loop() is running)
@@ -70,18 +58,16 @@ static Mapper mapper(mapperConfig);
 static SupervisorConfig supervisorConfig;
 static Supervisor supervisor(mapper, supervisorConfig);
 
-// ---------------------------------------------------------------------------
-// Supervisor state change callback (LED and buzzer feedback)
-// ---------------------------------------------------------------------------
 static void onSupervisorStateChange(SupervisorState oldState, SupervisorState newState) {
-    const char* newName = (newState == SUPERVISOR_DISCONNECTED) ? "DISCONNECTED" :
-                          (newState == SUPERVISOR_CONNECTING) ? "CONNECTING" :
-                          (newState == SUPERVISOR_PAIRED) ? "PAIRED" :
-                          (newState == SUPERVISOR_ARMED) ? "ARMED" :
-                          (newState == SUPERVISOR_DRIVING) ? "DRIVING" :
-                          (newState == SUPERVISOR_FAILSAFE) ? "FAILSAFE" : "?";
-    
-    Serial.printf("[Supervisor] State change: %s\n", newName);
+    if (debugFlags & DBG_STATE) {
+        const char* newName = (newState == SUPERVISOR_DISCONNECTED) ? "DISCONNECTED" :
+                              (newState == SUPERVISOR_CONNECTING) ? "CONNECTING" :
+                              (newState == SUPERVISOR_PAIRED) ? "PAIRED" :
+                              (newState == SUPERVISOR_ARMED) ? "ARMED" :
+                              (newState == SUPERVISOR_DRIVING) ? "DRIVING" :
+                              (newState == SUPERVISOR_FAILSAFE) ? "FAILSAFE" : "?";
+        Serial.printf("[Supervisor] State change: %s\n", newName);
+    }
     
     // Update legacy sysState for serial commands compatibility
     if (newState == SUPERVISOR_DISCONNECTED || newState == SUPERVISOR_CONNECTING) {
@@ -132,16 +118,8 @@ static void onSupervisorStateChange(SupervisorState oldState, SupervisorState ne
 }
 
 #ifdef ENABLE_BATTERY_MONITOR
-// Battery read interval
 static uint32_t lastBatteryMs = 0;
 #define BATTERY_READ_INTERVAL_MS 10000
-#endif
-
-#ifdef ENABLE_BATTERY_MONITOR
-// Battery voltage measurement
-// Full formula: V_bat = V_adc * 2  (1:1 divider, 3.3 V ref)
-//               pct   = (adc - BATT_ADC_EMPTY) * 100
-//                        / (BATT_ADC_FULL - BATT_ADC_EMPTY)
 static int readBatteryPct() {
     int raw = analogRead(BATTERY_ADC_PIN);
     int pct = (int)(
@@ -154,29 +132,31 @@ static int readBatteryPct() {
 }
 #endif
 
-// ---------------------------------------------------------------------------
-// Transition helpers
-// ---------------------------------------------------------------------------
 static void enterConnecting() {
-    Serial.println("[Serial] Command: enterConnecting - requesting Supervisor connect");
+    if (debugFlags & DBG_STATE) {
+        Serial.println("[Serial] Command: enterConnecting");
+    }
     static const uint8_t leftKey[] = ENCRYPTION_KEY_LEFT;
     static const uint8_t rightKey[] = ENCRYPTION_KEY_RIGHT;
     supervisor.requestConnect(LEFT_WHEEL_MAC, RIGHT_WHEEL_MAC, leftKey, rightKey);
 }
 
 static void enterReady() {
-    // No longer used - Supervisor handles this automatically
-    Serial.println("[Serial] Command: enterReady - no-op (Supervisor manages state)");
+    if (debugFlags & DBG_STATE) {
+        Serial.println("[Serial] Command: enterReady - no-op");
+    }
 }
 
 static void enterOperating() {
-    // No longer used - Supervisor handles this automatically
-    Serial.println("[Serial] Command: enterOperating - no-op (Supervisor manages state)");
+    if (debugFlags & DBG_STATE) {
+        Serial.println("[Serial] Command: enterOperating - no-op");
+    }
 }
 
 static void enterError(const char* reason) {
-    Serial.printf("[Serial] Command: enterError - reason: %s (triggering failsafe)\n", reason);
-    // Force Supervisor into failsafe by requesting disconnect
+    if (debugFlags & DBG_STATE) {
+        Serial.printf("[Serial] Command: enterError - %s\n", reason);
+    }
     supervisor.requestDisconnect();
 }
 
@@ -203,26 +183,17 @@ static void enterOff() {
         delay(10);
     }
     
-    delay(100);  // Give BLE and serial time to finish
+    delay(100);
     
-    // Configure power button (GPIO 13) as wake-up source
-    // EXT0: wake on LOW level (button pressed, since active LOW with pull-up)
     esp_sleep_enable_ext0_wakeup((gpio_num_t)BTN_POWER_PIN, 0);
     
-    // Enter deep sleep - device will reboot when power button is pressed
     Serial.println("[Power] Entering deep sleep...");
     Serial.flush();
     delay(50);
     
     esp_deep_sleep_start();
-    // Execution never reaches here
 }
 
-// ---------------------------------------------------------------------------
-// Power-on safety check (blocking)
-// Verifies joystick is centered before enabling remote mode.
-// Send "confirm" or "skip" over serial to bypass during development.
-// ---------------------------------------------------------------------------
 static bool powerOnSafetyCheck() {
 #ifdef NO_JOYSTICK
     Serial.println("[Safety] NO_JOYSTICK: press E-stop to confirm, or send 'confirm' via serial");
@@ -240,7 +211,6 @@ static bool powerOnSafetyCheck() {
         buttonsTick();
         JoystickNorm js = joystickRead();
 
-        // --- Serial bypass ---
         while (Serial.available() > 0) {
             char c = (char)Serial.read();
             if (c == '\r') continue;
@@ -257,7 +227,6 @@ static bool powerOnSafetyCheck() {
         }
 
 #ifndef NO_JOYSTICK
-        // --- Joystick centering feedback (skipped when no joystick) ---
         if (js.inDeadzone) {
             if (!centered) {
                 centered      = true;
@@ -276,7 +245,6 @@ static bool powerOnSafetyCheck() {
             return true;
         }
 #else
-        // NO_JOYSTICK: just wait for a single E-stop press
         if (btnEstop.wasPressed()) {
             Serial.println("[Safety] Check PASSED (no-joystick mode)");
             return true;
@@ -287,13 +255,9 @@ static bool powerOnSafetyCheck() {
         buzzerTick();
         delay(10);
     }
-    return false; // unreachable
+    return false;
 }
 
-// ---------------------------------------------------------------------------
-// Serial command context
-// Fill in after all static variables and helper functions are declared.
-// ---------------------------------------------------------------------------
 static SerialContext _serialCtx = {
     &sysState,
     &assistLevel,
@@ -307,9 +271,6 @@ static SerialContext _serialCtx = {
 #endif
 };
 
-// ---------------------------------------------------------------------------
-// Arduino setup
-// ---------------------------------------------------------------------------
 void setup() {
     Serial.begin(115200);
     delay(200);
@@ -344,16 +305,13 @@ void setup() {
     Serial.printf("[Boot] Battery: %d %%\n", batteryPct);
 #endif
 
-    // Block on safety check before BLE init (saves radio power during boot)
     sysState = STATE_BOOT;
     powerOnSafetyCheck();
 
-    // BLE init and connect
     bleInit("M25-Remote");
     ledSetAssistLevel(assistLevel);
     ledSetHillHold(hillHoldOn);
 
-    // Initialize Supervisor (this will handle state machine)
     static const uint8_t leftKey[] = ENCRYPTION_KEY_LEFT;
     static const uint8_t rightKey[] = ENCRYPTION_KEY_RIGHT;
     supervisor.begin();
@@ -363,17 +321,12 @@ void setup() {
     serialInit(_serialCtx);
 }
 
-// ---------------------------------------------------------------------------
-// Arduino loop
-// ---------------------------------------------------------------------------
 void loop() {
     uint32_t now = millis();
     loopCounter++;
     
-    // Get current supervisor state for UI and logging
     SupervisorState supState = supervisor.getState();
     
-    // Legacy sysState is updated by onSupervisorStateChange callback
     const char* stateName = (sysState == STATE_BOOT) ? "BOOT" :
                        (sysState == STATE_CONNECTING) ? "CONNECTING" :
                        (sysState == STATE_READY) ? "READY" :
@@ -381,28 +334,23 @@ void loop() {
                        (sysState == STATE_ERROR) ? "ERROR" :
                        (sysState == STATE_OFF) ? "OFF" : "?";
 
-    // --- Heartbeat (every 5 seconds, proves loop is running) ---
     if (now - lastHeartbeatMs >= 5000 && debugFlags & DBG_HEARTBEAT) {
         lastHeartbeatMs = now;
         Serial.printf("[Heartbeat] loop running, count=%u  state=%s\n", loopCounter, stateName);
     }
 
-    // --- Serial command processing (input + live debug output) ---
     serialTick(_serialCtx);
 
-    // --- Update input drivers ---
     buttonsTick();
     JoystickNorm js = joystickRead();
 
-    // --- Build ControlState from joystick for Supervisor ---
     ControlState control;
-    control.vx = js.y;  // Forward/backward
-    control.vy = js.x;  // Left/right (strafe)
-    control.deadman = !js.inDeadzone;  // Active when outside deadzone
+    control.vx = js.y;
+    control.vy = js.x;
+    control.deadman = !js.inDeadzone;
     control.mode = js.inDeadzone ? DRIVE_MODE_STOP : DRIVE_MODE_MANUAL;
     control.timestamp = now;
     
-    // --- Button press detection & logging (before action, so we see everything) ---
     bool estopPressed    = btnEstop.wasPressed();
     bool hillHoldPressed = btnHillHold.wasPressed();
     bool assistPressed   = btnAssist.wasPressed();
@@ -423,11 +371,8 @@ void loop() {
         }
     }
 
-    // --- Power button: highest priority (except in BOOT) ---
     if (powerPressed && sysState != STATE_BOOT) {
         if (sysState == STATE_OFF) {
-            // This case should never be reached since we enter deep sleep
-            // But kept for serial command 'power on' support during development
             Serial.println("[Power] Turning ON...");
             static const uint8_t leftKey[] = ENCRYPTION_KEY_LEFT;
             static const uint8_t rightKey[] = ENCRYPTION_KEY_RIGHT;
@@ -439,40 +384,36 @@ void loop() {
             #endif
             supervisor.requestConnect(LEFT_WHEEL_MAC, RIGHT_WHEEL_MAC, leftKey, rightKey);
         } else {
-            // Turn off from any active state -> deep sleep
             Serial.println("[Power] Turning OFF...");
-            enterOff();  // This function calls esp_deep_sleep_start() and never returns
-            // Execution never reaches here
+            enterOff();
         }
-        // Do not process other inputs this iteration
         ledTick();
         return;
     }
 
-    // --- Emergency stop: highest priority, any state ---
     if (estopPressed) {
         if (supState == SUPERVISOR_FAILSAFE) {
-            // Second press: reset from error - disconnect and reconnect
-            Serial.println("[E-Stop] Reset: requesting reconnect...");
+            if (debugFlags & DBG_STATE) {
+                Serial.println("[E-Stop] Reset: requesting reconnect...");
+            }
             static const uint8_t leftKey[] = ENCRYPTION_KEY_LEFT;
             static const uint8_t rightKey[] = ENCRYPTION_KEY_RIGHT;
             supervisor.requestDisconnect();
-            delay(100);  // Give BLE time to clean up
+            delay(100);
             supervisor.requestConnect(LEFT_WHEEL_MAC, RIGHT_WHEEL_MAC, leftKey, rightKey);
         } else {
-            // First press: emergency stop (Supervisor handles failsafe via control.deadman = false)
-            Serial.println("[E-Stop] Emergency stop");
+            if (debugFlags & DBG_STATE) {
+                Serial.println("[E-Stop] Emergency stop");
+            }
             control.deadman = false;
             control.mode = DRIVE_MODE_STOP;
         }
-        // Continue processing to feed stop command to supervisor
     }
 
-    // --- Feature buttons (state-dependent) ---
-    
-    // Dual button press: force reconnect (hill-hold + assist simultaneously)
     if (hillHoldPressed && assistPressed) {
-        Serial.println("[Button] Dual press: forcing reconnect...");
+        if (debugFlags & DBG_BUTTONS) {
+            Serial.println("[Button] Dual press: forcing reconnect...");
+        }
         static const uint8_t leftKey[] = ENCRYPTION_KEY_LEFT;
         static const uint8_t rightKey[] = ENCRYPTION_KEY_RIGHT;
         supervisor.requestDisconnect();
@@ -482,7 +423,6 @@ void loop() {
         return;
     }
     
-    // Hill hold toggle (only when not driving)
     if (hillHoldPressed) {
         if (supState == SUPERVISOR_PAIRED || supState == SUPERVISOR_ARMED) {
             hillHoldOn = !hillHoldOn;
@@ -498,7 +438,6 @@ void loop() {
         }
     }
 
-    // Assist level cycle (only when not driving)
     if (assistPressed) {
         if (supState == SUPERVISOR_PAIRED || supState == SUPERVISOR_ARMED) {
             assistLevel = (assistLevel + 1) % ASSIST_COUNT;
@@ -516,13 +455,9 @@ void loop() {
         }
     }
 
-    // --- Feed control input to Supervisor ---
     supervisor.processInput(control);
-    
-    // --- Update Supervisor state machine (handles all state logic and motor commands) ---
     supervisor.update();
 
-    // --- Battery monitoring (every 10 s) ---
 #ifdef ENABLE_BATTERY_MONITOR
     if (now - lastBatteryMs >= BATTERY_READ_INTERVAL_MS && sysState != STATE_OFF) {
         lastBatteryMs = now;
@@ -530,19 +465,14 @@ void loop() {
         ledSetBattery(batteryPct);
         Serial.printf("[Battery] %d %%\n", batteryPct);
         
-        // Critical battery: force safe shutdown
         if (batteryPct <= BATT_AUTO_OFF_PCT && sysState != STATE_ERROR && sysState != STATE_OFF) {
             Serial.println("[Battery] CRITICAL - forcing disconnect");
             supervisor.requestDisconnect();
             buzzerPlay(BUZZ_ERROR);
-            // Supervisor will enter FAILSAFE automatically
         }
     }
 #endif
 
-    // --- LED tick (handles blinking) ---
     ledTick();
-    
-    // --- Buzzer tick (handles pattern playback) ---
     buzzerTick();
 }
