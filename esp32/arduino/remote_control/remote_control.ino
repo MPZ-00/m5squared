@@ -198,8 +198,8 @@ static bool powerOnSafetyCheck() {
 #ifdef NO_JOYSTICK
     Serial.println("[Safety] NO_JOYSTICK: press E-stop to confirm, or send 'confirm' via serial");
 #else
-    Serial.println("[Safety] Power-on check: center joystick, hold 2 s, then press E-stop");
-    Serial.println("[Safety] (Send 'confirm' via serial to bypass)");
+    Serial.println("[Safety] Power-on check: center joystick and hold for 5 seconds");
+    Serial.println("[Safety] (Send 'confirm' via serial or press E-stop to skip)");
 #endif
 
     uint32_t centeredSince = 0;
@@ -231,7 +231,7 @@ static bool powerOnSafetyCheck() {
             if (!centered) {
                 centered      = true;
                 centeredSince = millis();
-                Serial.println("[Safety] Joystick centered - hold 2 s then press E-stop");
+                Serial.println("[Safety] Joystick centered - hold for 5 seconds");
             }
         } else {
             if (centered) {
@@ -239,9 +239,14 @@ static bool powerOnSafetyCheck() {
                 Serial.println("[Safety] Joystick off-center, re-center and hold");
             }
         }
-        bool longEnough = centered && ((millis() - centeredSince) >= 2000);
-        if (longEnough && btnEstop.wasPressed()) {
-            Serial.println("[Safety] Check PASSED");
+        
+        if (centered && ((millis() - centeredSince) >= 5000)) {
+            Serial.println("[Safety] Check PASSED (auto-confirmed)");
+            return true;
+        }
+        
+        if (btnEstop.wasPressed()) {
+            Serial.println("[Safety] Check PASSED (E-stop pressed)");
             return true;
         }
 #else
