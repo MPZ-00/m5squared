@@ -1,0 +1,49 @@
+;
+; PlatformIO Configuration for ESP32 M25 Remote Control
+;
+; This configuration enables dual wheel BLE support by increasing
+; the GATT client connection limit from 1 to 2.
+;
+; SETUP:
+; 1. Install PlatformIO extension in VS Code
+; 2. Copy this file to the remote_control folder
+; 3. Open folder in PlatformIO
+; 4. Click "Build" in PlatformIO toolbar
+;
+
+[env:esp32dev]
+platform = espressif32
+board = esp32dev
+framework = arduino
+
+; Serial monitor settings
+monitor_speed = 115200
+monitor_filters = esp32_exception_decoder
+
+; Build flags for dual wheel BLE support
+build_flags = 
+    ; Increase BLE connection limits (CRITICAL for dual wheel mode)
+    -DCONFIG_BT_ACL_CONNECTIONS=4
+    -DCONFIG_GATTC_MAX_CONNECTIONS=2
+    
+    ; Optional: Increase stack size if needed
+    -DCONFIG_ARDUINO_LOOP_STACK_SIZE=16384
+    
+    ; Debug flags (uncomment to enable)
+    ; -DCORE_DEBUG_LEVEL=5
+    ; -DLOG_LOCAL_LEVEL=ESP_LOG_DEBUG
+
+; Dependencies
+lib_deps = 
+    ; Add any additional libraries here
+    
+; Upload settings
+upload_speed = 921600
+
+; Filesystem settings
+board_build.partitions = default.csv
+board_build.filesystem = none
+
+; OTA settings (optional)
+; upload_protocol = espota
+; upload_port = 192.168.1.xxx

@@ -771,6 +771,16 @@ void bleInit(const char* deviceName) {
     Serial.println("[BLE] Device initialized");
     Serial.printf("[BLE] Wheel mode: %s\n", WHEEL_MODE_NAME);
     
+#if WHEEL_MODE == WHEEL_MODE_DUAL
+    Serial.println("================================================================================");
+    Serial.println("[BLE] WARNING: Dual wheel mode requires ESP32 BLE configuration change!");
+    Serial.println("[BLE] Default ESP32 supports only 1 GATT client connection.");
+    Serial.println("[BLE] See BLE_CONFIGURATION.md for setup instructions.");
+    Serial.println("[BLE] Symptoms: Wheels disconnect when 2nd wheel connects.");
+    Serial.println("[BLE] Solution: Use PlatformIO with CONFIG_GATTC_MAX_CONNECTIONS=2");
+    Serial.println("================================================================================");
+#endif
+    
     // Ensure hardware RNG is seeded after BLE init
     // (esp_fill_random needs BLE radio active for entropy)
     delay(100);
