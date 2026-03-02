@@ -37,8 +37,8 @@
 #endif
 
 // M25 wheel BLE MAC addresses - replace with real values
-#define LEFT_WHEEL_MAC  "28:05:A5:6F:76:26"
-#define RIGHT_WHEEL_MAC "28:05:A5:70:4B:42"
+#define LEFT_WHEEL_MAC  "28:05:a5:34:d8:9e"
+#define RIGHT_WHEEL_MAC "28:05:a5:35:7b:9a"
 
 // ---------------------------------------------------------------------------
 // Wheel operating mode

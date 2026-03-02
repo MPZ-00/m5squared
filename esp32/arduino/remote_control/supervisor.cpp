@@ -106,12 +106,16 @@ void Supervisor::requestConnect(const char* leftAddr, const char* rightAddr,
         return;
     }
     
+    Serial.printf("[Supervisor] requestConnect: L=%s R=%s\n", leftAddr, rightAddr);
+    
     strncpy(_leftAddr, leftAddr, sizeof(_leftAddr) - 1);
     _leftAddr[sizeof(_leftAddr) - 1] = '\0';
     strncpy(_rightAddr, rightAddr, sizeof(_rightAddr) - 1);
     _rightAddr[sizeof(_rightAddr) - 1] = '\0';
     memcpy(_leftKey, leftKey, 16);
     memcpy(_rightKey, rightKey, 16);
+    
+    Serial.printf("[Supervisor] Stored: L=%s R=%s\n", _leftAddr, _rightAddr);
     
     _connectionRequested = true;
     
@@ -217,11 +221,15 @@ void Supervisor::handleConnecting() {
     Serial.printf("[Supervisor] Connecting to vehicles (attempt %d/%d)\n",
                   _reconnectAttempts + 1, _config.maxReconnectAttempts);
     
+    Serial.printf("[Supervisor] Setting MACs: L=%s R=%s\n", _leftAddr, _rightAddr);
+    
     // Set MAC addresses and keys before connecting
     bleSetMac(WHEEL_LEFT, _leftAddr);
     bleSetMac(WHEEL_RIGHT, _rightAddr);
     bleSetKey(WHEEL_LEFT, _leftKey);
     bleSetKey(WHEEL_RIGHT, _rightKey);
+    
+    Serial.println("[Supervisor] Calling bleConnect()...");
     
     // Attempt connection
     bleConnect();

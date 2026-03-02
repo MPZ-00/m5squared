@@ -621,7 +621,15 @@ inline void bleInit(const char* deviceName = "M25-Remote") {
 // Blocking (uses delay()) - only called during STATE_CONNECTING.
 // ---------------------------------------------------------------------------
 static bool _connectWheel(int idx) {
+    if (idx < 0 || idx >= WHEEL_COUNT) {
+        Serial.printf("[BLE] ERROR: Invalid wheel index %d\n", idx);
+        return false;
+    }
+    
     WheelConnState_t &w = _wheels[idx];
+    Serial.printf("[BLE] _connectWheel(%d): %s wheel\n", idx, w.name);
+    Serial.printf("[BLE] MAC: '%s' (length: %d)\n", w.mac, strlen(w.mac));
+    
     w.telegramId    = M25_TELEGRAM_ID_START;
     w.driveModeBits = 0;
     w.protocolReady = false;
@@ -637,6 +645,13 @@ static bool _connectWheel(int idx) {
         }
         Serial.println("[BLE] Setting client callbacks...");
         w.client->setClientCallbacks(&_callbacks[idx]);
+    }
+
+    // Validate MAC address format before using it
+    if (strlen(w.mac) != 17) {
+        Serial.printf("[BLE] ERROR: Invalid MAC address length: %d (expected 17)\n", strlen(w.mac));
+        w.consecutiveFails++;
+        return false;
     }
 
     Serial.printf("[BLE] Connecting to BLE address %s...\n", w.mac);
