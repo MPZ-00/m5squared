@@ -95,9 +95,6 @@ static void onSupervisorStateChange(SupervisorState oldState, SupervisorState ne
         case SUPERVISOR_CONNECTING:
             ledSetStatus(LED_BLINK_SLOW);
             ledSetBle(false);
-            if (oldState == SUPERVISOR_DISCONNECTED) {
-                buzzerPlay(BUZZ_CONNECTING);
-            }
             break;
             
         case SUPERVISOR_PAIRED:
