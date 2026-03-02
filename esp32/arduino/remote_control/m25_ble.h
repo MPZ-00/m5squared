@@ -169,9 +169,19 @@ static const uint8_t _keyDefaultRight[16] = ENCRYPTION_KEY_RIGHT;
 // ---------------------------------------------------------------------------
 // Global wheel state (zero-initialised; fully populated in bleInit)
 // Auto-reconnect flag: when false, bleTick() skips reconnect attempts.
+// Using function-static to ensure single shared instance across translation units
 // ---------------------------------------------------------------------------
-static WheelConnState_t _wheels[WHEEL_COUNT];
-static bool             _bleAutoReconnect = true;
+inline WheelConnState_t* _getWheels() {
+    static WheelConnState_t wheels[WHEEL_COUNT];
+    return wheels;
+}
+#define _wheels (_getWheels())
+
+inline bool& _getBleAutoReconnect() {
+    static bool autoReconnect = true;
+    return autoReconnect;
+}
+#define _bleAutoReconnect (_getBleAutoReconnect())
 
 // ---------------------------------------------------------------------------
 // Wheel activity filter (compile-time, driven by WHEEL_MODE in device_config.h)
