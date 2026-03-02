@@ -619,6 +619,11 @@ static bool _connectWheel(int idx) {
 
     if (w.client == nullptr) {
         w.client = BLEDevice::createClient();
+        if (w.client == nullptr) {
+            Serial.printf("[BLE] %s wheel: Failed to create BLE client\n", w.name);
+            w.consecutiveFails++;
+            return false;
+        }
         w.client->setClientCallbacks(&_callbacks[idx]);
     }
 
