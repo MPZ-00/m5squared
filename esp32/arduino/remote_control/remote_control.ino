@@ -353,7 +353,7 @@ void loop() {
     control.vx = js.y;
     control.vy = js.x;
     control.deadman = !js.inDeadzone;
-    control.mode = js.inDeadzone ? DRIVE_MODE_STOP : DRIVE_MODE_MANUAL;
+    control.mode = js.inDeadzone ? DRIVE_MODE_STOP : DRIVE_MODE_NORMAL;
     control.timestamp = now;
     
     bool estopPressed    = btnEstop.wasPressed();
