@@ -777,6 +777,10 @@ static bool _connectWheel(int idx) {
 inline void bleConnect() {
     for (int i = 0; i < WHEEL_COUNT; i++) {
         if (_wheelActive(i) && !_wheels[i].connected) {
+            if (debugFlags & DBG_BLE) {
+                Serial.printf("[BLE] bleConnect: About to connect wheel %d, MAC='%s' (len=%d)\n",
+                              i, _wheels[i].mac, strlen(_wheels[i].mac));
+            }
             _connectWheel(i);
         }
     }
@@ -1030,6 +1034,10 @@ inline void bleSetMac(int idx, const char* mac) {
     w.mac[17] = '\0';
     Serial.printf("[BLE] %s wheel MAC -> %s  (reconnect required)\n", 
                   w.name ? w.name : "Unknown", w.mac);
+    if (debugFlags & DBG_BLE) {
+        Serial.printf("[BLE] bleSetMac returning: _wheels[%d].mac='%s' (len=%d)\n",
+                      idx, w.mac, strlen(w.mac));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1056,13 +1064,16 @@ inline void bleSetKey(int idx, const uint8_t* newKey) {
     WheelConnState_t &w = _wheels[idx];
     if (debugFlags & DBG_BLE) {
         Serial.printf("[BLE] _wheels[%d].key address: %p\n", idx, (void*)w.key);
+        Serial.printf("[BLE] _wheels[%d].mac address: %p\n", idx, (void*)w.mac);
         Serial.printf("[BLE] _wheels[%d].name before: %s\n", idx, w.name ? w.name : "NULL");
+        Serial.printf("[BLE] _wheels[%d].mac before: '%s' (len=%d)\n", idx, w.mac, strlen(w.mac));
     }
     
     memcpy(w.key, newKey, 16);
     
     if (debugFlags & DBG_BLE) {
         Serial.printf("[BLE] _wheels[%d].name after: %s\n", idx, w.name ? w.name : "NULL");
+        Serial.printf("[BLE] _wheels[%d].mac after: '%s' (len=%d)\n", idx, w.mac, strlen(w.mac));
     }
     
     if (w.name) {
