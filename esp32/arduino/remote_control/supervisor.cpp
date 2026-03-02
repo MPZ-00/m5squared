@@ -248,14 +248,12 @@ void Supervisor::handleConnecting() {
                   _reconnectAttempts + 1, _config.maxReconnectAttempts);
     
     if (debugFlags & DBG_BLE) {
-        Serial.printf("[Supervisor] Setting MACs: L=%s R=%s\n", _leftAddr, _rightAddr);
+        Serial.printf("[Supervisor] Target MACs: L=%s R=%s\n", _leftAddr, _rightAddr);
     }
     
-    // Set MAC addresses and keys before connecting
-    bleSetMac(WHEEL_LEFT, _leftAddr);
-    bleSetMac(WHEEL_RIGHT, _rightAddr);
-    bleSetKey(WHEEL_LEFT, _leftKey);
-    bleSetKey(WHEEL_RIGHT, _rightKey);
+    // Note: MACs and keys are already configured in bleInit() from device_config.h
+    // Only call bleSetMac/bleSetKey when user explicitly overrides via serial commands,
+    // not during connection attempts (they disconnect wheels as side effect)
     
     if (debugFlags & DBG_BLE) {
         Serial.println("[Supervisor] Calling bleConnect()...");
