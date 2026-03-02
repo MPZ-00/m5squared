@@ -10,6 +10,9 @@
 #include "supervisor.h"
 #include "m25_ble.h"
 
+// External debug flags (defined in serial_commands.h)
+extern uint8_t debugFlags;
+
 // ---------------------------------------------------------------------------
 // Constructor
 // ---------------------------------------------------------------------------
@@ -106,7 +109,9 @@ void Supervisor::requestConnect(const char* leftAddr, const char* rightAddr,
         return;
     }
     
-    Serial.printf("[Supervisor] requestConnect: L=%s R=%s\n", leftAddr, rightAddr);
+    if (debugFlags & DBG_BLE) {
+        Serial.printf("[Supervisor] requestConnect: L=%s R=%s\n", leftAddr, rightAddr);
+    }
     
     strncpy(_leftAddr, leftAddr, sizeof(_leftAddr) - 1);
     _leftAddr[sizeof(_leftAddr) - 1] = '\0';
@@ -115,7 +120,9 @@ void Supervisor::requestConnect(const char* leftAddr, const char* rightAddr,
     memcpy(_leftKey, leftKey, 16);
     memcpy(_rightKey, rightKey, 16);
     
-    Serial.printf("[Supervisor] Stored: L=%s R=%s\n", _leftAddr, _rightAddr);
+    if (debugFlags & DBG_BLE) {
+        Serial.printf("[Supervisor] Stored: L=%s R=%s\n", _leftAddr, _rightAddr);
+    }
     
     _connectionRequested = true;
     
@@ -221,7 +228,9 @@ void Supervisor::handleConnecting() {
     Serial.printf("[Supervisor] Connecting to vehicles (attempt %d/%d)\n",
                   _reconnectAttempts + 1, _config.maxReconnectAttempts);
     
-    Serial.printf("[Supervisor] Setting MACs: L=%s R=%s\n", _leftAddr, _rightAddr);
+    if (debugFlags & DBG_BLE) {
+        Serial.printf("[Supervisor] Setting MACs: L=%s R=%s\n", _leftAddr, _rightAddr);
+    }
     
     // Set MAC addresses and keys before connecting
     bleSetMac(WHEEL_LEFT, _leftAddr);
@@ -229,7 +238,9 @@ void Supervisor::handleConnecting() {
     bleSetKey(WHEEL_LEFT, _leftKey);
     bleSetKey(WHEEL_RIGHT, _rightKey);
     
-    Serial.println("[Supervisor] Calling bleConnect()...");
+    if (debugFlags & DBG_BLE) {
+        Serial.println("[Supervisor] Calling bleConnect()...");
+    }
     
     // Attempt connection
     bleConnect();

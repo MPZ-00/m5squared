@@ -32,6 +32,9 @@
 #include <esp_system.h>     // esp_fill_random()
 #include "device_config.h"
 
+// External debug flags (defined in serial_commands.h)
+extern uint8_t debugFlags;
+
 // ---------------------------------------------------------------------------
 // M25 SPP Service / Characteristic UUIDs (m25_bluetooth.py)
 // ---------------------------------------------------------------------------
@@ -577,8 +580,10 @@ static M25DisconnectCallback _callbacks[WHEEL_COUNT];
 inline void bleInit(const char* deviceName = "M25-Remote") {
     // Populate mutable wheel config from compile-time device_config.h defaults
     memset(_wheels, 0, sizeof(_wheels));
-    Serial.printf("[BLE] Wheels array after memset: %p (size: %d bytes)\n", 
-                  (void*)_wheels, sizeof(_wheels));
+    if (debugFlags & DBG_BLE) {
+        Serial.printf("[BLE] Wheels array after memset: %p (size: %d bytes)\n", 
+                      (void*)_wheels, sizeof(_wheels));
+    }
     
     strncpy(_wheels[WHEEL_LEFT].mac,  LEFT_WHEEL_MAC,  17);
     strncpy(_wheels[WHEEL_RIGHT].mac, RIGHT_WHEEL_MAC, 17);
@@ -590,10 +595,12 @@ inline void bleInit(const char* deviceName = "M25-Remote") {
     _wheels[WHEEL_RIGHT].telegramId = M25_TELEGRAM_ID_START;
     
     // Verify initialization
-    for (int i = 0; i < WHEEL_COUNT; i++) {
-        Serial.printf("[BLE] _wheels[%d]: name=%s, mac=%s, client=%p\n",
-                      i, _wheels[i].name ? _wheels[i].name : "NULL",
-                      _wheels[i].mac, (void*)_wheels[i].client);
+    if (debugFlags & DBG_BLE) {
+        for (int i = 0; i < WHEEL_COUNT; i++) {
+            Serial.printf("[BLE] _wheels[%d]: name=%s, mac=%s, client=%p\n",
+                          i, _wheels[i].name ? _wheels[i].name : "NULL",
+                          _wheels[i].mac, (void*)_wheels[i].client);
+        }
     }
 
     BLEDevice::init(deviceName);
@@ -637,8 +644,10 @@ static bool _connectWheel(int idx) {
     }
     
     WheelConnState_t &w = _wheels[idx];
-    Serial.printf("[BLE] _connectWheel(%d): %s wheel\n", idx, w.name);
-    Serial.printf("[BLE] MAC: '%s' (length: %d)\n", w.mac, strlen(w.mac));
+    if (debugFlags & DBG_BLE) {
+        Serial.printf("[BLE] _connectWheel(%d): %s wheel\n", idx, w.name);
+        Serial.printf("[BLE] MAC: '%s' (length: %d)\n", w.mac, strlen(w.mac));
+    }
     
     w.telegramId    = M25_TELEGRAM_ID_START;
     w.driveModeBits = 0;
@@ -957,30 +966,46 @@ inline bool bleGetAutoReconnect() {
 inline void bleSetMac(int idx, const char* mac) {
     if (idx < 0 || idx >= WHEEL_COUNT) return;
     if (!_wheelActive(idx)) {
-        Serial.printf("[BLE] bleSetMac: Skipping inactive wheel %d\n", idx);
+        if (debugFlags & DBG_BLE) {
+            Serial.printf("[BLE] bleSetMac: Skipping inactive wheel %d\n", idx);
+        }
         return;
     }
     if (!mac) {
         Serial.println("[BLE] ERROR: NULL MAC address provided");
         return;
     }
-    Serial.printf("[BLE] bleSetMac(%d, %s)\n", idx, mac);
+    if (debugFlags & DBG_BLE) {
+        Serial.printf("[BLE] bleSetMac(%d, %s)\n", idx, mac);
+    }
     
     // Validate array access
-    Serial.printf("[BLE] Accessing _wheels[%d]...\n", idx);
+    if (debugFlags & DBG_BLE) {
+        Serial.printf("[BLE] Accessing _wheels[%d]...\n", idx);
+    }
     WheelConnState_t &w = _wheels[idx];
-    Serial.printf("[BLE] Got reference to wheel struct (name=%s)\n", w.name ? w.name : "NULL");
+    if (debugFlags & DBG_BLE) {
+        Serial.printf("[BLE] Got reference to wheel struct (name=%s)\n", w.name ? w.name : "NULL");
+    }
     
     // Safely check and disconnect existing client
-    Serial.printf("[BLE] Checking client pointer: %p\n", (void*)w.client);
+    if (debugFlags & DBG_BLE) {
+        Serial.printf("[BLE] Checking client pointer: %p\n", (void*)w.client);
+    }
     if (w.client != nullptr) {
-        Serial.println("[BLE] Client exists, checking connection...");
+        if (debugFlags & DBG_BLE) {
+            Serial.println("[BLE] Client exists, checking connection...");
+        }
         if (w.client->isConnected()) {
-            Serial.println("[BLE] Disconnecting...");
+            if (debugFlags & DBG_BLE) {
+                Serial.println("[BLE] Disconnecting...");
+            }
             w.client->disconnect();
         }
     }
-    Serial.println("[BLE] Updating wheel state...");
+    if (debugFlags & DBG_BLE) {
+        Serial.println("[BLE] Updating wheel state...");
+    }
     w.connected     = false;
     w.protocolReady = false;
     w.consecutiveFails = 0;
@@ -996,14 +1021,18 @@ inline void bleSetMac(int idx, const char* mac) {
 inline void bleSetKey(int idx, const uint8_t* newKey) {
     if (idx < 0 || idx >= WHEEL_COUNT) return;
     if (!_wheelActive(idx)) {
-        Serial.printf("[BLE] bleSetKey: Skipping inactive wheel %d\n", idx);
+        if (debugFlags & DBG_BLE) {
+            Serial.printf("[BLE] bleSetKey: Skipping inactive wheel %d\n", idx);
+        }
         return;
     }
     if (!newKey) {
         Serial.println("[BLE] ERROR: NULL key provided");
         return;
     }
-    Serial.printf("[BLE] bleSetKey(%d, [key data])\n", idx);
+    if (debugFlags & DBG_BLE) {
+        Serial.printf("[BLE] bleSetKey(%d, [key data])\n", idx);
+    }
     memcpy(_wheels[idx].key, newKey, 16);
     Serial.printf("[BLE] %s wheel key updated  (reconnect required)\n",
                   _wheels[idx].name);
