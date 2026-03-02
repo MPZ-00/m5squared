@@ -41,18 +41,18 @@ static bool    hillHoldOn   = false;
 static int     batteryPct   = 100;
 #endif
 
-// Watchdog: tracks last non-zero joystick event
-static uint32_t lastActiveMs      = 0;
-static bool     watchdogWarnShown = false;
+// Watchdog: tracks last non-zero joystick event (legacy - Supervisor handles this now)
+// static uint32_t lastActiveMs      = 0;
+// static bool     watchdogWarnShown = false;
 
-// Command rate limiter
-static uint32_t lastCommandSentMs = 0;
+// Command rate limiter (legacy - Supervisor handles this now)
+// static uint32_t lastCommandSentMs = 0;
 
-// Joystick transition hold timers (hysteresis, see JS_ACTIVATE/IDLE_HOLD_MS)
-static uint32_t jsActiveSinceMs = 0;   // when joystick first left deadzone
-static uint32_t jsIdleSinceMs   = 0;   // when joystick first entered deadzone
+// Joystick transition hold timers (legacy - Supervisor handles this now)
+// static uint32_t jsActiveSinceMs = 0;   // when joystick first left deadzone
+// static uint32_t jsIdleSinceMs   = 0;   // when joystick first entered deadzone
 
-// Reconnect rate limiter
+// Reconnect rate limiter (legacy - may still be needed for bleTick)
 static uint32_t lastBleTickMs = 0;
 
 // Loop heartbeat (debug - shows loop() is running)
@@ -158,70 +158,31 @@ static int readBatteryPct() {
 // Transition helpers
 // ---------------------------------------------------------------------------
 static void enterConnecting() {
-    sysState = STATE_CONNECTING;
-    ledSetStatus(LED_BLINK_SLOW);
-    ledSetBle(false);
-    // buzzerPlay(BUZZ_CONNECTING);
-    Serial.println("[State] -> CONNECTING");
-    if (debugFlags & DBG_STATE) {
-        Serial.println("[State] Initiating BLE connection sequence...");
-    }
-    // Ensure clean state: disconnect any existing connections
-    // This clears stale BLE buffers that may contain old encrypted data
-    // On first boot/power-on, this safely does nothing (no active connections)
-    // On reconnect or after E-Stop reset, this clears old connection state
-    bleDisconnect();
-    bleConnect();
+    Serial.println("[Serial] Command: enterConnecting - requesting Supervisor connect");
+    static const uint8_t leftKey[] = ENCRYPTION_KEY_LEFT;
+    static const uint8_t rightKey[] = ENCRYPTION_KEY_RIGHT;
+    supervisor.requestConnect(LEFT_WHEEL_MAC, RIGHT_WHEEL_MAC, leftKey, rightKey);
 }
 
 static void enterReady() {
-    sysState = STATE_READY;
-    ledSetStatus(LED_OFF);
-    ledSetBle(true);
-    buzzerPlay(BUZZ_READY);
-    lastActiveMs      = millis();
-    watchdogWarnShown = false;
-    bleSendStop();   // one explicit stop on transition; resets the keepalive timer
-    lastCommandSentMs = millis();
-    Serial.println("[State] -> READY");
-    if (debugFlags & DBG_STATE) {
-        Serial.println("[State] Wheels ready, joystick monitoring active");
-    }
+    // No longer used - Supervisor handles this automatically
+    Serial.println("[Serial] Command: enterReady - no-op (Supervisor manages state)");
 }
 
 static void enterOperating() {
-    sysState = STATE_OPERATING;
-    buzzerPlay(BUZZ_OPERATING);
-    lastActiveMs      = millis();
-    watchdogWarnShown = false;
-    Serial.println("[State] -> OPERATING");
-    if (debugFlags & DBG_STATE) {
-        Serial.println("[State] Joystick active, motor commands enabled");
-    }
+    // No longer used - Supervisor handles this automatically
+    Serial.println("[Serial] Command: enterOperating - no-op (Supervisor manages state)");
 }
 
 static void enterError(const char* reason) {
-    sysState = STATE_ERROR;
-    jsActiveSinceMs = 0;
-    jsIdleSinceMs   = 0;
-    _errorStopsSent = 0;   // reset retry counter
-    ledSetStatus(LED_BLINK_FAST);
-    buzzerPlay(BUZZ_ERROR);
-    ledSetBle(false);
-    bleSendStop();
-    _errorStopsSent++;
-    Serial.printf("[State] -> ERROR  reason: %s\n", reason);
-    if (debugFlags & DBG_STATE) {
-        Serial.println("[State] Motors stopped, press E-stop to reset");
-    }
+    Serial.printf("[Serial] Command: enterError - reason: %s (triggering failsafe)\n", reason);
+    // Force Supervisor into failsafe by requesting disconnect
+    supervisor.requestDisconnect();
 }
 
 static void enterOff() {
     sysState = STATE_OFF;
-    jsActiveSinceMs = 0;
-    jsIdleSinceMs   = 0;
-    bleSendStop();
-    bleDisconnect();
+    supervisor.requestDisconnect();
     buzzerPlay(BUZZ_POWER_OFF);
     
     // Turn off all LEDs
@@ -409,6 +370,10 @@ void loop() {
     uint32_t now = millis();
     loopCounter++;
     
+    // Get current supervisor state for UI and logging
+    SupervisorState supState = supervisor.getState();
+    
+    // Legacy sysState is updated by onSupervisorStateChange callback
     const char* stateName = (sysState == STATE_BOOT) ? "BOOT" :
                        (sysState == STATE_CONNECTING) ? "CONNECTING" :
                        (sysState == STATE_READY) ? "READY" :
@@ -429,6 +394,14 @@ void loop() {
     buttonsTick();
     JoystickNorm js = joystickRead();
 
+    // --- Build ControlState from joystick for Supervisor ---
+    ControlState control;
+    control.vx = js.y;  // Forward/backward
+    control.vy = js.x;  // Left/right (strafe)
+    control.deadman = !js.inDeadzone;  // Active when outside deadzone
+    control.mode = js.inDeadzone ? DRIVE_MODE_STOP : DRIVE_MODE_MANUAL;
+    control.timestamp = now;
+    
     // --- Button press detection & logging (before action, so we see everything) ---
     bool estopPressed    = btnEstop.wasPressed();
     bool hillHoldPressed = btnHillHold.wasPressed();
@@ -456,13 +429,15 @@ void loop() {
             // This case should never be reached since we enter deep sleep
             // But kept for serial command 'power on' support during development
             Serial.println("[Power] Turning ON...");
+            static const uint8_t leftKey[] = ENCRYPTION_KEY_LEFT;
+            static const uint8_t rightKey[] = ENCRYPTION_KEY_RIGHT;
             bleInit("M25-Remote");
             ledSetAssistLevel(assistLevel);
             ledSetHillHold(hillHoldOn);
             #ifdef ENABLE_BATTERY_MONITOR
             ledSetBattery(batteryPct);
             #endif
-            enterConnecting();
+            supervisor.requestConnect(LEFT_WHEEL_MAC, RIGHT_WHEEL_MAC, leftKey, rightKey);
         } else {
             // Turn off from any active state -> deep sleep
             Serial.println("[Power] Turning OFF...");
@@ -476,208 +451,76 @@ void loop() {
 
     // --- Emergency stop: highest priority, any state ---
     if (estopPressed) {
-        if (sysState == STATE_ERROR) {
-            // Second press: reset from error
-            Serial.println("[E-Stop] Reset: disconnecting and reconnecting...");
-            bleDisconnect();  // Clean up old connections and clear stale buffers
-            enterConnecting();
+        if (supState == SUPERVISOR_FAILSAFE) {
+            // Second press: reset from error - disconnect and reconnect
+            Serial.println("[E-Stop] Reset: requesting reconnect...");
+            static const uint8_t leftKey[] = ENCRYPTION_KEY_LEFT;
+            static const uint8_t rightKey[] = ENCRYPTION_KEY_RIGHT;
+            supervisor.requestDisconnect();
+            delay(100);  // Give BLE time to clean up
+            supervisor.requestConnect(LEFT_WHEEL_MAC, RIGHT_WHEEL_MAC, leftKey, rightKey);
         } else {
-            enterError("E-stop pressed");
+            // First press: emergency stop (Supervisor handles failsafe via control.deadman = false)
+            Serial.println("[E-Stop] Emergency stop");
+            control.deadman = false;
+            control.mode = DRIVE_MODE_STOP;
         }
-        // Do not process other inputs this iteration
+        // Continue processing to feed stop command to supervisor
+    }
+
+    // --- Feature buttons (state-dependent) ---
+    
+    // Dual button press: force reconnect (hill-hold + assist simultaneously)
+    if (hillHoldPressed && assistPressed) {
+        Serial.println("[Button] Dual press: forcing reconnect...");
+        static const uint8_t leftKey[] = ENCRYPTION_KEY_LEFT;
+        static const uint8_t rightKey[] = ENCRYPTION_KEY_RIGHT;
+        supervisor.requestDisconnect();
+        delay(100);
+        supervisor.requestConnect(LEFT_WHEEL_MAC, RIGHT_WHEEL_MAC, leftKey, rightKey);
         ledTick();
         return;
     }
-
-    // --- State-specific logic ---
-    switch (sysState) {
-
-        // ---- CONNECTING ----
-        case STATE_CONNECTING:
-            // Buttons ignored during connection attempt
-            if (hillHoldPressed || assistPressed) {
-                Serial.println("[Button] Ignored - still connecting to wheels");
-            }
-
-            if (bleAllConnected()) {
-                enterReady();
-            } else {
-                // Reconnect attempts are handled by bleTick() below
-                ledSetStatus(LED_BLINK_SLOW);
-            }
-            break;
-
-        // ---- READY ----
-        case STATE_READY: {
-            // Dual button press: force BLE reconnect (hill-hold + assist simultaneously)
-            if (hillHoldPressed && assistPressed) {
-                Serial.println("[Button] Dual press: forcing BLE reconnect...");
-                enterConnecting();
-                break;
-            }
-
-            // Hill hold toggle (allowed when motors stopped)
-            if (hillHoldPressed) {
-                hillHoldOn = !hillHoldOn;
-                ledSetHillHold(hillHoldOn);
-                buzzerPlay(BUZZ_BUTTON);
-                bleSendHillHold(hillHoldOn);
-                Serial.printf("[HillHold] %s\n", hillHoldOn ? "ON" : "OFF");
-            }
-
-            // Assist level cycle (allowed when motors stopped)
-            if (assistPressed) {
-                assistLevel = (assistLevel + 1) % ASSIST_COUNT;
-                ledSetAssistLevel(assistLevel);
-                buzzerPlay(BUZZ_CONFIRM);
-                bleSendAssistLevel(assistLevel);
-                Serial.printf("[Assist] -> %s  (Vmax fwd %d %%)\n",
-                              assistConfigs[assistLevel].name,
-                              assistConfigs[assistLevel].vmaxForward);
-            }
-
-            // Connection loss check
-            if (!bleAnyConnected()) {
-                enterError("Connection lost in READY state");
-                break;
-            }
-
-            // Joystick activated -> OPERATING (hold JS_ACTIVATE_HOLD_MS outside deadzone)
-            if (!js.inDeadzone) {
-                if (jsActiveSinceMs == 0) jsActiveSinceMs = now;
-                if (now - jsActiveSinceMs >= JS_ACTIVATE_HOLD_MS) {
-                    jsActiveSinceMs = 0;
-                    jsIdleSinceMs   = 0;
-                    enterOperating();
-                    // Fall through to OPERATING to send first command immediately
-                } else {
-                    break;   // hold not yet met, stay in READY
-                }
-            } else {
-                jsActiveSinceMs = 0;   // joystick back in deadzone, reset hold timer
-                // Periodic keepalive stop in READY state.
-                // Rate is deliberately slow (500 ms) to avoid saturating the
-                // BLE TX queue, which would block writeValue() and freeze loop().
-                // The initial stop is sent by enterReady() on state entry.
-                if (now - lastCommandSentMs >= 500) {
-                    bleSendStop();
-                    lastCommandSentMs = now;
-                }
-                break;
-            }
-            // intentional fall-through to OPERATING on first active frame
-        }
-
-        // ---- OPERATING ----
-        case STATE_OPERATING: {
-            // Hill hold NOT allowed while wheels are moving
-            if (hillHoldPressed) {
-                buzzerPlay(BUZZ_WARNING);
-                Serial.println("[HillHold] Ignored - motors active");
-            }
-
-            // Assist level NOT allowed while wheels are moving
-            if (assistPressed) {
-                buzzerPlay(BUZZ_WARNING);
-                Serial.println("[Assist] Ignored - motors active, stop first");
-            }
-
-            // Connection loss check
-            if (!bleAnyConnected()) {
-                enterError("Connection lost while OPERATING");
-                break;
-            }
-
-            // Watchdog: track last non-zero input
-            if (!js.inDeadzone) {
-                lastActiveMs      = now;
-                watchdogWarnShown = false;
-                jsIdleSinceMs     = 0;   // joystick active again, reset hold timer
-            } else {
-                // Joystick returned to center -> back to READY after hold period
-                if (jsIdleSinceMs == 0) jsIdleSinceMs = now;
-                if (now - jsIdleSinceMs >= JS_IDLE_HOLD_MS) {
-                    jsIdleSinceMs   = 0;
-                    jsActiveSinceMs = 0;
-                    enterReady();
-                    break;
-                }
-            }
-
-            // Watchdog warning and timeout
-            // Only active when ENABLE_IDLE_WATCHDOG is set (self-centering joystick).
-            // With a potentiometer the user holds positions indefinitely - the watchdog
-            // would fire every 5 s, so it is disabled by default.
-#ifdef ENABLE_IDLE_WATCHDOG
-            uint32_t idle = now - lastActiveMs;
-            if (idle >= WATCHDOG_TIMEOUT_MS) {
-                enterError("Watchdog timeout - no joystick input");
-                break;
-            } else if (idle >= WATCHDOG_WARN_MS && !watchdogWarnShown) {
-                watchdogWarnShown = true;
-                buzzerPlay(BUZZ_WARNING);
-                Serial.println("[Watchdog] WARNING: joystick inactive > 3 s");
-                ledSetStatus(LED_BLINK_FAST);
-            } else if (idle < WATCHDOG_WARN_MS) {
-                ledSetStatus(LED_OFF);
-            }
-#else
-            ledSetStatus(LED_OFF);
-#endif
-
-            // Send motor commands at 20 Hz
-            if (now - lastCommandSentMs >= COMMAND_RATE_MS) {
-                MotorCommand cmd = joystickToMotorCommand(js, assistLevel);
-                if (cmd.isStop) {
-                    bleSendStop();
-                } else {
-                    bleSendMotorCommand(cmd.leftSpeed, cmd.rightSpeed);
-                    if (debugFlags & DBG_MOTOR) {
-                        printMotorCommand(cmd);
-                    }
-                }
-                lastCommandSentMs = now;
-            }
-            break;
-        }
-
-        // ---- ERROR ----
-        case STATE_ERROR:
-            // E-stop handling already at top of loop.
-            // Send a few more stop retries in case the first one was lost,
-            // then stop trying - repeated writeValue() calls can block loop()
-            // if the BLE TX queue fills or the connection is stressed.
-            // The wheel's own remote-control watchdog will cut power independently.
-            if (_errorStopsSent < BLE_ERROR_STOP_TRIES &&
-                now - lastCommandSentMs >= 200) {
-                if (bleAnyConnected()) bleSendStop();
-                _errorStopsSent++;
-                lastCommandSentMs = now;
-            }
-            break;
-
-        // ---- BOOT (shouldn't reach here in loop) ----
-        case STATE_BOOT:
-        default:
-            break;
-
-        // ---- OFF ----
-        case STATE_OFF:
-            // Power button handling already at top of loop
-            // Ignore all other buttons and inputs
-            if (estopPressed || hillHoldPressed || assistPressed) {
-                Serial.println("[Button] Ignored - device is off (press power button)");
-            }
-            break;
-    }
-
-    // --- BLE reconnect tick (runs every BLE_RECONNECT_DELAY_MS) ---
-    if (now - lastBleTickMs >= 1000) {
-        lastBleTickMs = now;
-        if (sysState == STATE_CONNECTING) {
-            bleTick();
+    
+    // Hill hold toggle (only when not driving)
+    if (hillHoldPressed) {
+        if (supState == SUPERVISOR_PAIRED || supState == SUPERVISOR_ARMED) {
+            hillHoldOn = !hillHoldOn;
+            ledSetHillHold(hillHoldOn);
+            buzzerPlay(BUZZ_BUTTON);
+            bleSendHillHold(hillHoldOn);
+            Serial.printf("[HillHold] %s\n", hillHoldOn ? "ON" : "OFF");
+        } else if (supState == SUPERVISOR_DRIVING) {
+            buzzerPlay(BUZZ_WARNING);
+            Serial.println("[HillHold] Ignored - motors active");
+        } else {
+            Serial.println("[HillHold] Ignored - not connected");
         }
     }
+
+    // Assist level cycle (only when not driving)
+    if (assistPressed) {
+        if (supState == SUPERVISOR_PAIRED || supState == SUPERVISOR_ARMED) {
+            assistLevel = (assistLevel + 1) % ASSIST_COUNT;
+            ledSetAssistLevel(assistLevel);
+            buzzerPlay(BUZZ_CONFIRM);
+            bleSendAssistLevel(assistLevel);
+            Serial.printf("[Assist] -> %s  (Vmax fwd %d %%)\n",
+                          assistConfigs[assistLevel].name,
+                          assistConfigs[assistLevel].vmaxForward);
+        } else if (supState == SUPERVISOR_DRIVING) {
+            buzzerPlay(BUZZ_WARNING);
+            Serial.println("[Assist] Ignored - motors active, stop first");
+        } else {
+            Serial.println("[Assist] Ignored - not connected");
+        }
+    }
+
+    // --- Feed control input to Supervisor ---
+    supervisor.processInput(control);
+    
+    // --- Update Supervisor state machine (handles all state logic and motor commands) ---
+    supervisor.update();
 
     // --- Battery monitoring (every 10 s) ---
 #ifdef ENABLE_BATTERY_MONITOR
@@ -690,10 +533,9 @@ void loop() {
         // Critical battery: force safe shutdown
         if (batteryPct <= BATT_AUTO_OFF_PCT && sysState != STATE_ERROR && sysState != STATE_OFF) {
             Serial.println("[Battery] CRITICAL - forcing disconnect");
-            bleSendStop();
-            bleDisconnect();
+            supervisor.requestDisconnect();
             buzzerPlay(BUZZ_ERROR);
-            enterError("Battery critical - auto shutdown");
+            // Supervisor will enter FAILSAFE automatically
         }
     }
 #endif
