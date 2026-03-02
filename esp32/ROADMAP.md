@@ -67,7 +67,7 @@
 ### 1.3 Port Types
 **Reference:** `core/types.py`
 
-- [ ] Data structures
+- [x] Data structures
   - ControlState, CommandFrame, VehicleState
   - DriveMode, SupervisorState enums
   - MapperConfig, SupervisorConfig
