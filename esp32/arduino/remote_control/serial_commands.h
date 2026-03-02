@@ -51,6 +51,7 @@
 
 #include <Arduino.h>
 #include "device_config.h"
+#include "types.h"
 #include "led_control.h"
 #include "joystick.h"
 #include "motor_control.h"
@@ -82,6 +83,9 @@ static const DebugFlagInfo _debugFlagTable[] = {
 };
 static const uint8_t _debugFlagCount = sizeof(_debugFlagTable) / sizeof(_debugFlagTable[0]);
 
+// Forward declaration
+class Supervisor;
+
 // ---------------------------------------------------------------------------
 // Caller-supplied context: pointers into state in remote_control.ino
 // and function pointers for state transitions (avoids extern linkage issues
@@ -91,8 +95,7 @@ struct SerialContext {
     SystemState* state;
     uint8_t*     assistLevel;
     bool*        hillHoldOn;
-    void (*fnEnterConnecting)();
-    void (*fnEnterError)(const char*);
+    Supervisor*  supervisor;
     void (*fnEnterOff)();
     void (*fnRecalibrate)();
 #ifdef ENABLE_BATTERY_MONITOR
@@ -436,38 +439,50 @@ static void _scDispatch(const char* cmd, const SerialContext &ctx) {
         return;
     }
 
-    // stop (software e-stop -> ERROR state)
+    // stop (software e-stop -> FAILSAFE state)
     if (strcmp(cmd, "stop") == 0) {
-        ctx.fnEnterError("serial stop command");
+        if (ctx.supervisor) {
+            Serial.println(F("[CMD] Emergency stop"));
+            ctx.supervisor->requestEmergencyStop("serial stop command");
+        } else {
+            Serial.println(F("[CMD] ERROR: supervisor not available"));
+        }
         return;
     }
 
-    // reset - exit ERROR state back to CONNECTING
+    // reset - exit FAILSAFE state back to CONNECTING
     if (strcmp(cmd, "reset") == 0) {
-        if (*ctx.state != STATE_ERROR) {
-            Serial.println(F("[CMD] reset: not in ERROR state"));
+        if (!ctx.supervisor) {
+            Serial.println(F("[CMD] ERROR: supervisor not available"));
             return;
         }
-        Serial.println(F("[CMD] Clearing error, reconnecting..."));
-        ctx.fnEnterConnecting();
+        SupervisorState supState = ctx.supervisor->getState();
+        if (supState != SUPERVISOR_FAILSAFE) {
+            Serial.println(F("[CMD] reset: not in FAILSAFE state"));
+            return;
+        }
+        Serial.println(F("[CMD] Clearing failsafe, reconnecting..."));
+        ctx.supervisor->requestReconnect();
         return;
     }
 
-    // reconnect - force BLE reconnect from READY/CONNECTING
+    // reconnect - force BLE reconnect
     if (strcmp(cmd, "reconnect") == 0) {
-        if (*ctx.state == STATE_OPERATING) {
-            Serial.println(F("[CMD] reconnect: stop motors first"));
+        if (!ctx.supervisor) {
+            Serial.println(F("[CMD] ERROR: supervisor not available"));
             return;
         }
-        if (*ctx.state == STATE_ERROR) {
-            Serial.println(F("[CMD] reconnect: use 'reset' to clear ERROR state first"));
+        SupervisorState supState = ctx.supervisor->getState();
+        if (supState == SUPERVISOR_DRIVING) {
+            Serial.println(F("[CMD] reconnect: stop motors first"));
             return;
         }
         if (*ctx.state == STATE_OFF) {
             Serial.println(F("[CMD] reconnect: device is OFF, use 'power on' first"));
             return;
         }
-        ctx.fnEnterConnecting();
+        Serial.println(F("[CMD] Forcing reconnect..."));
+        ctx.supervisor->requestReconnect();
         return;
     }
 

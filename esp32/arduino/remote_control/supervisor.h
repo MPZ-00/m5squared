@@ -69,6 +69,19 @@ public:
     void requestDisconnect();
     
     /**
+     * Request forced reconnection (disconnect then reconnect)
+     * Works from any state except OFF
+     */
+    void requestReconnect();
+    
+    /**
+     * Request emergency stop (enter FAILSAFE state)
+     * 
+     * @param reason  Reason for emergency stop
+     */
+    void requestEmergencyStop(const char* reason = "Emergency stop");
+    
+    /**
      * Request transition to ARMED state (ready to drive)
      * Only valid from PAIRED state
      */

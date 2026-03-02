@@ -132,33 +132,7 @@ static int readBatteryPct() {
 }
 #endif
 
-static void enterConnecting() {
-    if (debugFlags & DBG_STATE) {
-        Serial.println("[Serial] Command: enterConnecting");
-    }
-    static const uint8_t leftKey[] = ENCRYPTION_KEY_LEFT;
-    static const uint8_t rightKey[] = ENCRYPTION_KEY_RIGHT;
-    supervisor.requestConnect(LEFT_WHEEL_MAC, RIGHT_WHEEL_MAC, leftKey, rightKey);
-}
 
-static void enterReady() {
-    if (debugFlags & DBG_STATE) {
-        Serial.println("[Serial] Command: enterReady - no-op");
-    }
-}
-
-static void enterOperating() {
-    if (debugFlags & DBG_STATE) {
-        Serial.println("[Serial] Command: enterOperating - no-op");
-    }
-}
-
-static void enterError(const char* reason) {
-    if (debugFlags & DBG_STATE) {
-        Serial.printf("[Serial] Command: enterError - %s\n", reason);
-    }
-    supervisor.requestDisconnect();
-}
 
 static void enterOff() {
     sysState = STATE_OFF;
@@ -267,8 +241,7 @@ static SerialContext _serialCtx = {
     &sysState,
     &assistLevel,
     &hillHoldOn,
-    enterConnecting,
-    enterError,
+    &supervisor,
     enterOff,
     joystickRecalibrate,
 #ifdef ENABLE_BATTERY_MONITOR
@@ -401,17 +374,12 @@ void loop() {
             if (debugFlags & DBG_STATE) {
                 Serial.println("[E-Stop] Reset: requesting reconnect...");
             }
-            static const uint8_t leftKey[] = ENCRYPTION_KEY_LEFT;
-            static const uint8_t rightKey[] = ENCRYPTION_KEY_RIGHT;
-            supervisor.requestDisconnect();
-            delay(100);
-            supervisor.requestConnect(LEFT_WHEEL_MAC, RIGHT_WHEEL_MAC, leftKey, rightKey);
+            supervisor.requestReconnect();
         } else {
             if (debugFlags & DBG_STATE) {
                 Serial.println("[E-Stop] Emergency stop");
             }
-            control.deadman = false;
-            control.mode = DRIVE_MODE_STOP;
+            supervisor.requestEmergencyStop("E-Stop button pressed");
         }
     }
 
@@ -419,11 +387,7 @@ void loop() {
         if (debugFlags & DBG_BUTTONS) {
             Serial.println("[Button] Dual press: forcing reconnect...");
         }
-        static const uint8_t leftKey[] = ENCRYPTION_KEY_LEFT;
-        static const uint8_t rightKey[] = ENCRYPTION_KEY_RIGHT;
-        supervisor.requestDisconnect();
-        delay(100);
-        supervisor.requestConnect(LEFT_WHEEL_MAC, RIGHT_WHEEL_MAC, leftKey, rightKey);
+        supervisor.requestReconnect();
         ledTick();
         return;
     }

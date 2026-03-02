@@ -137,6 +137,25 @@ void Supervisor::requestDisconnect() {
     }
 }
 
+void Supervisor::requestReconnect() {
+    if (debugFlags & DBG_STATE) {
+        Serial.println("[Supervisor] Forced reconnect requested");
+    }
+    
+    // Request disconnect first
+    _stopRequested = true;
+    
+    // Connection will be re-initiated after disconnect completes
+    _connectionRequested = true;
+}
+
+void Supervisor::requestEmergencyStop(const char* reason) {
+    if (debugFlags & DBG_STATE) {
+        Serial.printf("[Supervisor] Emergency stop requested: %s\n", reason);
+    }
+    enterFailsafe(reason);
+}
+
 void Supervisor::requestArm() {
     if (_state == SUPERVISOR_PAIRED) {
         transitionTo(SUPERVISOR_ARMED);
@@ -305,6 +324,11 @@ void Supervisor::handleStopRequest() {
     bleDisconnect();
     transitionTo(SUPERVISOR_DISCONNECTED);
     _stopRequested = false;
+    
+    // If reconnection was requested, initiate it now
+    if (_connectionRequested) {
+        transitionTo(SUPERVISOR_CONNECTING);
+    }
 }
 
 // ---------------------------------------------------------------------------
