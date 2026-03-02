@@ -580,7 +580,11 @@ public:
         _wheels[wheelIdx].connected     = false;
         _wheels[wheelIdx].protocolReady = false;
         _wheels[wheelIdx].driveModeBits = 0;
-        Serial.printf("[BLE] %s wheel disconnected\n", _wheels[wheelIdx].name);
+        
+        // Only print message for active wheels (respect WHEEL_MODE)
+        if (_wheelActive(wheelIdx)) {
+            Serial.printf("[BLE] %s wheel disconnected\n", _wheels[wheelIdx].name);
+        }
     }
 };
 static M25DisconnectCallback _callbacks[WHEEL_COUNT];

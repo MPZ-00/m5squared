@@ -102,6 +102,12 @@ public:
     void updateVehicleState(const VehicleState& state);
     
     /**
+     * Notify supervisor that a connection state changed
+     * Call this when a wheel connects or disconnects
+     */
+    void notifyConnectionChange();
+    
+    /**
      * Register callback for state changes
      * 
      * @param callback  Function to call on state change (oldState, newState)

@@ -64,7 +64,7 @@
 // ---------------------------------------------------------------------------
 // Debug output flags - definitions in device_config.h
 // ---------------------------------------------------------------------------
-uint8_t debugFlags = DBG_BLE;   // all off by default, accessible globally
+uint8_t debugFlags = 0;   // all off by default, accessible globally
 
 // Debug flag metadata for better UI
 struct DebugFlagInfo {

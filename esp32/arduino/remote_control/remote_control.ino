@@ -58,6 +58,11 @@ static Mapper mapper(mapperConfig);
 static SupervisorConfig supervisorConfig;
 static Supervisor supervisor(mapper, supervisorConfig);
 
+// Supervisor connection change callback (called from BLE disconnect callback)
+void supervisorNotifyConnectionChange() {
+    supervisor.notifyConnectionChange();
+}
+
 static void onSupervisorStateChange(SupervisorState oldState, SupervisorState newState) {
     if (debugFlags & DBG_STATE) {
         const char* newName = (newState == SUPERVISOR_DISCONNECTED) ? "DISCONNECTED" :
@@ -103,10 +108,12 @@ static void onSupervisorStateChange(SupervisorState oldState, SupervisorState ne
             
         case SUPERVISOR_ARMED:
             ledSetStatus(LED_OFF);
+            ledSetBle(true);  // Ensure LED stays solid
             break;
             
         case SUPERVISOR_DRIVING:
             ledSetStatus(LED_OFF);
+            ledSetBle(true);  // Ensure LED stays solid
             break;
             
         case SUPERVISOR_FAILSAFE:

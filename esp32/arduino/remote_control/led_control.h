@@ -181,7 +181,14 @@ inline void ledSetAssistLevel(uint8_t level) {
 
 // BLE LED: slow blink = connecting/searching, solid = connected
 inline void ledSetBle(bool connected) {
-    _ledSetMode(_ledBle, connected ? LED_ON : LED_BLINK_SLOW);
+    LedMode newMode = connected ? LED_ON : LED_BLINK_SLOW;
+    if (_ledBle.mode != newMode) {
+        extern uint8_t debugFlags;
+        if (debugFlags & DBG_STATE) {
+            Serial.printf("[LED] BLE -> %s\n", connected ? "ON" : "BLINK");
+        }
+    }
+    _ledSetMode(_ledBle, newMode);
 }
 
 // ---------------------------------------------------------------------------

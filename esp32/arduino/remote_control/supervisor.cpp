@@ -287,7 +287,12 @@ void Supervisor::handleConnecting() {
 
 void Supervisor::handlePaired() {
     // Connected but not armed - just maintain connection
-    // Could read vehicle state here if needed
+    // Check if we lost connection
+    if (!bleAllConnected()) {
+        Serial.println("[Supervisor] Lost connection in PAIRED state");
+        transitionTo(SUPERVISOR_DISCONNECTED);
+        return;
+    }
     
     // Wait for explicit arm request from user
     // This is a safety feature - user must explicitly enable driving
@@ -295,12 +300,24 @@ void Supervisor::handlePaired() {
 
 void Supervisor::handleArmed() {
     // Ready to drive, waiting for input
+    // Check if we lost connection
+    if (!bleAllConnected()) {
+        Serial.println("[Supervisor] Lost connection in ARMED state");
+        enterFailsafe("Connection lost");
+        return;
+    }
     // Input processing happens in processInput()
     // Just maintain heartbeat here
 }
 
 void Supervisor::handleDriving() {
     // Actively controlling vehicles
+    // Check if we lost connection
+    if (!bleAllConnected()) {
+        Serial.println("[Supervisor] Lost connection while driving");
+        enterFailsafe("Connection lost");
+        return;
+    }
     // Input processing happens in processInput()
     // Watchdogs are checked in main update loop
 }
@@ -452,4 +469,15 @@ bool Supervisor::isInputTimeout() const {
 
 bool Supervisor::isLinkTimeout() const {
     return _lastLinkTimeMs > 0 && (millis() - _lastLinkTimeMs) > _config.linkTimeoutMs;
+}
+
+void Supervisor::notifyConnectionChange() {
+    // Called when a wheel connects or disconnects
+    // Check if we should transition based on connection state
+    if (_state == SUPERVISOR_PAIRED || _state == SUPERVISOR_ARMED || _state == SUPERVISOR_DRIVING) {
+        if (!bleAllConnected()) {
+            Serial.println("[Supervisor] Connection lost, entering failsafe");
+            enterFailsafe("Wheel disconnected");
+        }
+    }
 }
