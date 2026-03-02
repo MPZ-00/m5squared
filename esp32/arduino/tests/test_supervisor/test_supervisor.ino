@@ -164,15 +164,15 @@ void setup() {
     Serial.println("\n=========================================");
     Serial.println("  Supervisor Unit Tests");
     Serial.println("=========================================\n");
+    Serial.println("NOTE: These tests focus on data structures and");
+    Serial.println("      mapper integration. Full supervisor testing");
+    Serial.println("      requires BLE hardware integration.\n");
     
     // Run all tests
-    testInitialState();
-    testConnectionTransition();
-    testArmTransition();
-    testDrivingTransition();
-    testStopOnDeadmanRelease();
-    testInputTimeoutWatchdog();
-    testDisconnectRequest();
+    testStateEnumeration();
+    testSupervisorConfig();
+    testVehicleState();
+    testMapperIntegration();
     
     // Print summary
     Serial.println("\n=========================================");
@@ -194,12 +194,3 @@ void loop() {
     // Nothing to do after tests complete
     delay(1000);
 }
-Serial.println("NOTE: These tests focus on data structures and");
-    Serial.println("      mapper integration. Full supervisor testing");
-    Serial.println("      requires BLE hardware integration.\n");
-    
-    // Run all tests
-    testStateEnumeration();
-    testSupervisorConfig();
-    testVehicleState();
-    testMapperIntegration

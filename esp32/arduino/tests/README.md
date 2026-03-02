@@ -2,48 +2,63 @@
 
 ## Test Framework
 
-Modular test framework with optional hardware feedback (OLED, buzzer, LEDs).
+Unit tests for remote_control components. Each test is a standalone Arduino sketch.
 
-**Hardware wiring:** See [HARDWARE_SETUP.md](HARDWARE_SETUP.md)
+## Quick Start (Arduino IDE)
 
-## Quick Start
-
-### 1. Hardware Test
-```
-1. Wire hardware per HARDWARE_SETUP.md
-2. Install libraries: Adafruit GFX, Adafruit SSD1306
-3. Upload test_hardware/test_hardware.ino
-4. Verify OLED, buzzer, LEDs work
+### 1. Prepare Test Build Environment
+```powershell
+cd esp32/arduino/tests
+.\prepare_test.ps1 -TestName test_supervisor
 ```
 
-### 2. Create Your Test
-```cpp
-#include "../test_base.h"
+This creates/updates `_build_test_supervisor/` with:
+- All files from `remote_control/` (headers, sources)
+- Your test as `_build_test_supervisor.ino`
 
-void setup() {
-    testBegin("My Test Suite");
-    
-    testStartSection("My Tests");
-    ASSERT_EQ(expected, actual, "Test description");
-    testEndSection();
-    
-    testSummary();
-}
-
-void loop() {
-    delay(1000);
-}
+### 2. Open in Arduino IDE
+```powershell
+arduino _build_test_supervisor\_build_test_supervisor.ino
 ```
+(Where `arduino` is alias to Arduino IDE.exe)
+
+Or manually:
+1. Open `_build_test_supervisor/_build_test_supervisor.ino`
+2. Select **Tools > Board > ESP32 Dev Module**
+3. Select your COM port
+4. Click **Verify** to compile
+5. Click **Upload** to run tests
+6. Open **Serial Monitor** (115200 baud) to see results
+
+### 3. Make Changes
+- Edit files in `remote_control/` (production code)
+- Edit test in `test_supervisor/` (test code)
+- Run `prepare_test.ps1` again to rebuild
+
+**Note:** `_build_test/` is reused and git-ignored.
+
+## Alternative: Command Line (Automated)
+
+```powershell
+cd esp32/arduino/tests
+.\run_tests.ps1 -Board "esp32:esp32:esp32" -Port "COM8"
+```
+
+Requires: Arduino CLI (`winget install Arduino.ArduinoCLI`)
 
 ## Structure
 
 ```
 tests/
-├── test_base.h              # Core framework (include in all tests)
-├── HARDWARE_SETUP.md        # Wiring and setup guide
-├── test_hardware/           # Hardware verification
-├── test_example/            # Minimal template
-└── test_mapper/             # Real unit tests
+├── prepare_test.ps1         # Prepare test for Arduino IDE
+├── run_tests.ps1           # Automated CLI testing
+├── test_supervisor/        # Supervisor state machine tests
+│   └── test_supervisor.ino
+├── test_mapper/            # Mapper safety tests
+│   └── test_mapper.ino
+└── _build_test_supervisor/ # Temporary (git-ignored)
+    ├── *.h, *.cpp          # Copied from remote_control/
+    └── _build_test_supervisor.ino
 ```
 
 ## API Reference

@@ -43,3 +43,6 @@ $RECYCLE.BIN/
 # Logs
 *.log
 logs/
+
+# ESP32 Arduino test build directories (temporary)
+esp32/arduino/tests/_build_*/
