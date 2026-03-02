@@ -53,7 +53,7 @@
 #define WHEEL_MODE_LEFT_ONLY   1
 #define WHEEL_MODE_RIGHT_ONLY  2
 
-#define WHEEL_MODE  WHEEL_MODE_RIGHT_ONLY   // <-- set to WHEEL_MODE_DUAL for normal operation
+#define WHEEL_MODE  WHEEL_MODE_DUAL   // <-- set to WHEEL_MODE_DUAL for normal operation
 
 #if   WHEEL_MODE == WHEEL_MODE_DUAL
   #define WHEEL_MODE_NAME "Dual"
