@@ -30,6 +30,7 @@
 #include <BLEClient.h>
 #include <mbedtls/aes.h>
 #include <esp_system.h>     // esp_fill_random()
+#include <stddef.h>         // offsetof()
 #include "device_config.h"
 
 // External debug flags (defined in serial_commands.h)
@@ -532,7 +533,7 @@ static void _notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size
             // Check minimum frame size before attempting decrypt
             if (unstuffedLen < M25_HEADER_SIZE + 16 + 16 + M25_CRC_SIZE) {
                 Serial.printf("[BLE] %s wheel: Frame too short (%zu bytes, need >= 37)\n", 
-                             w.name, unstuffedLen);
+                             w.name ? w.name : "Unknown", unstuffedLen);
                 break;
             }
             
@@ -544,13 +545,13 @@ static void _notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size
                 if (!w.receivedFirstAck) {
                     w.receivedFirstAck = true;
                     Serial.printf("[BLE] %s wheel: First response received (%zu bytes) - encryption validated\n", 
-                                 w.name, length);
+                                 w.name ? w.name : "Unknown", length);
                 }
                 
                 // Parse SPP packet structure
-                _parseSppPacket(sppPacket, sppLen, w.name);
+                _parseSppPacket(sppPacket, sppLen, w.name ? w.name : "Unknown");
             } else {
-                Serial.printf("[BLE] %s wheel: Decryption failed\n", w.name);
+                Serial.printf("[BLE] %s wheel: Decryption failed\n", w.name ? w.name : "Unknown");
             }
             
             break;
@@ -644,8 +645,23 @@ static bool _connectWheel(int idx) {
     }
     
     WheelConnState_t &w = _wheels[idx];
+    
+    // CRITICAL: Check if name pointer is corrupted
+    if (!w.name) {
+        Serial.printf("[BLE] CRITICAL ERROR: _wheels[%d].name is NULL!\n", idx);
+        Serial.printf("[BLE] Struct address: %p, name offset: %lu\n", 
+                      (void*)&w, offsetof(WheelConnState_t, name));
+        Serial.printf("[BLE] Attempting to restore name pointer...\n");
+        // Restore the name from the expected value
+        if (idx == WHEEL_LEFT) {
+            w.name = "Left";
+        } else if (idx == WHEEL_RIGHT) {
+            w.name = "Right";
+        }
+    }
+    
     if (debugFlags & DBG_BLE) {
-        Serial.printf("[BLE] _connectWheel(%d): %s wheel\n", idx, w.name);
+        Serial.printf("[BLE] _connectWheel(%d): %s wheel\n", idx, w.name ? w.name : "UNKNOWN");
         Serial.printf("[BLE] MAC: '%s' (length: %d)\n", w.mac, strlen(w.mac));
     }
     
@@ -653,12 +669,13 @@ static bool _connectWheel(int idx) {
     w.driveModeBits = 0;
     w.protocolReady = false;
 
-    Serial.printf("[BLE] Connecting to %s wheel (%s)...\n", w.name, w.mac);
+    const char* wheelName = w.name ? w.name : "Unknown";
+    Serial.printf("[BLE] Connecting to %s wheel (%s)...\n", wheelName, w.mac);
 
     if (w.client == nullptr) {
         w.client = BLEDevice::createClient();
         if (w.client == nullptr) {
-            Serial.printf("[BLE] %s wheel: Failed to create BLE client\n", w.name);
+            Serial.printf("[BLE] %s wheel: Failed to create BLE client\n", wheelName);
             w.consecutiveFails++;
             return false;
         }
@@ -675,14 +692,14 @@ static bool _connectWheel(int idx) {
 
     Serial.printf("[BLE] Connecting to BLE address %s...\n", w.mac);
     if (!w.client->connect(BLEAddress(w.mac))) {
-        Serial.printf("[BLE] %s wheel: GATT connect FAILED\n", w.name);
+        Serial.printf("[BLE] %s wheel: GATT connect FAILED\n", wheelName);
         w.consecutiveFails++;
         return false;
     }
 
     BLERemoteService* svc = w.client->getService(BLEUUID(M25_SPP_SERVICE_UUID));
     if (!svc) {
-        Serial.printf("[BLE] %s wheel: SPP service not found\n", w.name);
+        Serial.printf("[BLE] %s wheel: SPP service not found\n", wheelName);
         w.client->disconnect();
         w.consecutiveFails++;
         return false;
@@ -690,7 +707,7 @@ static bool _connectWheel(int idx) {
 
     w.rxChar = svc->getCharacteristic(BLEUUID(M25_CHAR_RX_UUID));
     if (!w.rxChar) {
-        Serial.printf("[BLE] %s wheel: RX characteristic not found\n", w.name);
+        Serial.printf("[BLE] %s wheel: RX characteristic not found\n", wheelName);
         w.client->disconnect();
         w.consecutiveFails++;
         return false;
@@ -700,7 +717,7 @@ static bool _connectWheel(int idx) {
     w.txChar = svc->getCharacteristic(BLEUUID(M25_CHAR_TX_UUID));
     if (w.txChar && w.txChar->canNotify()) {
         w.txChar->registerForNotify(_notifyCallback);
-        Serial.printf("[BLE] %s wheel: Notifications enabled\n", w.name);
+        Serial.printf("[BLE] %s wheel: Notifications enabled\n", wheelName);
     }
     w.receivedFirstAck = false;  // Reset ACK flag
 
@@ -725,7 +742,7 @@ static bool _connectWheel(int idx) {
     }
     
     if (!w.receivedFirstAck) {
-        Serial.printf("[BLE] %s wheel: No response to SYSTEM_MODE (encryption validation failed)\n", w.name);
+        Serial.printf("[BLE] %s wheel: No response to SYSTEM_MODE (encryption validation failed)\n", wheelName);
         w.client->disconnect();
         w.consecutiveFails++;
         w.connected = false;
@@ -749,7 +766,7 @@ static bool _connectWheel(int idx) {
 
     w.protocolReady = true;
     w.consecutiveFails = 0;
-    Serial.printf("[BLE] %s wheel ready\n", w.name);
+    Serial.printf("[BLE] %s wheel ready\n", wheelName);
     return true;
 }
 
@@ -1011,7 +1028,8 @@ inline void bleSetMac(int idx, const char* mac) {
     w.consecutiveFails = 0;
     strncpy(w.mac, mac, 17);
     w.mac[17] = '\0';
-    Serial.printf("[BLE] %s wheel MAC -> %s  (reconnect required)\n", w.name, w.mac);
+    Serial.printf("[BLE] %s wheel MAC -> %s  (reconnect required)\n", 
+                  w.name ? w.name : "Unknown", w.mac);
 }
 
 // ---------------------------------------------------------------------------
