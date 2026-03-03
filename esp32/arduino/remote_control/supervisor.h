@@ -161,6 +161,8 @@ private:
     uint8_t _leftKey[16];
     uint8_t _rightKey[16];
     bool    _connectionRequested;
+    bool    _lastLeftConnected;   // Track wheel connection state changes
+    bool    _lastRightConnected;  // Track wheel connection state changes
     
     // ---------------------------------------------------------------------------
     // Vehicle State Cache

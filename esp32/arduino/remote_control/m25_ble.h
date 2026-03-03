@@ -132,9 +132,11 @@ static const uint8_t M25_ASSIST_LEVEL_MAP[ASSIST_COUNT] = { 0, 1, 2 };
 // The ESP32 GATT client layer initializes asynchronously; without this delay
 // the first retrieveDescriptors() call fails with ESP_GATT_UNKNOWN, leaving
 // the notification callback unregistered and causing SYSTEM_MODE timeout.
-#define BLE_STACK_INIT_DELAY_MS   700
+// Increased from 700ms to 1000ms to improve cold boot reliability
+#define BLE_STACK_INIT_DELAY_MS   1000
 // Delay before retrying registerForNotify() when the first attempt fails.
-#define BLE_NOTIFY_RETRY_DELAY_MS 400
+// Increased from 400ms to 500ms to improve cold boot reliability
+#define BLE_NOTIFY_RETRY_DELAY_MS 500
 
 // ---------------------------------------------------------------------------
 // Wheel slot indices

@@ -28,6 +28,8 @@ Supervisor::Supervisor(Mapper& mapper, const SupervisorConfig& config)
     , _connectAttemptMs(0)
     , _reconnectAttempts(0)
     , _connectionRequested(false)
+    , _lastLeftConnected(false)
+    , _lastRightConnected(false)
     , _callbackCount(0)
 {
     memset(_leftAddr, 0, sizeof(_leftAddr));
@@ -265,6 +267,11 @@ void Supervisor::handleConnecting() {
     // (bleConnect is blocking and can take several seconds)
     _connectAttemptMs = millis();
     
+    // Allow time for async disconnect callbacks to fire (e.g. encryption validation failures)
+    // Without this delay, we may check connection status before failed wheels have triggered
+    // their onDisconnect callbacks, causing us to incorrectly report partial success
+    delay(100);
+    
     // Check if connection was successful
     // Use bleAnyConnected() to allow partial connectivity in dual mode
     // (one wheel working while other is off/dead/out of range)
@@ -278,6 +285,11 @@ void Supervisor::handleConnecting() {
             Serial.println("[Supervisor] Connected successfully (partial - some wheels unreachable)");
         }
         _reconnectAttempts = 0;
+        
+        // Initialize wheel connection tracking for monitoring
+        _lastLeftConnected = bleIsConnected(WHEEL_LEFT);
+        _lastRightConnected = bleIsConnected(WHEEL_RIGHT);
+        
         transitionTo(SUPERVISOR_PAIRED);
         _lastLinkTimeMs = millis();
     } else {
@@ -300,6 +312,30 @@ void Supervisor::handleConnecting() {
 }
 
 void Supervisor::handlePaired() {
+    // Monitor individual wheel connection state changes
+    bool leftConnected = bleIsConnected(WHEEL_LEFT);
+    bool rightConnected = bleIsConnected(WHEEL_RIGHT);
+    
+    // Detect and log wheel disconnections
+    if (_lastLeftConnected && !leftConnected) {
+        Serial.println("[Supervisor] WARNING: Left wheel disconnected in PAIRED state");
+    }
+    if (_lastRightConnected && !rightConnected) {
+        Serial.println("[Supervisor] WARNING: Right wheel disconnected in PAIRED state");
+    }
+    
+    // Detect and log wheel reconnections
+    if (!_lastLeftConnected && leftConnected) {
+        Serial.println("[Supervisor] Left wheel reconnected in PAIRED state");
+    }
+    if (!_lastRightConnected && rightConnected) {
+        Serial.println("[Supervisor] Right wheel reconnected in PAIRED state");
+    }
+    
+    // Update tracking
+    _lastLeftConnected = leftConnected;
+    _lastRightConnected = rightConnected;
+    
     // Connected but not armed - just maintain connection
     // Check if we lost ALL connections (partial connectivity OK)
     if (!bleAnyConnected()) {
