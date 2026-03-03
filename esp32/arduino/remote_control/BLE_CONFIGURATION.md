@@ -31,13 +31,30 @@ We need to increase `CONFIG_GATTC_MAX_CONNECTIONS` to **2** for dual wheel suppo
 - Clean, project-specific configuration
 - Easy to version control
 - No global changes to ESP32 core
+- Uses ESP-IDF 5.x with better BLE support
+
+**Important: Custom Platform Required**
+This project uses a **custom ESP32 platform** from pioarduino (ESP-IDF 5.x based) instead of the standard PlatformIO espressif32 platform. This provides:
+- Enhanced BLE stack with better multi-connection support
+- More recent toolchain and bug fixes
+- Better compatibility with dual GATT client connections
+
+**DO NOT change the platform line** in platformio.ini - it must remain:
+```ini
+platform = https://github.com/pioarduino/platform-espressif32/releases/download/55.03.37/platform-espressif32.zip
+```
 
 **Steps:**
 1. Install PlatformIO extension in VS Code
-2. Copy `platformio.ini.example` to `platformio.ini`
-3. Open this folder in PlatformIO (`File → Open Folder`)
-4. Click the PlatformIO icon → Build
-5. Upload to ESP32
+2. The `platformio.ini` file is already configured correctly
+3. Ensure `sdkconfig.defaults` exists with:
+   ```
+   CONFIG_GATTC_MAX_CONNECTIONS=2
+   CONFIG_BT_ACL_CONNECTIONS=4
+   ```
+4. Open this folder in PlatformIO (`File → Open Folder`)
+5. Click the PlatformIO icon → Build
+6. Upload to ESP32
 
 The build flags in `platformio.ini` automatically configure the BLE stack:
 ```ini
@@ -45,6 +62,8 @@ build_flags =
     -DCONFIG_BT_ACL_CONNECTIONS=4
     -DCONFIG_GATTC_MAX_CONNECTIONS=2
 ```
+The configuration is applied through both `sdkconfig.defaults` (embedded config) and `build_flags` (compile-time defines).
+
 
 ---
 

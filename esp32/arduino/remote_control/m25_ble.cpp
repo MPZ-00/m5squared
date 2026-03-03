@@ -683,6 +683,16 @@ bool _connectWheel(int idx) {
     // Get TX characteristic for receiving notifications (optional - wheel may not send)
     w.txChar = svc->getCharacteristic(BLEUUID(M25_CHAR_TX_UUID));
     if (w.txChar && w.txChar->canNotify()) {
+        // registerForNotify() calls retrieveDescriptors() internally.  On cold
+        // boot the ESP32 GATT client may still be settling, causing
+        // esp_ble_gattc_get_all_descr to return Unknown even though connect()
+        // succeeded.  When that happens the notification callback is silently
+        // never registered. We call it twice with a delay to improve reliability
+        // on cold boot scenarios.
+        w.txChar->registerForNotify(_notifyCallback);
+        Serial.printf("[BLE] %s wheel: Notifications registered, waiting %d ms for stability...\n",
+                      wheelName, BLE_NOTIFY_RETRY_DELAY_MS);
+        delay(BLE_NOTIFY_RETRY_DELAY_MS);
         w.txChar->registerForNotify(_notifyCallback);
         Serial.printf("[BLE] %s wheel: Notifications enabled\n", wheelName);
     }
@@ -782,9 +792,15 @@ void bleInit(const char* deviceName) {
     Serial.println("================================================================================");
 #endif
     
-    // Ensure hardware RNG is seeded after BLE init
-    // (esp_fill_random needs BLE radio active for entropy)
-    delay(100);
+    // Allow the ESP32 BLE GATT client stack to fully initialize before any
+    // connection attempt.  BLEDevice::init() triggers the BT controller and
+    // host stack asynchronously; 100 ms is not enough - on cold boot the first
+    // retrieveDescriptors() call fails with ESP_GATT_UNKNOWN, the notification
+    // callback is never registered, and SYSTEM_MODE validation times out.
+    // BLE_STACK_INIT_DELAY_MS (700 ms) gives the stack time to stabilize.
+    // RNG entropy also improves over this window, so the existing RNG test
+    // below still runs afterwards.
+    delay(BLE_STACK_INIT_DELAY_MS);
     
     // Test RNG is working by generating test values
     uint32_t testRandom[4];

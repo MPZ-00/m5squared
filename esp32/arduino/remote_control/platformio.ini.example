@@ -1,18 +1,27 @@
 ;
 ; PlatformIO Configuration for ESP32 M25 Remote Control
 ;
-; This configuration enables dual wheel BLE support by increasing
-; the GATT client connection limit from 1 to 2.
+; This configuration uses a custom ESP32 platform (pioarduino) which is based on
+; ESP-IDF 5.x and provides better BLE support and more recent toolchain.
+;
+; IMPORTANT: The custom platform URL must NOT be changed - see project requirements.
+;
+; Dual wheel BLE support is enabled via sdkconfig.defaults and build_flags.
 ;
 ; SETUP:
 ; 1. Install PlatformIO extension in VS Code
-; 2. Copy this file to the remote_control folder
-; 3. Open folder in PlatformIO
+; 2. Copy this file to platformio.ini (or it may already exist)
+; 3. Update upload_port to match your device (e.g., COM12)
 ; 4. Click "Build" in PlatformIO toolbar
 ;
 
+[platformio]
+src_dir = .
+
 [env:esp32dev]
-platform = espressif32
+; Custom platform is REQUIRED - do not change to standard espressif32
+; This version provides ESP-IDF 5.x with enhanced BLE stack
+platform = https://github.com/pioarduino/platform-espressif32/releases/download/55.03.37/platform-espressif32.zip
 board = esp32dev
 framework = arduino
 
@@ -20,18 +29,31 @@ framework = arduino
 monitor_speed = 115200
 monitor_filters = esp32_exception_decoder
 
+; Embed sdkconfig.defaults to apply BLE configuration
+board_build.embed_files = 
+    sdkconfig.defaults
+
 ; Build flags for dual wheel BLE support
+; These must match the values in sdkconfig.defaults
 build_flags = 
-    ; Increase BLE connection limits (CRITICAL for dual wheel mode)
+    ; BLE connection limits (CRITICAL for dual wheel mode)
     -DCONFIG_BT_ACL_CONNECTIONS=4
     -DCONFIG_GATTC_MAX_CONNECTIONS=2
     
-    ; Optional: Increase stack size if needed
-    -DCONFIG_ARDUINO_LOOP_STACK_SIZE=16384
+    ; FreeRTOS and system settings for compatibility
+    -DCONFIG_FREERTOS_MAX_TASK_NAME_LEN=16
+    -DCONFIG_FREERTOS_TASK_NOTIFICATION_ARRAY_ENTRIES=1
+    -DCONFIG_LOG_DEFAULT_LEVEL=3
+    -DCONFIG_LOG_MAXIMUM_LEVEL=5
+    -DCONFIG_LWIP_IPV6=1
     
-    ; Debug flags (uncomment to enable)
-    ; -DCORE_DEBUG_LEVEL=5
-    ; -DLOG_LOCAL_LEVEL=ESP_LOG_DEBUG
+    ; BLE stack settings
+    -DCONFIG_BT_ENABLED=1
+    -DCONFIG_BLUEDROID_ENABLED=1
+    -DCONFIG_BT_BLUEDROID_ENABLED=1
+    
+    ; Suppress macro redefinition warnings
+    -Wno-macro-redefined
 
 ; Dependencies
 lib_deps = 

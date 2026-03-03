@@ -128,6 +128,13 @@ static const uint8_t M25_ASSIST_LEVEL_MAP[ASSIST_COUNT] = { 0, 1, 2 };
 #define BLE_INTER_WHEEL_DELAY_MS  500
 // Post-GATT delay before sending commands to ensure wheel is ready
 #define BLE_POST_GATT_DELAY_MS    200
+// Cold-boot BLE stack stabilization delay after BLEDevice::init().
+// The ESP32 GATT client layer initializes asynchronously; without this delay
+// the first retrieveDescriptors() call fails with ESP_GATT_UNKNOWN, leaving
+// the notification callback unregistered and causing SYSTEM_MODE timeout.
+#define BLE_STACK_INIT_DELAY_MS   700
+// Delay before retrying registerForNotify() when the first attempt fails.
+#define BLE_NOTIFY_RETRY_DELAY_MS 400
 
 // ---------------------------------------------------------------------------
 // Wheel slot indices
