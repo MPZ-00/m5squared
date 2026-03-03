@@ -690,8 +690,9 @@ bool _connectWheel(int idx) {
 
     w.connected = true;
 
-    // Small delay to ensure BLE GATT is fully established
-    delay(50);
+    // Delay to ensure BLE GATT is fully established and wheel is ready to respond
+    // Increased from 50ms to 200ms to improve first-connection reliability
+    delay(BLE_POST_GATT_DELAY_MS);
 
     // M25 protocol init sequence (m25_parking.py connect())
     // Step 0: WRITE_SYSTEM_MODE = 0x01 (initialize communication)
@@ -815,6 +816,12 @@ void bleConnect() {
                               i, _wheels[i].mac, (int)strlen(_wheels[i].mac));
             }
             _connectWheel(i);
+            
+            // Add delay between wheel connections to prevent BLE stack contention
+            // and give each wheel time to fully initialize before connecting the next
+            if (i < WHEEL_COUNT - 1 && _wheelActive(i + 1)) {
+                delay(BLE_INTER_WHEEL_DELAY_MS);
+            }
         }
     }
 }

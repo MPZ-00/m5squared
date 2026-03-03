@@ -124,6 +124,10 @@ static const uint8_t M25_ASSIST_LEVEL_MAP[ASSIST_COUNT] = { 0, 1, 2 };
 #define BLE_RECONNECT_DELAY_MS    5000
 // Stop auto-reconnect after this many consecutive failures per wheel
 #define BLE_MAX_RECONNECT_FAILS   5
+// Delay between connecting to different wheels to prevent BLE stack contention
+#define BLE_INTER_WHEEL_DELAY_MS  500
+// Post-GATT delay before sending commands to ensure wheel is ready
+#define BLE_POST_GATT_DELAY_MS    200
 
 // ---------------------------------------------------------------------------
 // Wheel slot indices

@@ -242,7 +242,6 @@ void Supervisor::handleConnecting() {
     if (now - _connectAttemptMs < _config.reconnectDelayMs) {
         return;
     }
-    _connectAttemptMs = now;
     
     Serial.printf("[Supervisor] Connecting to vehicles (attempt %d/%d)\n",
                   _reconnectAttempts + 1, _config.maxReconnectAttempts);
@@ -262,6 +261,10 @@ void Supervisor::handleConnecting() {
     // Attempt connection
     bleConnect();
     
+    // Update timestamp AFTER bleConnect() completes to properly enforce reconnectDelayMs
+    // (bleConnect is blocking and can take several seconds)
+    _connectAttemptMs = millis();
+    
     // Check if connection was successful
     // Use bleAnyConnected() to allow partial connectivity in dual mode
     // (one wheel working while other is off/dead/out of range)
@@ -279,6 +282,12 @@ void Supervisor::handleConnecting() {
         _lastLinkTimeMs = millis();
     } else {
         Serial.println("[Supervisor] Connection failed (no wheels responding)");
+        
+        // Allow time for BLE stack cleanup (disconnect callbacks, resource release)
+        // before next reconnection attempt. Critical for dual-wheel mode to prevent
+        // GATT connection slot contention.
+        delay(500);
+        
         _reconnectAttempts++;
         
         if (_reconnectAttempts >= _config.maxReconnectAttempts) {
