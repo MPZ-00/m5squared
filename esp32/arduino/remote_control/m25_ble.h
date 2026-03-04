@@ -124,18 +124,13 @@ static const uint8_t M25_ASSIST_LEVEL_MAP[ASSIST_COUNT] = { 0, 1, 2 };
 #define BLE_RECONNECT_DELAY_MS    5000
 // Stop auto-reconnect after this many consecutive failures per wheel
 #define BLE_MAX_RECONNECT_FAILS   5
-// Delay between connecting to different wheels to prevent BLE stack contention
-#define BLE_INTER_WHEEL_DELAY_MS  500
-// Post-GATT delay before sending commands to ensure wheel is ready
+// Delay between connecting wheels (dual-wheel mode, allows BLE stack to settle)
+#define BLE_INTER_WHEEL_DELAY_MS  1500
+// Post-GATT delay before sending commands
 #define BLE_POST_GATT_DELAY_MS    200
-// Cold-boot BLE stack stabilization delay after BLEDevice::init().
-// The ESP32 GATT client layer initializes asynchronously; without this delay
-// the first retrieveDescriptors() call fails with ESP_GATT_UNKNOWN, leaving
-// the notification callback unregistered and causing SYSTEM_MODE timeout.
-// Increased from 700ms to 1000ms to improve cold boot reliability
+// Cold-boot BLE stack init delay (GATT client async init after BLEDevice::init)
 #define BLE_STACK_INIT_DELAY_MS   1000
-// Delay before retrying registerForNotify() when the first attempt fails.
-// Increased from 400ms to 500ms to improve cold boot reliability
+// Retry delay for registerForNotify (descriptor retrieval stabilization)
 #define BLE_NOTIFY_RETRY_DELAY_MS 500
 
 // ---------------------------------------------------------------------------

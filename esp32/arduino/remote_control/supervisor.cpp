@@ -263,19 +263,12 @@ void Supervisor::handleConnecting() {
     // Attempt connection
     bleConnect();
     
-    // Update timestamp AFTER bleConnect() completes to properly enforce reconnectDelayMs
-    // (bleConnect is blocking and can take several seconds)
     _connectAttemptMs = millis();
     
-    // Allow time for async disconnect callbacks to fire (e.g. encryption validation failures)
-    // Without this delay, we may check connection status before failed wheels have triggered
-    // their onDisconnect callbacks, causing us to incorrectly report partial success
+    // Allow async disconnect callbacks to complete (e.g. encryption validation failures)
     delay(100);
     
-    // Check if connection was successful
-    // Use bleAnyConnected() to allow partial connectivity in dual mode
-    // (one wheel working while other is off/dead/out of range)
-    // Background reconnection via bleTick() will keep trying to connect missing wheels
+    // Check if connection was successful (bleAnyConnected allows partial connectivity)
     bool success = bleAnyConnected();
     
     if (success) {

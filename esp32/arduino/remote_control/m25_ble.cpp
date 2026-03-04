@@ -680,15 +680,12 @@ bool _connectWheel(int idx) {
         return false;
     }
     
-    // Get TX characteristic for receiving notifications (optional - wheel may not send)
     w.txChar = svc->getCharacteristic(BLEUUID(M25_CHAR_TX_UUID));
     if (w.txChar && w.txChar->canNotify()) {
-        // registerForNotify() calls retrieveDescriptors() internally.  On cold
-        // boot the ESP32 GATT client may still be settling, causing
-        // esp_ble_gattc_get_all_descr to return Unknown even though connect()
-        // succeeded.  When that happens the notification callback is silently
-        // never registered. We call it twice with a delay to improve reliability
-        // on cold boot scenarios.
+        // ESP32 BLE stack needs time after getCharacteristic() before descriptor retrieval
+        uint32_t preNotifyDelay = (idx > 0) ? 800 : 500;
+        delay(preNotifyDelay);
+        
         w.txChar->registerForNotify(_notifyCallback);
         Serial.printf("[BLE] %s wheel: Notifications registered, waiting %d ms for stability...\n",
                       wheelName, BLE_NOTIFY_RETRY_DELAY_MS);
@@ -831,11 +828,11 @@ void bleConnect() {
                 Serial.printf("[BLE] bleConnect: About to connect wheel %d, MAC='%s' (len=%d)\n",
                               i, _wheels[i].mac, (int)strlen(_wheels[i].mac));
             }
-            _connectWheel(i);
             
-            // Add delay between wheel connections to prevent BLE stack contention
-            // and give each wheel time to fully initialize before connecting the next
-            if (i < WHEEL_COUNT - 1 && _wheelActive(i + 1)) {
+            bool success = _connectWheel(i);
+            
+            // Delay between wheels for BLE stack to settle (dual-wheel mode)
+            if (success && i < WHEEL_COUNT - 1 && _wheelActive(i + 1)) {
                 delay(BLE_INTER_WHEEL_DELAY_MS);
             }
         }
