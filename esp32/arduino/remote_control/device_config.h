@@ -226,4 +226,12 @@ enum SystemState : uint8_t {
 // Global debug flags variable (defined in serial_commands.h)
 extern uint8_t debugFlags;
 
+// ---------------------------------------------------------------------------
+// Arm mode
+// When AUTO_ARM_ON_CONNECT is defined, the supervisor transitions from PAIRED
+// to ARMED automatically as soon as BLE connection is established.
+// Leave commented out for explicit arming via 'arm' serial command or button.
+// ---------------------------------------------------------------------------
+// #define AUTO_ARM_ON_CONNECT
+
 #endif // DEVICE_CONFIG_H

@@ -18,6 +18,7 @@
  *   hillhold <on|off>           Toggle hill hold (only when motors stopped)
  *   recal                       Recalibrate joystick center position
  *   stop                        Software emergency stop (enters ERROR state)
+ *   arm                         Arm motors (PAIRED -> ARMED, manual mode only)
  *   reconnect                   Trigger BLE reconnect (from ERROR or ready)
  *   power off                   Turn device off (enters deep sleep)
  *   battery                     Print battery % (requires ENABLE_BATTERY_MONITOR)
@@ -137,6 +138,7 @@ static void _scPrintHelp() {
     Serial.println(F("                            0=indoor  1=outdoor  2=learning"));
     Serial.println(F("  hillhold <on|off>         Toggle hill hold"));
     Serial.println(F("  recal                     Recalibrate joystick center"));
+    Serial.println(F("  arm                       Arm motors (PAIRED -> ARMED)"));
     Serial.println(F("  stop                      Software emergency stop"));
     Serial.println(F("  reset                     Clear ERROR state -> CONNECTING"));
     Serial.println(F("  reconnect                 Force BLE reconnect (non-ERROR states)"));
@@ -437,6 +439,23 @@ static void _scDispatch(const char* cmd, const SerialContext &ctx) {
         }
         Serial.println(F("[CMD] Recalibrating joystick center - keep joystick at rest..."));
         ctx.fnRecalibrate();
+        return;
+    }
+
+    // arm - transition PAIRED -> ARMED
+    if (strcmp(cmd, "arm") == 0) {
+        if (!ctx.supervisor) {
+            Serial.println(F("[CMD] ERROR: supervisor not available"));
+            return;
+        }
+        SupervisorState supState = ctx.supervisor->getState();
+        if (supState != SUPERVISOR_PAIRED) {
+            Serial.printf("[CMD] arm: must be in PAIRED state (currently %s)\n",
+                          supervisorStateToString(supState));
+            return;
+        }
+        ctx.supervisor->requestArm();
+        Serial.println(F("[CMD] Armed - joystick + deadman to drive"));
         return;
     }
 

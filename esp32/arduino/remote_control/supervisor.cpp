@@ -372,8 +372,14 @@ void Supervisor::handlePaired() {
 
     pollTelemetry();
 
-    // Wait for explicit arm request from user
-    // This is a safety feature - user must explicitly enable driving
+#ifdef AUTO_ARM_ON_CONNECT
+    // Auto-arm: skip explicit requestArm() and go straight to ARMED.
+    // The deadman check in processInput() still prevents unintended movement.
+    Serial.println("[Supervisor] AUTO_ARM_ON_CONNECT: arming automatically");
+    transitionTo(SUPERVISOR_ARMED);
+#endif
+    // Without AUTO_ARM_ON_CONNECT: wait for explicit requestArm() call
+    // (serial 'arm' command or future hardware button)
 }
 
 void Supervisor::handleArmed() {
