@@ -291,6 +291,7 @@ void setup() {
     powerOnSafetyCheck();
 
     bleInit("M25-Remote");
+    bleStartMotorTask();   // spawn async write task on Core 0
     ledSetAssistLevel(assistLevel);
     ledSetHillHold(hillHoldOn);
 
@@ -329,7 +330,11 @@ void loop() {
     ControlState control;
     control.vx = js.y;
     control.vy = js.x;
+#ifdef NO_DEADMAN_HARDWARE
+    control.deadman = true;   // no hardware button - always engaged
+#else
     control.deadman = !js.inDeadzone;
+#endif
     control.mode = js.inDeadzone ? DRIVE_MODE_STOP : DRIVE_MODE_NORMAL;
     control.timestamp = now;
     

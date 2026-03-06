@@ -234,4 +234,16 @@ extern uint8_t debugFlags;
 // ---------------------------------------------------------------------------
 // #define AUTO_ARM_ON_CONNECT
 
+// ---------------------------------------------------------------------------
+// Deadman switch
+// Without NO_DEADMAN_HARDWARE the firmware expects a dedicated hold-to-drive
+// button wired to the deadman input.  Define NO_DEADMAN_HARDWARE to tie the
+// deadman permanently high - in that case the joystick leaving the deadzone
+// is the only trigger required to start driving (no separate button needed).
+//
+// Note: the mapper deadzone and the supervisor input watchdog still provide
+// safety - releasing the joystick to center stops the wheels immediately.
+// ---------------------------------------------------------------------------
+#define NO_DEADMAN_HARDWARE
+
 #endif // DEVICE_CONFIG_H

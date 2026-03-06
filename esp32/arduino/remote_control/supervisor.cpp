@@ -161,6 +161,7 @@ void Supervisor::requestEmergencyStop(const char* reason) {
 
 void Supervisor::requestArm() {
     if (_state == SUPERVISOR_PAIRED) {
+        bleResetMotorWriteOk();   // clear any stale failure flag from prior session
         transitionTo(SUPERVISOR_ARMED);
     }
 }
@@ -376,6 +377,7 @@ void Supervisor::handlePaired() {
     // Auto-arm: skip explicit requestArm() and go straight to ARMED.
     // The deadman check in processInput() still prevents unintended movement.
     Serial.println("[Supervisor] AUTO_ARM_ON_CONNECT: arming automatically");
+    bleResetMotorWriteOk();
     transitionTo(SUPERVISOR_ARMED);
 #endif
     // Without AUTO_ARM_ON_CONNECT: wait for explicit requestArm() call
@@ -474,7 +476,16 @@ void Supervisor::pollTelemetry() {
 // ---------------------------------------------------------------------------
 void Supervisor::checkWatchdogs() {
     uint32_t now = millis();
-    
+
+    // BLE motor write failure (async feedback from motor task)
+    // Only check in DRIVING state - spurious failures during arm transition
+    // should not immediately trigger failsafe.
+    if (_state == SUPERVISOR_DRIVING && !bleLastMotorWriteOk()) {
+        Serial.println("[Supervisor] Motor write failure detected by watchdog");
+        enterFailsafe("BLE write error");
+        return;
+    }
+
     // Input watchdog - no input for too long
     if (_lastInputTimeMs > 0) {  // Only check if we've received input before
         if (now - _lastInputTimeMs > _config.inputTimeoutMs) {
@@ -519,17 +530,11 @@ void Supervisor::sendHeartbeat() {
 }
 
 void Supervisor::sendCommand(const CommandFrame& cmd) {
-    // Convert CommandFrame speeds (-100 to 100) to floats for BLE interface
-    bool success = bleSendMotorCommand((float)cmd.leftSpeed, (float)cmd.rightSpeed);
-    if (success) {
-        _lastLinkTimeMs = millis();
-    } else {
-        Serial.println("[Supervisor] Failed to send command - entering failsafe");
-        // A write failure means the BLE connection is broken.  Enter failsafe
-        // immediately rather than waiting for the link watchdog; this prevents
-        // the next sendStop() / sendCommand() from blocking on a dead connection.
-        enterFailsafe("BLE write error");
-    }
+    // Post to the motor write task queue (non-blocking; always returns true).
+    // Write failures are reported asynchronously via bleLastMotorWriteOk()
+    // and caught by checkWatchdogs() on the next update cycle.
+    bleSendMotorCommand((float)cmd.leftSpeed, (float)cmd.rightSpeed);
+    _lastLinkTimeMs = millis();
 }
 
 // ---------------------------------------------------------------------------

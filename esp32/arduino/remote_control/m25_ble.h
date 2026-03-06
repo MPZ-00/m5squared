@@ -369,7 +369,20 @@ bool bleIsConnected(int wheelIdx);
 bool bleAllConnected();  // True when every active wheel is connected and protocol-ready
 bool bleAnyConnected();  // True when at least one active wheel is connected
 
-// Motor commands
+// Motor write task - must be called once from setup() after bleInit().
+// Spawns a FreeRTOS task on Core 0 that services motor write requests
+// asynchronously, preventing BLE writeValue() from blocking loop().
+void bleStartMotorTask();
+
+// Returns false if the most recent motor write dispatched by the task
+// failed (rc=-1 GATT error, connection drop, etc.).  Checked each update
+// by the supervisor watchdog; resets to true when the next write succeeds.
+bool bleLastMotorWriteOk();
+// Reset the write-ok flag.  Call when re-arming after a failsafe so that
+// a stale failure from a previous connection does not trip the watchdog.
+void bleResetMotorWriteOk();
+
+// Motor commands (post to motor task queue - non-blocking)
 bool bleSendStop();
 bool bleSendMotorCommand(float leftPercent, float rightPercent);
 

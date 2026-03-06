@@ -6,6 +6,9 @@
  */
 
 #include "m25_ble.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
 
 // ---------------------------------------------------------------------------
 // Internal static storage (single instance across translation units)
@@ -987,30 +990,94 @@ bool bleAnyConnected() {
     return false;
 }
 
+// ---------------------------------------------------------------------------
+// Motor write task - runs on Core 0 alongside the BLE stack.
+// Prevents writeValue() blocking from freezing loop() on Core 1.
+// Queue depth 1 with overwrite semantics: only the latest command is kept.
+// ---------------------------------------------------------------------------
+
+struct _MotorCmd {
+    bool    isStop;
+    float   left;      // percent, signed
+    float   right;
+};
+
+static QueueHandle_t  _motorQueue   = nullptr;
+static volatile bool  _motorWriteOk = true;   // cleared by task on write failure
+
+static void _bleMotorTask(void* /*pv*/) {
+    _MotorCmd cmd;
+    for (;;) {
+        if (xQueueReceive(_motorQueue, &cmd, portMAX_DELAY) != pdTRUE) continue;
+
+        bool ok = true;
+        for (int i = 0; i < WHEEL_COUNT; i++) {
+            if (!_wheelActive(i) || !bleIsConnected(i)) continue;
+
+            uint8_t spd[2];
+            if (cmd.isStop) {
+                spd[0] = spd[1] = 0;
+            } else {
+                float   pct = (i == WHEEL_LEFT) ? -cmd.left : cmd.right;
+                int16_t raw = (int16_t)constrain(pct * M25_SPEED_SCALE, -32768.0f, 32767.0f);
+                spd[0] = (uint8_t)((raw >> 8) & 0xFF);
+                spd[1] = (uint8_t)(raw        & 0xFF);
+            }
+            ok &= _sendCommand(i, M25_SRV_APP_MGMT, M25_PARAM_WRITE_REMOTE_SPEED, spd, 2);
+        }
+        _motorWriteOk = ok;
+    }
+}
+
+void bleStartMotorTask() {
+    // Queue of 1: xQueueOverwrite always keeps the newest command
+    _motorQueue = xQueueCreate(1, sizeof(_MotorCmd));
+    if (!_motorQueue) {
+        Serial.println("[BLE] ERROR: failed to create motor queue");
+        return;
+    }
+    // Pin to Core 0 where the BLE stack lives; priority 5 matches BLE event task
+    xTaskCreatePinnedToCore(_bleMotorTask, "ble_motor", 4096, nullptr, 5, nullptr, 0);
+    Serial.println("[BLE] Motor write task started on Core 0");
+}
+
+bool bleLastMotorWriteOk() {
+    return _motorWriteOk;
+}
+
+void bleResetMotorWriteOk() {
+    _motorWriteOk = true;
+}
+
 bool bleSendStop() {
+    if (_motorQueue) {
+        _MotorCmd c = { true, 0.0f, 0.0f };
+        xQueueOverwrite(_motorQueue, &c);
+        return true;
+    }
+    // Fallback (task not started yet - e.g. during protocol init)
     uint8_t spd[2] = { 0, 0 };
     bool ok = true;
     for (int i = 0; i < WHEEL_COUNT; i++) {
-        if (bleIsConnected(i)) {
+        if (bleIsConnected(i))
             ok &= _sendCommand(i, M25_SRV_APP_MGMT, M25_PARAM_WRITE_REMOTE_SPEED, spd, 2);
-        }
     }
     return ok;
 }
 
 bool bleSendMotorCommand(float leftPercent, float rightPercent) {
+    if (_motorQueue) {
+        _MotorCmd c = { false, leftPercent, rightPercent };
+        xQueueOverwrite(_motorQueue, &c);
+        return true;
+    }
+    // Fallback
     bool ok = true;
     for (int i = 0; i < WHEEL_COUNT; i++) {
         if (!bleIsConnected(i)) continue;
-
-        float pct = (i == WHEEL_LEFT) ? -leftPercent : rightPercent;
+        float   pct = (i == WHEEL_LEFT) ? -leftPercent : rightPercent;
         int16_t raw = (int16_t)constrain(pct * M25_SPEED_SCALE, -32768.0f, 32767.0f);
-
-        // Big-endian int16
-        uint8_t spd[2] = {
-            (uint8_t)((raw >> 8) & 0xFF),
-            (uint8_t)(raw & 0xFF)
-        };
+        uint8_t spd[2] = { (uint8_t)((raw >> 8) & 0xFF), (uint8_t)(raw & 0xFF) };
         ok &= _sendCommand(i, M25_SRV_APP_MGMT, M25_PARAM_WRITE_REMOTE_SPEED, spd, 2);
     }
     return ok;
