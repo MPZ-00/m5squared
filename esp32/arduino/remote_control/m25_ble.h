@@ -41,8 +41,6 @@ extern uint8_t debugFlags;
 // M25 SPP Service / Characteristic UUIDs (m25_bluetooth.py)
 // ---------------------------------------------------------------------------
 #define M25_SPP_SERVICE_UUID  "00001101-0000-1000-8000-00805F9B34FB"
-#define M25_CHAR_TX_UUID      "00001101-0000-1000-8000-00805F9B34FB"
-#define M25_CHAR_RX_UUID      "00001102-0000-1000-8000-00805F9B34FB"
 
 // ---------------------------------------------------------------------------
 // Protocol constants (m25_protocol.py / m25_protocol_data.py)

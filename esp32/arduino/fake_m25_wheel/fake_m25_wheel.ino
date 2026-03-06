@@ -49,9 +49,9 @@
 const uint8_t encryptionKey[16] = ENCRYPTION_KEY;
 
 // BLE Configuration
-#define SERVICE_UUID "00001101-0000-1000-8000-00805F9B34FB"  // SPP UUID
-#define CHAR_UUID_TX "00001101-0000-1000-8000-00805F9B34FB"
-#define CHAR_UUID_RX "00001102-0000-1000-8000-00805F9B34FB"
+// SERVICE_UUID is the same for both sides (real SPP UUID).
+// CHAR_UUID_TX / CHAR_UUID_RX come from device_config.h via WHEEL_SIDE_LEFT/RIGHT.
+#define SERVICE_UUID "00001101-0000-1000-8000-00805F9B34FB"  // SPP UUID (same for both sides)
 
 // Button configuration
 #define BUTTON_PIN 33       // Force advertising button

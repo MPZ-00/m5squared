@@ -734,15 +734,35 @@ bool _connectWheel(int idx) {
         return false;
     }
 
-    w.rxChar = svc->getCharacteristic(BLEUUID(M25_CHAR_RX_UUID));
-    if (!w.rxChar) {
-        Serial.printf("[BLE] %s wheel: RX characteristic not found\n", wheelName);
+    // Probe all known TX/RX UUID pairs in order; use the first whose RX char exists.
+    // getCharacteristic() is a local map lookup after GATT discovery ─ no extra BLE traffic.
+    // To add support for a new fake-wheel UUID set, append a row to this table.
+    struct _UUIDs { const char* tx; const char* rx; };
+    static const _UUIDs candidates[] = {
+        // Real M25 wheels + fake-left (WHEEL_SIDE_LEFT in device_config.h)
+        { "00001101-0000-1000-8000-00805F9B34FB", "00001102-0000-1000-8000-00805F9B34FB" },
+        // Fake-right (WHEEL_SIDE_RIGHT in device_config.h)
+        { "00001103-0000-1000-8000-00805F9B34FB", "00001104-0000-1000-8000-00805F9B34FB" },
+    };
+
+    BLERemoteCharacteristic* rxChar = nullptr;
+    BLERemoteCharacteristic* txChar = nullptr;
+    for (const auto& c : candidates) {
+        rxChar = svc->getCharacteristic(BLEUUID(c.rx));
+        if (rxChar) {
+            txChar = svc->getCharacteristic(BLEUUID(c.tx));
+            Serial.printf("[BLE] %s wheel: matched RX UUID %s\n", wheelName, c.rx);
+            break;
+        }
+    }
+    if (!rxChar) {
+        Serial.printf("[BLE] %s wheel: no known RX characteristic found\n", wheelName);
         w.client->disconnect();
         w.consecutiveFails++;
         return false;
     }
-    
-    w.txChar = svc->getCharacteristic(BLEUUID(M25_CHAR_TX_UUID));
+    w.rxChar = rxChar;
+    w.txChar = txChar;
     if (w.txChar && w.txChar->canNotify()) {
         // ESP32 BLE stack needs time after getCharacteristic() before descriptor retrieval
         uint32_t preNotifyDelay = (idx > 0) ? 800 : 500;
