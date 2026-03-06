@@ -397,11 +397,18 @@ bool _parseResponseData(const ResponseHeader* hdr, ResponseData* data) {
             return true;
         }
         else if (hdr->paramId == M25_PARAM_CRUISE_VALUES && len >= 12) {
-            // Parse cruise values: distance (4 bytes BE), speed (2 bytes BE), push counter (2 bytes BE)
-            data->cruiseValues.distanceMm = _parseUint32BE(p, 0);
-            data->cruiseValues.distanceKm = (float)data->cruiseValues.distanceMm * 0.00001f;  // 0.01mm to km
-            data->cruiseValues.speed = _parseUint16BE(p, 4);
-            data->cruiseValues.pushCounter = _parseUint16BE(p, 6);
+            // Payload layout (matches Python parse_cruise_values):
+            //   [0]   drive_mode
+            //   [1]   push_rim
+            //   [2-3] speed (uint16_be)
+            //   [4]   soc
+            //   [5-8] overall_distance (uint32_be, 0.01 m units)
+            //   [9-10] push_counter (uint16_be)
+            //   [11]  error
+            data->cruiseValues.speed        = _parseUint16BE(p, 2);
+            data->cruiseValues.distanceMm   = _parseUint32BE(p, 5); // 0.01 m units
+            data->cruiseValues.distanceKm   = (float)data->cruiseValues.distanceMm * 0.00001f; // 0.01m -> km
+            data->cruiseValues.pushCounter  = _parseUint16BE(p, 9);
             return true;
         }
         // Also handle write command echoes (ACKs with payload)
@@ -501,21 +508,54 @@ void _printResponse(const char* wheelName, const ResponseHeader* hdr, const Resp
     }
 }
 
-void _parseSppPacket(const uint8_t* spp, size_t sppLen, const char* wheelName) {
+// ---------------------------------------------------------------------------
+// Telemetry cache update (called after each successfully parsed response)
+// ---------------------------------------------------------------------------
+
+void _updateWheelCache(int idx, const ResponseHeader* hdr, const ResponseData* data) {
+    if (!hdr || !data || data->isNack || data->isAck) return;
+    WheelConnState_t& w = _wheels[idx];
+
+    if (hdr->serviceId == M25_SRV_BATT_MGMT && hdr->paramId == M25_PARAM_STATUS_SOC) {
+        w.batteryPct   = (int8_t)data->soc.batteryPercent;
+        w.batteryValid = true;
+    }
+    else if (hdr->serviceId == M25_SRV_VERSION_MGMT &&
+             hdr->paramId == M25_PARAM_STATUS_SW_VERSION) {
+        w.fwMajor = data->swVersion.major;
+        w.fwMinor = data->swVersion.minor;
+        w.fwPatch = data->swVersion.patch;
+        w.fwValid = true;
+    }
+    else if (hdr->serviceId == M25_SRV_APP_MGMT &&
+             hdr->paramId == M25_PARAM_CRUISE_VALUES) {
+        w.distanceKm    = data->cruiseValues.distanceKm;
+        w.distanceValid = true;
+    }
+}
+
+void _parseSppPacket(const uint8_t* spp, size_t sppLen, int wheelIdx) {
+    const char* wheelName = (wheelIdx >= 0 && wheelIdx < WHEEL_COUNT &&
+                             _wheels[wheelIdx].name)
+                            ? _wheels[wheelIdx].name : "Unknown";
     ResponseHeader hdr;
     if (!_parseResponseHeader(spp, sppLen, &hdr)) {
         Serial.printf("[BLE] %s wheel: Failed to parse SPP header\n", wheelName);
         return;
     }
-    
+
     ResponseData data;
     bool parsed = _parseResponseData(&hdr, &data);
-    
+
     if (!parsed && debugFlags & DBG_BLE) {
         Serial.printf("[BLE] %s wheel: Unknown response type (srv=0x%02X, param=0x%02X)\n",
                      wheelName, hdr.serviceId, hdr.paramId);
     }
-    
+
+    if (parsed) {
+        _updateWheelCache(wheelIdx, &hdr, &data);
+    }
+
     _printResponse(wheelName, &hdr, parsed ? &data : nullptr);
 }
 
@@ -574,7 +614,7 @@ void _notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size_t leng
                 }
                 
                 // Parse SPP packet structure
-                _parseSppPacket(sppPacket, sppLen, w.name ? w.name : "Unknown");
+                _parseSppPacket(sppPacket, sppLen, i);
             } else {
                 Serial.printf("[BLE] %s wheel: Decryption failed\n", w.name ? w.name : "Unknown");
             }
@@ -846,6 +886,11 @@ void bleResetWheel(int idx) {
     w.txChar           = nullptr;
     w.receivedFirstAck = false;
     w.consecutiveFails = 0;
+
+    // Invalidate telemetry cache so stale data is not served after reconnect
+    w.batteryValid  = false;
+    w.fwValid       = false;
+    w.distanceValid = false;
 }
 
 bool bleConnectWheel(int idx) {
@@ -1109,6 +1154,63 @@ void bleSetKey(int idx, const uint8_t* newKey) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Telemetry request functions
+// ---------------------------------------------------------------------------
+
+static bool _requestOne(int idx, uint8_t svc, uint8_t param) {
+    if (idx < 0 || idx >= WHEEL_COUNT || !bleIsConnected(idx)) return false;
+    return _sendCommand(idx, svc, param, nullptr, 0);
+}
+
+static bool _requestAll(uint8_t svc, uint8_t param) {
+    bool ok = false;
+    for (int i = 0; i < WHEEL_COUNT; i++) {
+        if (bleIsConnected(i)) {
+            ok |= _sendCommand(i, svc, param, nullptr, 0);
+        }
+    }
+    return ok;
+}
+
+bool bleRequestSOC(int idx) {
+    if (idx < 0) return _requestAll(M25_SRV_BATT_MGMT, M25_PARAM_READ_SOC);
+    return _requestOne(idx, M25_SRV_BATT_MGMT, M25_PARAM_READ_SOC);
+}
+
+bool bleRequestFirmwareVersion(int idx) {
+    if (idx < 0) return _requestAll(M25_SRV_VERSION_MGMT, M25_PARAM_READ_SW_VERSION);
+    return _requestOne(idx, M25_SRV_VERSION_MGMT, M25_PARAM_READ_SW_VERSION);
+}
+
+bool bleRequestCruiseValues(int idx) {
+    if (idx < 0) return _requestAll(M25_SRV_APP_MGMT, M25_PARAM_READ_CRUISE_VALUES);
+    return _requestOne(idx, M25_SRV_APP_MGMT, M25_PARAM_READ_CRUISE_VALUES);
+}
+
+// ---------------------------------------------------------------------------
+// Cached telemetry getters
+// ---------------------------------------------------------------------------
+
+int8_t bleGetBattery(int idx) {
+    if (idx < 0 || idx >= WHEEL_COUNT) return -1;
+    if (!_wheels[idx].batteryValid) return -1;
+    return _wheels[idx].batteryPct;
+}
+
+bool bleGetFirmwareVersion(int idx, uint8_t& major, uint8_t& minor, uint8_t& patch) {
+    if (idx < 0 || idx >= WHEEL_COUNT || !_wheels[idx].fwValid) return false;
+    major = _wheels[idx].fwMajor;
+    minor = _wheels[idx].fwMinor;
+    patch = _wheels[idx].fwPatch;
+    return true;
+}
+
+float bleGetDistanceKm(int idx) {
+    if (idx < 0 || idx >= WHEEL_COUNT || !_wheels[idx].distanceValid) return -1.0f;
+    return _wheels[idx].distanceKm;
+}
+
 void blePrintWheelDetails() {
     Serial.printf("[BLE] Wheel mode    : %s\n", WHEEL_MODE_NAME);
     for (int i = 0; i < WHEEL_COUNT; i++) {
@@ -1132,6 +1234,22 @@ void blePrintWheelDetails() {
                                                      (unsigned)BLE_MAX_RECONNECT_FAILS);
         Serial.printf("  driveMode    : 0x%02X\n", w.driveModeBits);
         Serial.printf("  telegramId   : %u\n",     (unsigned)w.telegramId);
+        // Cached telemetry
+        if (w.batteryValid) {
+            Serial.printf("  battery      : %d%%\n", (int)w.batteryPct);
+        } else {
+            Serial.printf("  battery      : (not yet received)\n");
+        }
+        if (w.fwValid) {
+            Serial.printf("  firmware     : %d.%d.%d\n", w.fwMajor, w.fwMinor, w.fwPatch);
+        } else {
+            Serial.printf("  firmware     : (not yet received)\n");
+        }
+        if (w.distanceValid) {
+            Serial.printf("  distance     : %.3f km\n", w.distanceKm);
+        } else {
+            Serial.printf("  distance     : (not yet received)\n");
+        }
     }
     Serial.printf("[BLE] autoReconnect: %s\n", _bleAutoReconnect ? "ON" : "off");
 }

@@ -76,22 +76,30 @@
 
 **Deliverable:** `types.h` - Shared data structures
 
-### 1.4 Response Parsing
+### 1.4 Response Parsing ✓ COMPLETE
 **Why Critical:** Everything depends on bidirectional communication
 
-- [ ] Response header parser
+- [x] Response header parser
   - Extract and validate all header fields
   - Telegram ID tracking for request-response pairing
-- [ ] Payload extraction framework
+- [x] Payload extraction framework
   - Type-safe parsing (uint8, int16_be, uint32_be)
   - ACK/NACK error code handling
-- [ ] Request-response pairing
-  - Request queue
-  - Timeout handling
-  - Retry mechanism
+- [x] Telemetry cache (per-wheel, in WheelConnState_t)
+  - Battery % (STATUS_SOC)
+  - Firmware version (STATUS_SW_VERSION)
+  - Odometer / distance (CRUISE_VALUES, fixed byte offsets to match protocol)
+- [x] Public request API (fire-and-forget, async result via BLE notification)
+  - `bleRequestSOC()`, `bleRequestFirmwareVersion()`, `bleRequestCruiseValues()`
+- [x] Public getter API (returns cached value, -1 if not yet received)
+  - `bleGetBattery()`, `bleGetFirmwareVersion()`, `bleGetDistanceKm()`
+- [x] Cache invalidated on wheel reset/reconnect (no stale data)
 
-**Deliverable:** Complete response parsing in `m25_ble.h`
-**Success Criteria:** Can parse all response types reliably
+Note: Request-response pairing is implicit via service+param ID in notification;
+no explicit queue needed since we are the sole requester and responses are tagged.
+
+**Deliverable:** Complete response parsing in `m25_ble.h` / `m25_ble.cpp`
+**Status:** Implemented 2026-03-06
 
 ---
 

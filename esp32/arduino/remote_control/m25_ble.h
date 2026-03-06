@@ -260,6 +260,18 @@ struct WheelConnState_t {
     bool                         receivedFirstAck;   // Track if we got a response (encryption validated)
     uint32_t                     lastConnectAttemptMs;
     uint8_t                      consecutiveFails;   // resets on success; auto-reconnect stops at BLE_MAX_RECONNECT_FAILS
+
+    // ---------------------------------------------------------------------------
+    // Cached telemetry (updated asynchronously by the BLE notification callback)
+    // ---------------------------------------------------------------------------
+    int8_t   batteryPct;        // State of charge 0-100 %; -1 = not yet received
+    bool     batteryValid;      // true once a STATUS_SOC response has been parsed
+    uint8_t  fwMajor;           // Firmware version fields
+    uint8_t  fwMinor;
+    uint8_t  fwPatch;
+    bool     fwValid;           // true once STATUS_SW_VERSION has been parsed
+    float    distanceKm;        // Overall odometer in km (from CRUISE_VALUES)
+    bool     distanceValid;     // true once CRUISE_VALUES has been parsed
 };
 
 // ---------------------------------------------------------------------------
@@ -323,7 +335,8 @@ bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
 bool _parseResponseHeader(const uint8_t* spp, size_t sppLen, ResponseHeader* hdr);
 bool _parseResponseData(const ResponseHeader* hdr, ResponseData* data);
 void _printResponse(const char* wheelName, const ResponseHeader* hdr, const ResponseData* data);
-void _parseSppPacket(const uint8_t* spp, size_t sppLen, const char* wheelName);
+void _updateWheelCache(int wheelIdx, const ResponseHeader* hdr, const ResponseData* data);
+void _parseSppPacket(const uint8_t* spp, size_t sppLen, int wheelIdx);
 
 // BLE notification callback
 void _notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size_t length, bool isNotify);
@@ -379,6 +392,22 @@ void bleSetKey(int idx, const uint8_t* newKey);
 
 // Verbose per-wheel status dump (called by serial 'wheels' command)
 void blePrintWheelDetails();
+
+// ---------------------------------------------------------------------------
+// Telemetry request functions (fire-and-forget; results arrive via notification)
+// idx = WHEEL_LEFT / WHEEL_RIGHT; pass -1 to send to all connected wheels
+// ---------------------------------------------------------------------------
+bool bleRequestSOC(int idx = -1);             // Battery state of charge
+bool bleRequestFirmwareVersion(int idx = -1); // SW version
+bool bleRequestCruiseValues(int idx = -1);    // Odometer, speed, push counter
+
+// ---------------------------------------------------------------------------
+// Cached telemetry getters
+// Return false / -1 if data has not yet been received for that wheel
+// ---------------------------------------------------------------------------
+int8_t bleGetBattery(int idx);   // 0-100 %, or -1 if unavailable
+bool   bleGetFirmwareVersion(int idx, uint8_t& major, uint8_t& minor, uint8_t& patch);
+float  bleGetDistanceKm(int idx);             // km, or -1.0f if unavailable
 
 #endif // M25_BLE_H
 
