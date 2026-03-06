@@ -31,6 +31,9 @@ Supervisor::Supervisor(Mapper& mapper, const SupervisorConfig& config)
     , _lastLeftConnected(false)
     , _lastRightConnected(false)
     , _callbackCount(0)
+    , _connectTask(nullptr)
+    , _connectDone(false)
+    , _connectAbort(false)
 {
     memset(_leftAddr, 0, sizeof(_leftAddr));
     memset(_rightAddr, 0, sizeof(_rightAddr));
@@ -239,30 +242,19 @@ void Supervisor::handleDisconnected() {
     // Connection request will trigger transition to CONNECTING
 }
 
-void Supervisor::handleConnecting() {
-    uint32_t now = millis();
+// ---------------------------------------------------------------------------
+// Connect Task - runs on Core 0 so blocking BLE ops don't freeze loop()
+// ---------------------------------------------------------------------------
+void Supervisor::_sConnectTask(void* pv) {
+    static_cast<Supervisor*>(pv)->_connectTaskBody();
+}
 
-    // Rate-limit the overall retry cycle
-    if (now - _connectAttemptMs < _config.reconnectDelayMs) {
-        return;
-    }
-    _connectAttemptMs = millis();
-
-    if (debugFlags & DBG_BLE) {
-        Serial.printf("[Supervisor] Target MACs: L=%s R=%s\n", _leftAddr, _rightAddr);
-    }
-
-    // -----------------------------------------------------------------------
-    // Per-wheel connection attempts with individual retry budgets
-    // Each wheel is tried independently; a failed wheel gets a hard state
-    // reset (client nulled, all protocol fields cleared) before the next
-    // attempt so there are no stale GATT/BLE resources carrying over.
-    // -----------------------------------------------------------------------
-    bool attemptedAny = false;
+void Supervisor::_connectTaskBody() {
     for (int i = 0; i < WHEEL_COUNT; i++) {
-        if (!_wheelActive(i))                              continue; // inactive in current WHEEL_MODE
-        if (bleIsConnected(i))                             continue; // already up
-        if (_wheelRetries[i] >= _config.maxReconnectAttempts) continue; // budget exhausted
+        if (_connectAbort)                                     break;
+        if (!_wheelActive(i))                                  continue;
+        if (bleIsConnected(i))                                 continue;
+        if (_wheelRetries[i] >= _config.maxReconnectAttempts)  continue;
 
         const char* wName = (i == WHEEL_LEFT) ? "left" : "right";
         Serial.printf("[Supervisor] Connecting %s wheel (attempt %d/%d)\n",
@@ -272,69 +264,125 @@ void Supervisor::handleConnecting() {
 
         if (!ok) {
             _wheelRetries[i]++;
-            Serial.printf("[Supervisor] %s wheel failed - hard resetting state (retry %d/%d)\n",
+            Serial.printf("[Supervisor] %s wheel failed (retry %d/%d)\n",
                           wName, _wheelRetries[i], _config.maxReconnectAttempts);
-            bleResetWheel(i); // hard state reset before next retry
+            bleResetWheel(i);
+        }
 
-            if (_wheelRetries[i] >= _config.maxReconnectAttempts) {
-                Serial.printf("[Supervisor] %s wheel retry budget exhausted\n", wName);
+        // Let the BLE stack settle between wheels
+        if (!_connectAbort && i < WHEEL_COUNT - 1 &&
+            _wheelActive(i + 1) && !bleIsConnected(i + 1)) {
+            vTaskDelay(pdMS_TO_TICKS(BLE_INTER_WHEEL_DELAY_MS));
+        }
+    }
+
+    // Allow async disconnect callbacks to settle
+    if (!_connectAbort) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    // Signal done - Core 1 will clear _connectTask (don't touch it here to
+    // avoid the race window between nulling the handle and signalling done).
+    _connectDone = true;
+    vTaskDelete(nullptr);
+}
+
+void Supervisor::handleConnecting() {
+    // -----------------------------------------------------------------------
+    // Task just finished? Process result first (done flag is the authority).
+    // Core 1 owns clearing _connectTask so there is no "not running, not done"
+    // race window that could cause a second task to be spawned prematurely.
+    // -----------------------------------------------------------------------
+    if (_connectDone) {
+        _connectTask = nullptr;   // task has already self-deleted; safe to clear
+        _connectDone = false;
+
+        bool allDone = true;
+        for (int i = 0; i < WHEEL_COUNT; i++) {
+            if (!_wheelActive(i)) continue;
+            if (!bleIsConnected(i) && _wheelRetries[i] < _config.maxReconnectAttempts) {
+                allDone = false;
+                break;
             }
         }
 
-        // Inter-wheel delay so the BLE stack can settle between connections
-        if (i < WHEEL_COUNT - 1 && _wheelActive(i + 1) && !bleIsConnected(i + 1)) {
-            delay(BLE_INTER_WHEEL_DELAY_MS);
+        if (!allDone) {
+            // Still have retry budget - task will be re-spawned after delay
+            return;
         }
 
-        attemptedAny = true;
-    }
-
-    // Allow async disconnect callbacks to complete after any attempt
-    if (attemptedAny) {
-        delay(100);
+        bool anyConnected = bleAnyConnected();
+        if (anyConnected) {
+            if (bleAllConnected()) {
+                Serial.println("[Supervisor] Connected successfully (all wheels)");
+            } else {
+                Serial.println("[Supervisor] Connected successfully (partial)");
+            }
+            memset(_wheelRetries, 0, sizeof(_wheelRetries));
+            _lastLeftConnected  = bleIsConnected(WHEEL_LEFT);
+            _lastRightConnected = bleIsConnected(WHEEL_RIGHT);
+            transitionTo(SUPERVISOR_PAIRED);
+            _lastLinkTimeMs = millis();
+        } else {
+            Serial.println("[Supervisor] All per-wheel retry budgets exhausted - giving up");
+            memset(_wheelRetries, 0, sizeof(_wheelRetries));
+            transitionTo(SUPERVISOR_DISCONNECTED);
+        }
+        return;
     }
 
     // -----------------------------------------------------------------------
-    // Evaluate overall session outcome
+    // Task still in flight? Wait - Core 1 returns immediately.
     // -----------------------------------------------------------------------
+    if (_connectTask != nullptr) {
+        return;
+    }
 
-    // All active wheels are either connected or have exhausted their budget.
-    // Until that is true, stay in CONNECTING and let the next update handle
-    // the remaining wheels.
-    bool allDone = true;
+    // -----------------------------------------------------------------------
+    // Rate-limit between task spawns
+    // -----------------------------------------------------------------------
+    uint32_t now = millis();
+    if (now - _connectAttemptMs < _config.reconnectDelayMs) {
+        return;
+    }
+    _connectAttemptMs = now;
+
+    // Check if any wheel still needs an attempt
+    bool anyPending = false;
     for (int i = 0; i < WHEEL_COUNT; i++) {
         if (!_wheelActive(i)) continue;
         if (!bleIsConnected(i) && _wheelRetries[i] < _config.maxReconnectAttempts) {
-            allDone = false;
+            anyPending = true;
             break;
         }
     }
-
-    if (!allDone) {
-        return; // still retries remaining for at least one wheel
+    if (!anyPending) {
+        // All budgets gone but we arrived here without a done signal - clean up
+        bool anyConnected = bleAnyConnected();
+        memset(_wheelRetries, 0, sizeof(_wheelRetries));
+        if (anyConnected) {
+            transitionTo(SUPERVISOR_PAIRED);
+            _lastLinkTimeMs = millis();
+        } else {
+            transitionTo(SUPERVISOR_DISCONNECTED);
+        }
+        return;
     }
 
-    bool anyConnected = bleAnyConnected();
-
-    if (anyConnected) {
-        if (bleAllConnected()) {
-            Serial.println("[Supervisor] Connected successfully (all wheels)");
-        } else {
-            Serial.println("[Supervisor] Connected successfully (partial - some wheels unreachable)");
-        }
-        // Reset per-wheel budgets for the next connect session
-        memset(_wheelRetries, 0, sizeof(_wheelRetries));
-
-        // Initialize wheel connection tracking for monitoring
-        _lastLeftConnected  = bleIsConnected(WHEEL_LEFT);
-        _lastRightConnected = bleIsConnected(WHEEL_RIGHT);
-
-        transitionTo(SUPERVISOR_PAIRED);
-        _lastLinkTimeMs = millis();
+    // -----------------------------------------------------------------------
+    // Spawn connect task on Core 0 (BLE stack core)
+    // -----------------------------------------------------------------------
+    _connectAbort = false;
+    _connectDone  = false;
+    BaseType_t rc = xTaskCreatePinnedToCore(
+        _sConnectTask, "ble_connect", 8192, this, 4, &_connectTask, 0);
+    if (rc != pdPASS) {
+        Serial.println("[Supervisor] ERROR: failed to spawn connect task");
+        _connectTask = nullptr;
     } else {
-        Serial.println("[Supervisor] All per-wheel retry budgets exhausted - giving up");
-        memset(_wheelRetries, 0, sizeof(_wheelRetries));
-        transitionTo(SUPERVISOR_DISCONNECTED);
+        if (debugFlags & DBG_BLE) {
+            Serial.println("[Supervisor] Connect task spawned on Core 0");
+        }
     }
 }
 
@@ -552,6 +600,15 @@ void Supervisor::transitionTo(SupervisorState newState) {
     
     _state = newState;
     
+    // If we're leaving CONNECTING, signal any in-flight connect task to abort
+    // and clear the done flag so stale results aren't processed later.
+    if (oldState == SUPERVISOR_CONNECTING) {
+        _connectAbort = true;
+        _connectDone  = false;
+        // _connectTask handle is cleared by the task itself before it deletes.
+        // If it hasn't run yet it will see _connectAbort=true and skip all wheels.
+    }
+
     // Reset mapper state on certain transitions
     if (newState == SUPERVISOR_DISCONNECTED || newState == SUPERVISOR_FAILSAFE) {
         _mapper.reset();

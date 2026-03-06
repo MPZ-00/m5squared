@@ -19,6 +19,8 @@
 #define SUPERVISOR_H
 
 #include <Arduino.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include "types.h"
 #include "mapper.h"
 #include "m25_ble.h"
@@ -183,6 +185,14 @@ private:
     StateCallback _stateCallbacks[4];  // Support up to 4 callbacks
     uint8_t       _callbackCount;
     
+    // Connect task (runs blocking BLE work on Core 0, away from loop())
+    TaskHandle_t   _connectTask;       // nullptr when idle
+    volatile bool  _connectDone;       // set by task when finished
+    volatile bool  _connectAbort;      // set by Core 1 to cancel mid-run
+
+    static void _sConnectTask(void* pv);   // FreeRTOS entry point
+    void        _connectTaskBody();        // actual blocking connect logic
+
     // ---------------------------------------------------------------------------
     // State Handlers
     // ---------------------------------------------------------------------------
