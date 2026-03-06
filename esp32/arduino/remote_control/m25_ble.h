@@ -341,8 +341,15 @@ void bleInit(const char* deviceName = "M25-Remote");
 // Connect to active wheels (call after bleInit)
 void bleConnect();
 
+// Connect a single wheel by index (respects WHEEL_MODE; returns true if connected or inactive)
+bool bleConnectWheel(int idx);
+
 // Disconnect all wheels - stop motors and disable remote mode first
 void bleDisconnect();
+
+// Hard-reset a single wheel's BLE state: disconnect client, null it, clear all protocol fields.
+// Call before retrying a failed wheel to ensure a clean slate.
+void bleResetWheel(int idx);
 
 // Connection status queries
 bool bleIsConnected(int wheelIdx);

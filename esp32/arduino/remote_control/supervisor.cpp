@@ -26,7 +26,6 @@ Supervisor::Supervisor(Mapper& mapper, const SupervisorConfig& config)
     , _lastLinkTimeMs(0)
     , _lastHeartbeatMs(0)
     , _connectAttemptMs(0)
-    , _reconnectAttempts(0)
     , _connectionRequested(false)
     , _lastLeftConnected(false)
     , _lastRightConnected(false)
@@ -37,6 +36,7 @@ Supervisor::Supervisor(Mapper& mapper, const SupervisorConfig& config)
     memset(_leftKey, 0, sizeof(_leftKey));
     memset(_rightKey, 0, sizeof(_rightKey));
     memset(_stateCallbacks, 0, sizeof(_stateCallbacks));
+    memset(_wheelRetries, 0, sizeof(_wheelRetries));
 }
 
 // ---------------------------------------------------------------------------
@@ -239,69 +239,95 @@ void Supervisor::handleDisconnected() {
 
 void Supervisor::handleConnecting() {
     uint32_t now = millis();
-    
-    // Rate limit connection attempts
+
+    // Rate-limit the overall retry cycle
     if (now - _connectAttemptMs < _config.reconnectDelayMs) {
         return;
     }
-    
-    Serial.printf("[Supervisor] Connecting to vehicles (attempt %d/%d)\n",
-                  _reconnectAttempts + 1, _config.maxReconnectAttempts);
-    
+    _connectAttemptMs = millis();
+
     if (debugFlags & DBG_BLE) {
         Serial.printf("[Supervisor] Target MACs: L=%s R=%s\n", _leftAddr, _rightAddr);
     }
-    
-    // Note: MACs and keys are already configured in bleInit() from device_config.h
-    // Only call bleSetMac/bleSetKey when user explicitly overrides via serial commands,
-    // not during connection attempts (they disconnect wheels as side effect)
-    
-    if (debugFlags & DBG_BLE) {
-        Serial.println("[Supervisor] Calling bleConnect()...");
+
+    // -----------------------------------------------------------------------
+    // Per-wheel connection attempts with individual retry budgets
+    // Each wheel is tried independently; a failed wheel gets a hard state
+    // reset (client nulled, all protocol fields cleared) before the next
+    // attempt so there are no stale GATT/BLE resources carrying over.
+    // -----------------------------------------------------------------------
+    bool attemptedAny = false;
+    for (int i = 0; i < WHEEL_COUNT; i++) {
+        if (!_wheelActive(i))                              continue; // inactive in current WHEEL_MODE
+        if (bleIsConnected(i))                             continue; // already up
+        if (_wheelRetries[i] >= _config.maxReconnectAttempts) continue; // budget exhausted
+
+        const char* wName = (i == WHEEL_LEFT) ? "left" : "right";
+        Serial.printf("[Supervisor] Connecting %s wheel (attempt %d/%d)\n",
+                      wName, _wheelRetries[i] + 1, _config.maxReconnectAttempts);
+
+        bool ok = bleConnectWheel(i);
+
+        if (!ok) {
+            _wheelRetries[i]++;
+            Serial.printf("[Supervisor] %s wheel failed - hard resetting state (retry %d/%d)\n",
+                          wName, _wheelRetries[i], _config.maxReconnectAttempts);
+            bleResetWheel(i); // hard state reset before next retry
+
+            if (_wheelRetries[i] >= _config.maxReconnectAttempts) {
+                Serial.printf("[Supervisor] %s wheel retry budget exhausted\n", wName);
+            }
+        }
+
+        // Inter-wheel delay so the BLE stack can settle between connections
+        if (i < WHEEL_COUNT - 1 && _wheelActive(i + 1) && !bleIsConnected(i + 1)) {
+            delay(BLE_INTER_WHEEL_DELAY_MS);
+        }
+
+        attemptedAny = true;
     }
-    
-    // Attempt connection
-    bleConnect();
-    
-    _connectAttemptMs = millis();
-    
-    // Allow async disconnect callbacks to complete (e.g. encryption validation failures)
-    delay(100);
-    
-    // Check if connection was successful (bleAnyConnected allows partial connectivity)
-    bool success = bleAnyConnected();
-    
-    if (success) {
+
+    // Allow async disconnect callbacks to complete after any attempt
+    if (attemptedAny) {
+        delay(100);
+    }
+
+    // -----------------------------------------------------------------------
+    // Evaluate overall session outcome
+    // -----------------------------------------------------------------------
+    bool anyConnected = bleAnyConnected();
+
+    // All active wheels have either connected or exhausted their per-wheel budget
+    bool allExhausted = true;
+    for (int i = 0; i < WHEEL_COUNT; i++) {
+        if (!_wheelActive(i)) continue;
+        if (!bleIsConnected(i) && _wheelRetries[i] < _config.maxReconnectAttempts) {
+            allExhausted = false;
+            break;
+        }
+    }
+
+    if (anyConnected) {
         if (bleAllConnected()) {
             Serial.println("[Supervisor] Connected successfully (all wheels)");
         } else {
             Serial.println("[Supervisor] Connected successfully (partial - some wheels unreachable)");
         }
-        _reconnectAttempts = 0;
-        
+        // Reset per-wheel budgets for the next connect session
+        memset(_wheelRetries, 0, sizeof(_wheelRetries));
+
         // Initialize wheel connection tracking for monitoring
-        _lastLeftConnected = bleIsConnected(WHEEL_LEFT);
+        _lastLeftConnected  = bleIsConnected(WHEEL_LEFT);
         _lastRightConnected = bleIsConnected(WHEEL_RIGHT);
-        
+
         transitionTo(SUPERVISOR_PAIRED);
         _lastLinkTimeMs = millis();
-    } else {
-        Serial.println("[Supervisor] Connection failed (no wheels responding)");
-        
-        // Allow time for BLE stack cleanup (disconnect callbacks, resource release)
-        // before next reconnection attempt. Critical for dual-wheel mode to prevent
-        // GATT connection slot contention.
-        delay(500);
-        
-        _reconnectAttempts++;
-        
-        if (_reconnectAttempts >= _config.maxReconnectAttempts) {
-            Serial.println("[Supervisor] Max reconnection attempts reached");
-            transitionTo(SUPERVISOR_DISCONNECTED);
-            _reconnectAttempts = 0;
-        }
-        // Otherwise stay in CONNECTING and retry on next update
+    } else if (allExhausted) {
+        Serial.println("[Supervisor] All per-wheel retry budgets exhausted - giving up");
+        memset(_wheelRetries, 0, sizeof(_wheelRetries));
+        transitionTo(SUPERVISOR_DISCONNECTED);
     }
+    // Otherwise stay in CONNECTING; next update will retry remaining wheels
 }
 
 void Supervisor::handlePaired() {

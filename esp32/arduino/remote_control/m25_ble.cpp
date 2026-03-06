@@ -821,6 +821,40 @@ void bleInit(const char* deviceName) {
     }
 }
 
+void bleResetWheel(int idx) {
+    if (idx < 0 || idx >= WHEEL_COUNT) return;
+    WheelConnState_t &w = _wheels[idx];
+    const char* name = w.name ? w.name : "?";
+
+    Serial.printf("[BLE] Hard reset: %s wheel\n", name);
+
+    if (w.client) {
+        if (w.client->isConnected()) {
+            w.client->disconnect();
+        }
+        // Null the pointer to force fresh client creation on next attempt.
+        // The Arduino BLE stack owns the backing memory; we must not free it.
+        w.client = nullptr;
+    }
+
+    // Clear all protocol state; preserve mac, name, and key
+    w.connected        = false;
+    w.protocolReady    = false;
+    w.telegramId       = M25_TELEGRAM_ID_START;
+    w.driveModeBits    = 0;
+    w.rxChar           = nullptr;
+    w.txChar           = nullptr;
+    w.receivedFirstAck = false;
+    w.consecutiveFails = 0;
+}
+
+bool bleConnectWheel(int idx) {
+    if (idx < 0 || idx >= WHEEL_COUNT) return false;
+    if (!_wheelActive(idx)) return true;   // Inactive wheel is not a failure
+    if (_wheels[idx].connected)  return true;  // Already connected
+    return _connectWheel(idx);
+}
+
 void bleConnect() {
     for (int i = 0; i < WHEEL_COUNT; i++) {
         if (_wheelActive(i) && !_wheels[i].connected) {

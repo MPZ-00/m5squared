@@ -122,7 +122,14 @@ public:
     const VehicleState& getVehicleState() const { return _vehicleState; }
     bool isConnected() const;
     bool isDriving() const { return _state == SUPERVISOR_DRIVING; }
-    uint8_t getReconnectAttempts() const { return _reconnectAttempts; }
+    // Returns the highest per-wheel retry count consumed in the current connect session
+    uint8_t getReconnectAttempts() const {
+        uint8_t m = 0;
+        for (int i = 0; i < WHEEL_COUNT; i++) {
+            if (_wheelRetries[i] > m) m = _wheelRetries[i];
+        }
+        return m;
+    }
     
     // Watchdog status
     uint32_t getTimeSinceLastInput() const;
@@ -155,7 +162,7 @@ private:
     // ---------------------------------------------------------------------------
     // Connection Management
     // ---------------------------------------------------------------------------
-    uint8_t _reconnectAttempts;
+    uint8_t _wheelRetries[WHEEL_COUNT]; // Per-wheel retry budgets (independent counters)
     char    _leftAddr[18];
     char    _rightAddr[18];
     uint8_t _leftKey[16];
