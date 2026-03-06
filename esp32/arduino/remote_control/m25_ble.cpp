@@ -828,16 +828,16 @@ void bleResetWheel(int idx) {
 
     Serial.printf("[BLE] Hard reset: %s wheel\n", name);
 
-    if (w.client) {
-        if (w.client->isConnected()) {
-            w.client->disconnect();
-        }
-        // Null the pointer to force fresh client creation on next attempt.
-        // The Arduino BLE stack owns the backing memory; we must not free it.
-        w.client = nullptr;
+    // Disconnect the underlying GATT connection if still open, but intentionally
+    // reuse the existing BLEClient object on the next attempt.
+    // Nulling w.client would force BLEDevice::createClient() on every retry,
+    // which leaks GATT client slots from the ESP32 BLE stack and eventually
+    // corrupts its internal state, causing persistent encryption failures.
+    if (w.client && w.client->isConnected()) {
+        w.client->disconnect();
     }
 
-    // Clear all protocol state; preserve mac, name, and key
+    // Clear all protocol state; preserve mac, name, key, and client object
     w.connected        = false;
     w.protocolReady    = false;
     w.telegramId       = M25_TELEGRAM_ID_START;
