@@ -295,17 +295,24 @@ void Supervisor::handleConnecting() {
     // -----------------------------------------------------------------------
     // Evaluate overall session outcome
     // -----------------------------------------------------------------------
-    bool anyConnected = bleAnyConnected();
 
-    // All active wheels have either connected or exhausted their per-wheel budget
-    bool allExhausted = true;
+    // All active wheels are either connected or have exhausted their budget.
+    // Until that is true, stay in CONNECTING and let the next update handle
+    // the remaining wheels.
+    bool allDone = true;
     for (int i = 0; i < WHEEL_COUNT; i++) {
         if (!_wheelActive(i)) continue;
         if (!bleIsConnected(i) && _wheelRetries[i] < _config.maxReconnectAttempts) {
-            allExhausted = false;
+            allDone = false;
             break;
         }
     }
+
+    if (!allDone) {
+        return; // still retries remaining for at least one wheel
+    }
+
+    bool anyConnected = bleAnyConnected();
 
     if (anyConnected) {
         if (bleAllConnected()) {
@@ -322,12 +329,11 @@ void Supervisor::handleConnecting() {
 
         transitionTo(SUPERVISOR_PAIRED);
         _lastLinkTimeMs = millis();
-    } else if (allExhausted) {
+    } else {
         Serial.println("[Supervisor] All per-wheel retry budgets exhausted - giving up");
         memset(_wheelRetries, 0, sizeof(_wheelRetries));
         transitionTo(SUPERVISOR_DISCONNECTED);
     }
-    // Otherwise stay in CONNECTING; next update will retry remaining wheels
 }
 
 void Supervisor::handlePaired() {
