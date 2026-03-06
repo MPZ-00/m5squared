@@ -158,6 +158,7 @@ private:
     uint32_t _lastLinkTimeMs;
     uint32_t _lastHeartbeatMs;
     uint32_t _connectAttemptMs;
+    uint32_t _lastTelemetryPollMs;  // Timestamp of last telemetry request burst
     
     // ---------------------------------------------------------------------------
     // Connection Management
@@ -197,6 +198,11 @@ private:
     // Watchdogs
     // ---------------------------------------------------------------------------
     void checkWatchdogs();
+    
+    // ---------------------------------------------------------------------------
+    // Telemetry Polling
+    // ---------------------------------------------------------------------------
+    void pollTelemetry(); // Fire BLE requests + pull cache into _vehicleState
     
     // ---------------------------------------------------------------------------
     // Command Sending

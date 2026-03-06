@@ -26,6 +26,7 @@ Supervisor::Supervisor(Mapper& mapper, const SupervisorConfig& config)
     , _lastLinkTimeMs(0)
     , _lastHeartbeatMs(0)
     , _connectAttemptMs(0)
+    , _lastTelemetryPollMs(0)
     , _connectionRequested(false)
     , _lastLeftConnected(false)
     , _lastRightConnected(false)
@@ -368,7 +369,9 @@ void Supervisor::handlePaired() {
         transitionTo(SUPERVISOR_DISCONNECTED);
         return;
     }
-    
+
+    pollTelemetry();
+
     // Wait for explicit arm request from user
     // This is a safety feature - user must explicitly enable driving
 }
@@ -381,6 +384,7 @@ void Supervisor::handleArmed() {
         enterFailsafe("Connection lost");
         return;
     }
+    pollTelemetry();
     // Input processing happens in processInput()
     // Just maintain heartbeat here
 }
@@ -393,6 +397,7 @@ void Supervisor::handleDriving() {
         enterFailsafe("Connection lost");
         return;
     }
+    pollTelemetry();
     // Input processing happens in processInput()
     // Watchdogs are checked in main update loop
 }
@@ -420,6 +425,41 @@ void Supervisor::handleStopRequest() {
     // If reconnection was requested, initiate it now
     if (_connectionRequested) {
         transitionTo(SUPERVISOR_CONNECTING);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Telemetry Polling
+// ---------------------------------------------------------------------------
+void Supervisor::pollTelemetry() {
+    uint32_t now = millis();
+    if (now - _lastTelemetryPollMs < _config.telemetryPollIntervalMs) return;
+    _lastTelemetryPollMs = now;
+
+    // Fire async requests - responses arrive via BLE notify callbacks
+    bleRequestSOC();
+    bleRequestFirmwareVersion();
+    bleRequestCruiseValues();
+
+    // Pull whatever the cache already has into VehicleState
+    _vehicleState.batteryLeft  = bleGetBattery(WHEEL_LEFT);
+    _vehicleState.batteryRight = bleGetBattery(WHEEL_RIGHT);
+
+    float dist = bleGetDistanceKm(WHEEL_LEFT);
+    if (dist < 0.0f) dist = bleGetDistanceKm(WHEEL_RIGHT); // fallback
+    if (dist >= 0.0f) _vehicleState.distanceKm = dist;
+
+    _vehicleState.timestamp = now;
+
+    // Low battery check
+    int minBatt = _vehicleState.batteryMin();
+    bool wasLow = _vehicleState.lowBattery;
+    _vehicleState.lowBattery = (minBatt >= 0 && minBatt < (int)_config.lowBatteryThreshold);
+    if (_vehicleState.lowBattery && !wasLow) {
+        Serial.printf("[Supervisor] LOW BATTERY WARNING: %d%% (threshold: %d%%)\n",
+                      minBatt, _config.lowBatteryThreshold);
+    } else if (!_vehicleState.lowBattery && wasLow) {
+        Serial.println("[Supervisor] Battery level restored above threshold.");
     }
 }
 

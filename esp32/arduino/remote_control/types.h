@@ -120,6 +120,7 @@ struct VehicleState {
     float    distanceKm;       // Total distance traveled, -1.0 if unknown
     bool     connected;        // Connection status
     bool     hasErrors;        // Whether there are any errors
+    bool     lowBattery;       // True when either wheel is below lowBatteryThreshold
     uint32_t timestamp;        // Milliseconds since boot
     
     VehicleState()
@@ -129,6 +130,7 @@ struct VehicleState {
         , distanceKm(-1.0f)
         , connected(false)
         , hasErrors(false)
+        , lowBattery(false)
         , timestamp(0)
     {}
     
@@ -189,6 +191,8 @@ struct SupervisorConfig {
     uint32_t heartbeatIntervalMs;    // Send heartbeat every N milliseconds (default: 1000ms)
     uint32_t reconnectDelayMs;       // Delay between reconnection attempts (default: 2000ms)
     uint8_t  maxReconnectAttempts;   // Max reconnection attempts before giving up (default: 5)
+    uint32_t telemetryPollIntervalMs;// How often to poll battery/firmware/odometer (default: 10000ms)
+    uint8_t  lowBatteryThreshold;    // Battery % below which low-battery limiting applies (default: 20)
     
     SupervisorConfig()
         : loopIntervalMs(50)           // 20 Hz
@@ -197,6 +201,8 @@ struct SupervisorConfig {
         , heartbeatIntervalMs(1000)    // 1 second
         , reconnectDelayMs(2000)       // 2 seconds
         , maxReconnectAttempts(5)      // 5 attempts
+        , telemetryPollIntervalMs(10000) // 10 seconds
+        , lowBatteryThreshold(20)      // 20 %
     {}
 };
 

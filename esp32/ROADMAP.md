@@ -106,17 +106,19 @@ no explicit queue needed since we are the sole requester and responses are tagge
 ## Phase 2: Telemetry & UI
 **Priority:** HIGH | **Dependencies:** Phase 1
 
-### 2.1 Battery Monitoring
+### 2.1 Battery Monitoring ✓ COMPLETE
 **Reference:** `m25_ecs.py` READ_SOC command
 
-- [ ] Implement `READ_SOC` command (Service 0x08, Param 0x01)
-- [ ] Parse response (1 byte: battery %)
-- [ ] Periodic polling (configurable interval)
-- [ ] Store per-wheel battery state
-- [ ] Low battery warning
-  - LED pattern
-  - Speed limiting
-  - Serial output
+- [x] Implement `READ_SOC` command (Service 0x08, Param 0x01) ─ done in 1.4
+- [x] Parse response (1 byte: battery %) ─ done in 1.4
+- [x] Periodic polling ─ `Supervisor::pollTelemetry()`, configurable via `SupervisorConfig::telemetryPollIntervalMs` (default 10 s)
+- [x] Store per-wheel battery state ─ `WheelConnState_t::batteryPct/batteryValid`
+- [x] Low battery warning
+  - [x] Serial output ─ `[Supervisor] LOW BATTERY WARNING: X% (threshold: Y%)`
+  - [ ] LED pattern ─ pending 2.3
+  - [ ] Speed limiting ─ pending mapper integration
+- [x] `VehicleState::lowBattery` flag set when either wheel < `lowBatteryThreshold` (default 20%)
+- [x] `pollTelemetry()` called from `handlePaired()`, `handleArmed()`, `handleDriving()`
 
 **Deliverable:** Real-time battery monitoring
 **Success Criteria:** Accuracy matches Python implementation
