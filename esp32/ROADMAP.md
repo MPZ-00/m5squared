@@ -3,11 +3,12 @@
 **Goal:** Fully standalone remote with vendor ECS + mobile app features
 
 **Current State:**
-- Unidirectional control working (sending speed commands)
-- Basic ACK/NACK detection exists
-- Response parsing incomplete
-- No telemetry feedback
-- Basic state machine (BOOT → CONNECTING → READY → OPERATING → ERROR)
+- Bidirectional BLE working (dual-wheel, encryption validated per-wheel)
+- Full state machine with watchdogs, fail-safe, auto-reconnect
+- Per-wheel retry budgets with hard state reset on failure
+- Smooth control via mapper (curves, ramping, differential drive)
+- Serial debug interface operational
+- Response parsing: ACK/encryption validation done; telemetry payloads not yet parsed
 
 **Target State:** 
 - Standalone operation (no PC/phone required)
@@ -50,8 +51,9 @@
   - Link timeout (detect connection drops)
   - Heartbeat keepalive
 - [x] Auto-reconnection
-  - Exponential backoff
-  - Retry attempt tracking
+  - Per-wheel independent retry budgets (not global)
+  - Hard BLE state reset per failed wheel attempt before next retry
+  - Outcome deferred until all wheels are connected or budgets exhausted
 - [x] Telemetry monitoring
 - [x] Vehicle state caching (battery, speed, distance)
 
@@ -137,14 +139,16 @@
 
 **Deliverable:** Settings survive power cycle
 
-### 2.5 Serial Interface
+### 2.5 Serial Interface ✓ COMPLETE
 
-- [ ] Debugging commands
-- [ ] Real-time telemetry output
-- [ ] Status monitoring
+- [x] Debugging commands (`help`, `status`, `stop`, `reconnect`, `reset`, `wheels`, `debug <flag>`)
+- [x] Debug flag system (`ble`, `state`, `motor`, `buttons`, `heartbeat` per-flag on/off)
+- [x] Wheel status dump (`blePrintWheelDetails`)
+- [ ] Real-time telemetry output (blocked on 1.4 response parsing)
 - [ ] Wheel simulation mode (test without hardware)
 
 **Deliverable:** Development interface for testing
+**Status:** Core interface implemented; telemetry output pending Phase 1.4
 
 ---
 
