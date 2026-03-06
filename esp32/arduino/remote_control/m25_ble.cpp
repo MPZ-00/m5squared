@@ -331,7 +331,26 @@ bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
     uint8_t buf[128];
     size_t len = _buildAndEncrypt(idx, serviceId, paramId, payload, payloadLen, buf);
     if (len == 0) return false;
-    w.rxChar->writeValue(buf, len, false);
+    try {
+        w.rxChar->writeValue(buf, len, false);
+    } catch (...) {
+        // writeValue() can throw or leave the GATT stack in a blocking state
+        // when the connection drops mid-transfer.  Mark disconnected immediately
+        // so subsequent calls skip this wheel and loop() stays responsive.
+        Serial.printf("[BLE] writeValue() exception on wheel %d - marking disconnected\n", idx);
+        w.connected     = false;
+        w.protocolReady = false;
+        return false;
+    }
+    // Detect silent write failures: the BLE stack logs rc=-1 but writeValue()
+    // returns void.  Re-check connection state immediately; if it dropped during
+    // the write, mark it so callers (and the next sendStop) skip this wheel.
+    if (w.client && !w.client->isConnected()) {
+        Serial.printf("[BLE] write lost connection on wheel %d - marking disconnected\n", idx);
+        w.connected     = false;
+        w.protocolReady = false;
+        return false;
+    }
     return true;
 }
 

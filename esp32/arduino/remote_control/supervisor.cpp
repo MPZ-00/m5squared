@@ -524,8 +524,11 @@ void Supervisor::sendCommand(const CommandFrame& cmd) {
     if (success) {
         _lastLinkTimeMs = millis();
     } else {
-        Serial.println("[Supervisor] Failed to send command");
-        // Don't failsafe immediately, will be caught by link watchdog
+        Serial.println("[Supervisor] Failed to send command - entering failsafe");
+        // A write failure means the BLE connection is broken.  Enter failsafe
+        // immediately rather than waiting for the link watchdog; this prevents
+        // the next sendStop() / sendCommand() from blocking on a dead connection.
+        enterFailsafe("BLE write error");
     }
 }
 
@@ -555,7 +558,11 @@ void Supervisor::transitionTo(SupervisorState newState) {
 
 void Supervisor::enterFailsafe(const char* reason) {
     Serial.printf("[Supervisor] Entering FAILSAFE: %s\n", reason);
-    sendStop();
+    // Only attempt a stop write if we actually have a connection - avoids
+    // blocking/re-entering on a dead BLE link that just caused the failsafe.
+    if (bleAnyConnected()) {
+        sendStop();
+    }
     transitionTo(SUPERVISOR_FAILSAFE);
 }
 
