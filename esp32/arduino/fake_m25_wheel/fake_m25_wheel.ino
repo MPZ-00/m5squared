@@ -33,6 +33,7 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 #include <mbedtls/aes.h>
+#include <freertos/queue.h>
 
 // Device-specific configuration
 #include "device_config.h"
@@ -69,6 +70,11 @@ bool oldDeviceConnected = false;
 unsigned long connectionTime = 0;  // Time when client connected (for grace period)
 bool firstValidPacketReceived = false;  // Track if we've seen a valid packet after connection
 uint16_t stalePacketCount = 0;  // Count of stale packets discarded after connection
+
+// RX packet queue: onWrite() posts here; loop() processes outside BLE callback context.
+// Calling notify() from within onWrite() causes Bluedroid internal errors (rc=-1 on client).
+struct RxPacket { uint8_t data[128]; size_t len; };
+static QueueHandle_t _rxQueue = nullptr;
 
 // Wheel state
 WheelState wheel;
@@ -119,20 +125,15 @@ class MyCallbacks: public BLECharacteristicCallbacks {
         uint8_t* rxValue = pCharacteristic->getData();
         size_t len = pCharacteristic->getValue().length();
 
-        if (len <= 0) return;
-        
-        if (debugFlags & DBG_RAW_DATA) {
-            Serial.print("Received packet (" + String(len) + " bytes): ");
-            
-            // Print as hex
-            for (int i = 0; i < len; i++) {
-                Serial.printf("%02X ", rxValue[i]);
-            }
-            Serial.println();
-        }
-        
-        // Try to decode command (will be encrypted in real use)
-        handleCommand(rxValue, len);
+        if (len == 0 || len > 128) return;
+
+        // Do NOT process here or call notify() ─ we are on the Bluedroid BT callback
+        // thread. Calling notify() from within onWrite() causes GATT errors (rc=-1)
+        // on the client side. Post to queue; loop() will process safely.
+        RxPacket pkt;
+        memcpy(pkt.data, rxValue, len);
+        pkt.len = len;
+        if (_rxQueue) xQueueSend(_rxQueue, &pkt, 0);  // non-blocking
     }
 };
 
@@ -408,7 +409,6 @@ void handleCommand(uint8_t* data, size_t len) {
             
             // Send ACK for all commands except REMOTE_SPEED (0x30), too many
             if (paramId != 0x30) {
-                delay(10);
                 sendResponse();
             }
         }
@@ -627,6 +627,9 @@ void setup() {
     Serial.println("Device name: " + String(DEVICE_NAME));
     Serial.println();
 
+    // Initialize RX packet queue before BLE setup
+    _rxQueue = xQueueCreate(4, sizeof(RxPacket));
+
     // Initialize BLE
     BLEDevice::init(DEVICE_NAME);
     
@@ -681,6 +684,20 @@ void setup() {
 }
 
 void loop() {
+    // Drain the RX packet queue ─ process commands here, not in the BLE callback.
+    // This avoids calling notify() from within onWrite(), which causes rc=-1 on client.
+    {
+        RxPacket pkt;
+        while (xQueueReceive(_rxQueue, &pkt, 0) == pdTRUE) {
+            if (debugFlags & DBG_RAW_DATA) {
+                Serial.print("Received packet (" + String(pkt.len) + " bytes): ");
+                for (size_t i = 0; i < pkt.len; i++) Serial.printf("%02X ", pkt.data[i]);
+                Serial.println();
+            }
+            handleCommand(pkt.data, pkt.len);
+        }
+    }
+
     // Handle connection state changes
     if (deviceConnected && !oldDeviceConnected) {
         oldDeviceConnected = deviceConnected;
