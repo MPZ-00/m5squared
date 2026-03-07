@@ -440,9 +440,10 @@ void Supervisor::handleArmed() {
         enterFailsafe("Connection lost");
         return;
     }
-    pollTelemetry();
-    // Input processing happens in processInput()
-    // Just maintain heartbeat here
+    // No telemetry polling here: bleRequest*() calls _sendCommand() on Core 1
+    // while the motor task (_bleMotorTask) may be writing on Core 0.  Even with
+    // the mutex, isConnected() inside the stack can deadlock when rc=-1 fires.
+    // Telemetry is polled safely in handlePaired() before the motor task is active.
 }
 
 void Supervisor::handleDriving() {
@@ -453,7 +454,7 @@ void Supervisor::handleDriving() {
         enterFailsafe("Connection lost");
         return;
     }
-    pollTelemetry();
+    // No telemetry polling while driving ─ same reason as handleArmed().
     // Input processing happens in processInput()
     // Watchdogs are checked in main update loop
 }
@@ -562,6 +563,9 @@ void Supervisor::checkWatchdogs() {
 // Command Sending
 // ---------------------------------------------------------------------------
 void Supervisor::sendStop() {
+    if (debugFlags & DBG_STATE) {
+        Serial.println("[Supervisor] -> STOP");
+    }
     bleSendStop();
     _lastLinkTimeMs = millis();
 }
@@ -581,6 +585,10 @@ void Supervisor::sendCommand(const CommandFrame& cmd) {
     // Post to the motor write task queue (non-blocking; always returns true).
     // Write failures are reported asynchronously via bleLastMotorWriteOk()
     // and caught by checkWatchdogs() on the next update cycle.
+    if (debugFlags & DBG_STATE) {
+        Serial.printf("[Supervisor] -> L=%.0f%% R=%.0f%%\n",
+                      (double)cmd.leftSpeed * 100.0, (double)cmd.rightSpeed * 100.0);
+    }
     bleSendMotorCommand((float)cmd.leftSpeed, (float)cmd.rightSpeed);
     _lastLinkTimeMs = millis();
 }

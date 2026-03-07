@@ -331,39 +331,29 @@ bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
                   const uint8_t* payload, uint8_t payloadLen) {
     WheelConnState_t &w = _wheels[idx];
     // Quick pre-checks before taking the mutex to avoid unnecessary contention.
+    // Use w.connected flag here (not isConnected()) ─ isConnected() acquires a
+    // Bluedroid-internal lock and can block when the stack is in error recovery.
     if (!w.connected || w.rxChar == nullptr) return false;
-    if (w.client == nullptr || !w.client->isConnected()) {
-        w.connected     = false;
-        w.protocolReady = false;
-        return false;
-    }
 
-    // Serialize all GATT writes: the BLE GATT client is NOT thread-safe.
-    // Motor task (Core 0) and telemetry / connect-init (Core 1) must not call
-    // writeValue() concurrently ─ that produces "Unknown ESP_ERR" and corrupts
-    // the GATT state, locking up the remote after arming.
+    // Serialize all GATT writes across tasks (motor task Core 0, telemetry Core 1).
     if (_bleTxMutex && xSemaphoreTake(_bleTxMutex, pdMS_TO_TICKS(200)) != pdTRUE) {
-        // Could not acquire within 200 ms ─ BLE stack is stalled; treat as failure.
         Serial.printf("[BLE] mutex timeout on wheel %d\n", idx);
         return false;
     }
 
-    // Re-check inside the lock: connection may have dropped while we waited.
+    // Inside the lock: use w.connected flag only ─ NEVER call isConnected() here.
+    // isConnected() acquires a Bluedroid-internal semaphore; if the BLE stack is
+    // concurrently doing error recovery after rc=-1, that semaphore is held and
+    // isConnected() blocks indefinitely, holding our mutex and deadlocking every
+    // other caller.  The disconnect callback sets w.connected = false reliably.
     bool ok = false;
-    if (w.connected && w.rxChar && w.client && w.client->isConnected()) {
+    if (w.connected && w.rxChar) {
         uint8_t buf[128];
         size_t len = _buildAndEncrypt(idx, serviceId, paramId, payload, payloadLen, buf);
         if (len > 0) {
             try {
                 w.rxChar->writeValue(buf, len, false);
-                // Detect silent write failures (rc=-1 logged by BLE stack).
-                if (w.client && !w.client->isConnected()) {
-                    Serial.printf("[BLE] write lost connection on wheel %d\n", idx);
-                    w.connected     = false;
-                    w.protocolReady = false;
-                } else {
-                    ok = true;
-                }
+                ok = true;
             } catch (...) {
                 Serial.printf("[BLE] writeValue() exception on wheel %d\n", idx);
                 w.connected     = false;
@@ -1071,7 +1061,29 @@ static void _bleMotorTask(void* /*pv*/) {
                 spd[0] = (uint8_t)((raw >> 8) & 0xFF);
                 spd[1] = (uint8_t)(raw        & 0xFF);
             }
-            ok &= _sendCommand(i, M25_SRV_APP_MGMT, M25_PARAM_WRITE_REMOTE_SPEED, spd, 2);
+
+            if (debugFlags & DBG_BLE) {
+                const char* wn = _wheels[i].name ? _wheels[i].name : "?";
+                if (cmd.isStop) {
+                    Serial.printf("[BLE] motor -> %s STOP\n", wn);
+                } else {
+                    float pct = (i == WHEEL_LEFT) ? -cmd.left : cmd.right;
+                    Serial.printf("[BLE] motor -> %s %.0f%%\n", wn, (double)(pct * 100.0f));
+                }
+            }
+
+            bool sent = _sendCommand(i, M25_SRV_APP_MGMT, M25_PARAM_WRITE_REMOTE_SPEED, spd, 2);
+            if (!sent) {
+                // Single retry after 50 ms: the BLE GATT pipe is briefly busy
+                // immediately after connect (Bluedroid processing the first ACK
+                // notify from the wheel). Give the stack time to clear.
+                vTaskDelay(pdMS_TO_TICKS(50));
+                sent = _sendCommand(i, M25_SRV_APP_MGMT, M25_PARAM_WRITE_REMOTE_SPEED, spd, 2);
+                if (!sent) {
+                    Serial.printf("[BLE] motor write failed on wheel %d (after retry)\n", i);
+                }
+            }
+            ok &= sent;
         }
         _motorWriteOk = ok;
     }
