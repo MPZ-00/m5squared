@@ -1079,6 +1079,11 @@ static void _bleMotorTask(void* /*pv*/) {
             ok &= sent;
         }
         _motorWriteOk = ok;
+        // Pace writes to ~20 Hz and yield to IDLE0 on Core 0. Without this,
+        // xQueueOverwrite at loop() rate keeps the queue permanently occupied,
+        // xQueueReceive never blocks, and the motor task starves IDLE0 until
+        // the task watchdog fires.
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
 
