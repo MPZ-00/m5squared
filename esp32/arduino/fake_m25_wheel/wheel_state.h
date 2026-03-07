@@ -20,6 +20,7 @@ struct WheelState {
     long wheelRotation = 0;        // Total wheel rotations
     float distanceTraveled = 0.0;  // Distance in meters (approx 2m per rotation)
     unsigned long lastSpeedUpdate = 0;  // Last speed change timestamp
+    unsigned long lastCmdTimeMs = 0;    // millis() when last REMOTE_SPEED command arrived
     
     /**
      * Simulate wheel rotation and update distance

@@ -388,6 +388,7 @@ void handleCommand(uint8_t* data, size_t len) {
                 }
                 wheel.lastSpeed = wheel.currentSpeed;
                 wheel.currentSpeed = speed;
+                wheel.lastCmdTimeMs = millis();  // refresh command-timeout watchdog
                 
                 // Simulate wheel rotation based on speed (rough estimate)
                 // Speed scale: 250 raw units = 100% = ~10 km/h
@@ -731,6 +732,16 @@ void loop() {
     
     // Update speed indicators (LED and buzzer)
     updateSpeedIndicators();
+
+    // Command timeout: auto-stop if no speed command received for 500 ms.
+    // Covers the case where the remote's BLE write fails (rc=-1) without a
+    // clean disconnect - the link stays alive on our side but commands stop arriving.
+    if (wheel.currentSpeed != 0 && wheel.lastCmdTimeMs != 0 &&
+        millis() - wheel.lastCmdTimeMs > 500) {
+        Serial.println("[Safety] Command timeout - auto stop");
+        wheel.currentSpeed = 0;
+        wheel.lastCmdTimeMs = 0;
+    }
     
     // Simulate battery drain (faster when active)
     static unsigned long lastBatteryUpdate = 0;

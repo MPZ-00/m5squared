@@ -1068,7 +1068,7 @@ static void _bleMotorTask(void* /*pv*/) {
                     Serial.printf("[BLE] motor -> %s STOP\n", wn);
                 } else {
                     float pct = (i == WHEEL_LEFT) ? -cmd.left : cmd.right;
-                    Serial.printf("[BLE] motor -> %s %.0f%%\n", wn, (double)(pct * 100.0f));
+                    Serial.printf("[BLE] motor -> %s %.0f%%\n", wn, (double)pct);
                 }
             }
 
