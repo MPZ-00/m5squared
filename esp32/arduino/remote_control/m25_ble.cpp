@@ -9,6 +9,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
+#include <freertos/semphr.h>
 
 // ---------------------------------------------------------------------------
 // Internal static storage (single instance across translation units)
@@ -16,6 +17,13 @@
 
 static WheelConnState_t _wheelsStorage[WHEEL_COUNT];
 static bool _bleAutoReconnectFlag = true;
+
+// Mutex serializing all GATT writes across tasks.
+// The BLE GATT client is not thread-safe: concurrent writeValue() calls from
+// different RTOS tasks (motor task on Core 0, telemetry on Core 1, connect
+// init on Core 0) produce "Unknown ESP_ERR" and corrupt the GATT state.
+// Every _sendCommand() caller must hold this before touching the BLE stack.
+static SemaphoreHandle_t _bleTxMutex = nullptr;
 
 WheelConnState_t* _getWheels() {
     return _wheelsStorage;
@@ -322,39 +330,53 @@ size_t _buildAndEncrypt(int idx, uint8_t serviceId, uint8_t paramId,
 bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
                   const uint8_t* payload, uint8_t payloadLen) {
     WheelConnState_t &w = _wheels[idx];
-    // Double-guard: w.connected is set by the BLE callback thread (may lag);
-    // client->isConnected() is the synchronous ground truth and prevents
-    // writeValue() from blocking on a dead GATT connection.
+    // Quick pre-checks before taking the mutex to avoid unnecessary contention.
     if (!w.connected || w.rxChar == nullptr) return false;
     if (w.client == nullptr || !w.client->isConnected()) {
-        w.connected     = false;   // sync flag with reality
-        w.protocolReady = false;
-        return false;
-    }
-    uint8_t buf[128];
-    size_t len = _buildAndEncrypt(idx, serviceId, paramId, payload, payloadLen, buf);
-    if (len == 0) return false;
-    try {
-        w.rxChar->writeValue(buf, len, false);
-    } catch (...) {
-        // writeValue() can throw or leave the GATT stack in a blocking state
-        // when the connection drops mid-transfer.  Mark disconnected immediately
-        // so subsequent calls skip this wheel and loop() stays responsive.
-        Serial.printf("[BLE] writeValue() exception on wheel %d - marking disconnected\n", idx);
         w.connected     = false;
         w.protocolReady = false;
         return false;
     }
-    // Detect silent write failures: the BLE stack logs rc=-1 but writeValue()
-    // returns void.  Re-check connection state immediately; if it dropped during
-    // the write, mark it so callers (and the next sendStop) skip this wheel.
-    if (w.client && !w.client->isConnected()) {
-        Serial.printf("[BLE] write lost connection on wheel %d - marking disconnected\n", idx);
-        w.connected     = false;
-        w.protocolReady = false;
+
+    // Serialize all GATT writes: the BLE GATT client is NOT thread-safe.
+    // Motor task (Core 0) and telemetry / connect-init (Core 1) must not call
+    // writeValue() concurrently ─ that produces "Unknown ESP_ERR" and corrupts
+    // the GATT state, locking up the remote after arming.
+    if (_bleTxMutex && xSemaphoreTake(_bleTxMutex, pdMS_TO_TICKS(200)) != pdTRUE) {
+        // Could not acquire within 200 ms ─ BLE stack is stalled; treat as failure.
+        Serial.printf("[BLE] mutex timeout on wheel %d\n", idx);
         return false;
     }
-    return true;
+
+    // Re-check inside the lock: connection may have dropped while we waited.
+    bool ok = false;
+    if (w.connected && w.rxChar && w.client && w.client->isConnected()) {
+        uint8_t buf[128];
+        size_t len = _buildAndEncrypt(idx, serviceId, paramId, payload, payloadLen, buf);
+        if (len > 0) {
+            try {
+                w.rxChar->writeValue(buf, len, false);
+                // Detect silent write failures (rc=-1 logged by BLE stack).
+                if (w.client && !w.client->isConnected()) {
+                    Serial.printf("[BLE] write lost connection on wheel %d\n", idx);
+                    w.connected     = false;
+                    w.protocolReady = false;
+                } else {
+                    ok = true;
+                }
+            } catch (...) {
+                Serial.printf("[BLE] writeValue() exception on wheel %d\n", idx);
+                w.connected     = false;
+                w.protocolReady = false;
+            }
+        }
+    } else {
+        w.connected     = false;
+        w.protocolReady = false;
+    }
+
+    if (_bleTxMutex) xSemaphoreGive(_bleTxMutex);
+    return ok;
 }
 
 // ---------------------------------------------------------------------------
@@ -832,6 +854,12 @@ bool _connectWheel(int idx) {
 // ---------------------------------------------------------------------------
 
 void bleInit(const char* deviceName) {
+    // Create the GATT-write mutex before any possible _sendCommand() call.
+    if (!_bleTxMutex) {
+        _bleTxMutex = xSemaphoreCreateMutex();
+        if (!_bleTxMutex) Serial.println("[BLE] ERROR: failed to create TX mutex");
+    }
+
     // Populate mutable wheel config from compile-time device_config.h defaults
     memset(_wheels, 0, sizeof(_wheelsStorage));
     if (debugFlags & DBG_BLE) {
