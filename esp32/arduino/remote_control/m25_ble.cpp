@@ -1073,15 +1073,8 @@ static void _bleMotorTask(void* /*pv*/) {
             }
 
             bool sent = _sendCommand(i, M25_SRV_APP_MGMT, M25_PARAM_WRITE_REMOTE_SPEED, spd, 2);
-            if (!sent) {
-                // Single retry after 50 ms: the BLE GATT pipe is briefly busy
-                // immediately after connect (Bluedroid processing the first ACK
-                // notify from the wheel). Give the stack time to clear.
-                vTaskDelay(pdMS_TO_TICKS(50));
-                sent = _sendCommand(i, M25_SRV_APP_MGMT, M25_PARAM_WRITE_REMOTE_SPEED, spd, 2);
-                if (!sent) {
-                    Serial.printf("[BLE] motor write failed on wheel %d (after retry)\n", i);
-                }
+            if (!sent && (debugFlags & DBG_BLE)) {
+                Serial.printf("[BLE] motor write failed on wheel %d\n", i);
             }
             ok &= sent;
         }
