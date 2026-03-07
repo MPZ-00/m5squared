@@ -161,8 +161,10 @@ struct MapperConfig {
     
     // Default constructor with safe defaults
     MapperConfig()
-        : deadzone(0.1f)
-        , curve(2.0f)
+        : deadzone(0.05f)  // joystick.h already removes the hardware deadzone;
+                           // keep a small mapper deadzone only for residual ADC drift
+        , curve(1.0f)      // linear response - quadratic (2.0) made wheels silent
+                           // until ~1200 raw ADC past center (35 % deflection)
         , maxSpeedSlow(30)
         , maxSpeedNormal(60)
         , maxSpeedFast(100)

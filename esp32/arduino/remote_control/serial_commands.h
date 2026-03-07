@@ -477,8 +477,8 @@ static void _scDispatch(const char* cmd, const SerialContext &ctx) {
             return;
         }
         SupervisorState supState = ctx.supervisor->getState();
-        if (supState != SUPERVISOR_FAILSAFE) {
-            Serial.println(F("[CMD] reset: not in FAILSAFE state"));
+        if (supState != SUPERVISOR_FAILSAFE && supState != SUPERVISOR_DISCONNECTED) {
+            Serial.println(F("[CMD] reset: must be in FAILSAFE or DISCONNECTED state"));
             return;
         }
         Serial.println(F("[CMD] Clearing failsafe, reconnecting..."));

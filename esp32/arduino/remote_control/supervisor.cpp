@@ -460,16 +460,12 @@ void Supervisor::handleDriving() {
 }
 
 void Supervisor::handleFailsafe() {
-    // Emergency state - send stop commands periodically
+    // Emergency state - send stop commands periodically.
+    // Stay in FAILSAFE until the user explicitly clears with 'reset'.
+    // Do NOT auto-transition to DISCONNECTED: that would race with the user
+    // trying to type 'reset', and it makes E-Stop non-recoverable when the
+    // BLE link drops during the stop-write flood.
     sendStop();
-    
-    // Check if we can recover
-    if (!bleAnyConnected()) {
-        // Lost connection
-        Serial.println("[Supervisor] Connection lost in failsafe, disconnecting");
-        transitionTo(SUPERVISOR_DISCONNECTED);
-    }
-    // Otherwise stay in failsafe until manual intervention
 }
 
 void Supervisor::handleStopRequest() {
