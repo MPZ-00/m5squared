@@ -161,6 +161,9 @@ private:
     uint32_t _lastHeartbeatMs;
     uint32_t _connectAttemptMs;
     uint32_t _lastTelemetryPollMs;  // Timestamp of last telemetry request burst
+    // Joystick hold timers for ARMED<->DRIVING hysteresis (JS_ACTIVATE_HOLD_MS / JS_IDLE_HOLD_MS)
+    uint32_t _activateHoldStartMs;  // millis() when joystick first moved out of deadzone in ARMED
+    uint32_t _idleHoldStartMs;      // millis() when joystick first returned to deadzone in DRIVING
     
     // ---------------------------------------------------------------------------
     // Connection Management

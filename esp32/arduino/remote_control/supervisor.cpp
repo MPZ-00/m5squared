@@ -27,6 +27,8 @@ Supervisor::Supervisor(Mapper& mapper, const SupervisorConfig& config)
     , _lastHeartbeatMs(0)
     , _connectAttemptMs(0)
     , _lastTelemetryPollMs(0)
+    , _activateHoldStartMs(0)
+    , _idleHoldStartMs(0)
     , _connectionRequested(false)
     , _lastLeftConnected(false)
     , _lastRightConnected(false)
@@ -177,23 +179,48 @@ void Supervisor::processInput(const ControlState& control) {
     
     // Different behavior depending on state
     if (_state == SUPERVISOR_ARMED) {
-        // Check if user wants to drive (deadman + movement)
         if (control.deadman && !control.isNeutral()) {
-            transitionTo(SUPERVISOR_DRIVING);
-            // Process this input in DRIVING state on next update
+            // Joystick is out of deadzone: start or check the activate hold timer.
+            // Require JS_ACTIVATE_HOLD_MS of continuous out-of-deadzone before
+            // transitioning to DRIVING, so ADC noise at the boundary can't jiggle the state.
+            if (_activateHoldStartMs == 0) {
+                _activateHoldStartMs = millis();
+            } else if (millis() - _activateHoldStartMs >= JS_ACTIVATE_HOLD_MS) {
+                _activateHoldStartMs = 0;
+                _idleHoldStartMs     = 0;
+                transitionTo(SUPERVISOR_DRIVING);
+            }
+            // Not yet held long enough - send stop and wait
+            sendStop();
         } else {
-            // User not ready to drive yet - send stop to be safe
+            // Back in deadzone: reset the activate timer
+            _activateHoldStartMs = 0;
             sendStop();
         }
     }
     else if (_state == SUPERVISOR_DRIVING) {
         // Check if user released controls
         if (!control.deadman || control.isNeutral()) {
-            Serial.println("[Supervisor] User released controls, returning to ARMED");
+            // Joystick returned to deadzone: start or check the idle hold timer.
+            // Require JS_IDLE_HOLD_MS of continuous in-deadzone before returning to ARMED,
+            // so a brief bump at center doesn't drop out of DRIVING.
+            if (_idleHoldStartMs == 0) {
+                _idleHoldStartMs = millis();
+            }
             sendStop();
-            transitionTo(SUPERVISOR_ARMED);
+            if (millis() - _idleHoldStartMs >= JS_IDLE_HOLD_MS) {
+                if (debugFlags & DBG_STATE) {
+                    Serial.println("[Supervisor] User released controls, returning to ARMED");
+                }
+                _idleHoldStartMs     = 0;
+                _activateHoldStartMs = 0;
+                transitionTo(SUPERVISOR_ARMED);
+            }
             return;
         }
+
+        // Joystick still active: reset the idle timer
+        _idleHoldStartMs = 0;
         
         // Map to command
         CommandFrame cmd;
@@ -201,7 +228,9 @@ void Supervisor::processInput(const ControlState& control) {
         
         // Mapper enforces safety - check if command is valid
         if (!valid || !control.isSafe()) {
-            Serial.println("[Supervisor] Mapper rejected input (safety violation)");
+            if (debugFlags & DBG_STATE) {
+                Serial.println("[Supervisor] Mapper rejected input (safety violation)");
+            }
             sendStop();
             return;
         }
@@ -591,9 +620,11 @@ void Supervisor::transitionTo(SupervisorState newState) {
     }
     
     SupervisorState oldState = _state;
-    Serial.printf("[Supervisor] State transition: %s -> %s\n",
-                  supervisorStateToString(oldState),
-                  supervisorStateToString(newState));
+    if (debugFlags & DBG_STATE) {
+        Serial.printf("[Supervisor] State transition: %s -> %s\n",
+                      supervisorStateToString(oldState),
+                      supervisorStateToString(newState));
+    }
     
     _state = newState;
     
@@ -609,6 +640,14 @@ void Supervisor::transitionTo(SupervisorState newState) {
     // Reset mapper state on certain transitions
     if (newState == SUPERVISOR_DISCONNECTED || newState == SUPERVISOR_FAILSAFE) {
         _mapper.reset();
+    }
+
+    // Reset joystick hold timers on any entry to ARMED so stale timer values
+    // from a previous drive session can't cause an immediate ARMED->DRIVING
+    // transition (e.g. after reconnect or reset).
+    if (newState == SUPERVISOR_ARMED) {
+        _activateHoldStartMs = 0;
+        _idleHoldStartMs     = 0;
     }
     
     // Notify callbacks
