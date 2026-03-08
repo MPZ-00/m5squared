@@ -25,9 +25,12 @@ def setup_logging(level: str = "INFO") -> None:
     )
 
 
-def launch_gui() -> None:
+def launch_gui(rfcomm: bool = False) -> None:
     """Launch the GUI application"""
     print("Starting m5squared GUI...")
+    if rfcomm:
+        print("Using RFCOMM mode (classic Bluetooth)")
+        sys.argv.append('--rfcomm')
     from m25_gui import main
     main()
 
@@ -160,6 +163,11 @@ Examples:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Set logging level"
     )
+    parser.add_argument(
+        "--rfcomm",
+        action="store_true",
+        help="Force classic Bluetooth RFCOMM (Linux only, GUI mode)"
+    )
     
     args = parser.parse_args()
     
@@ -173,7 +181,7 @@ Examples:
         launch_gamepad(use_mock=args.mock)
     else:
         # Default to GUI
-        launch_gui()
+        launch_gui(rfcomm=args.rfcomm)
 
 
 if __name__ == "__main__":

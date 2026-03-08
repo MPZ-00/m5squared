@@ -231,7 +231,7 @@ class M25GUI:
 
     LEVELS = ("muted", "info", "success", "warning", "error")
 
-    def __init__(self, root):
+    def __init__(self, root, rfcomm_only=False):
         self.root = root
         self.root.title("m5squared - Wheelchair Controller")
         
@@ -255,6 +255,7 @@ class M25GUI:
         self.ecs_remote = None
         self.demo_mode = False
         self.event_loop = None  # For Windows async Bluetooth
+        self.rfcomm_only = rfcomm_only  # Force classic Bluetooth RFCOMM
         
         # Core architecture components
         self.use_core_architecture = False
@@ -2201,17 +2202,23 @@ class M25GUI:
                     devices = loop.run_until_complete(bt.scan(duration=10, filter_m25=filter_enabled))
                     loop.close()
                 else:
-                    # On Linux, prefer BLE discovery and fall back to classic scan.
+                    # On Linux, use BLE or RFCOMM based on mode flag
                     devices = []
-                    try:
-                        from m25_bluetooth_ble import scan_devices as scan_ble_devices
-                        devices = scan_ble_devices(duration=10, filter_m25=filter_enabled)
-                    except Exception:
-                        devices = []
-
-                    if not devices:
+                    if self.rfcomm_only:
+                        # Force classic RFCOMM scan only
                         from m25_bluetooth import scan_devices as scan_classic_devices
                         devices = scan_classic_devices(duration=10, filter_m25=filter_enabled)
+                    else:
+                        # Prefer BLE discovery and fall back to classic scan
+                        try:
+                            from m25_bluetooth_ble import scan_devices as scan_ble_devices
+                            devices = scan_ble_devices(duration=10, filter_m25=filter_enabled)
+                        except Exception:
+                            devices = []
+
+                        if not devices:
+                            from m25_bluetooth import scan_devices as scan_classic_devices
+                            devices = scan_classic_devices(duration=10, filter_m25=filter_enabled)
                 
                 self.root.after(0, self.scan_complete, devices)
             except Exception as e:
@@ -2290,6 +2297,15 @@ class M25GUI:
 
 def main():
     """Launch the GUI application"""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="m5squared GUI")
+    parser.add_argument(
+        "--rfcomm",
+        action="store_true",
+        help="Force classic Bluetooth RFCOMM for scan and connect (Linux only)"
+    )
+    args = parser.parse_args()
 
     missing = []
 
@@ -2309,8 +2325,11 @@ def main():
             print(f"  - {mod}")
         sys.exit(1)
 
+    if args.rfcomm and not IS_WINDOWS:
+        print("Using RFCOMM mode (classic Bluetooth)")
+
     root = tk.Tk()
-    app = M25GUI(root)
+    app = M25GUI(root, rfcomm_only=args.rfcomm)
     root.mainloop()
 
 
