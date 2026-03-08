@@ -29,6 +29,7 @@ Supervisor::Supervisor(Mapper& mapper, const SupervisorConfig& config)
     , _lastTelemetryPollMs(0)
     , _activateHoldStartMs(0)
     , _idleHoldStartMs(0)
+    , _partialReconnect(false)
     , _connectionRequested(false)
     , _lastLeftConnected(false)
     , _lastRightConnected(false)
@@ -326,6 +327,7 @@ void Supervisor::handleConnecting() {
         _connectTask = nullptr;   // task has already self-deleted; safe to clear
         _connectDone = false;
 
+        // Check if any wheel still has retry budget remaining
         bool allDone = true;
         for (int i = 0; i < WHEEL_COUNT; i++) {
             if (!_wheelActive(i)) continue;
@@ -340,13 +342,32 @@ void Supervisor::handleConnecting() {
             return;
         }
 
-        bool anyConnected = bleAnyConnected();
-        if (anyConnected) {
-            if (bleAllConnected()) {
-                Serial.println("[Supervisor] Connected successfully (all wheels)");
-            } else {
-                Serial.println("[Supervisor] Connected successfully (partial)");
-            }
+        // All budgets consumed (or all wheels connected). Decide outcome.
+        if (bleAllConnected()) {
+            Serial.println("[Supervisor] Connected successfully (all wheels)");
+            _partialReconnect = false;
+            memset(_wheelRetries, 0, sizeof(_wheelRetries));
+            _lastLeftConnected  = bleIsConnected(WHEEL_LEFT);
+            _lastRightConnected = bleIsConnected(WHEEL_RIGHT);
+            transitionTo(SUPERVISOR_PAIRED);
+            _lastLinkTimeMs = millis();
+            return;
+        }
+
+        if (_partialReconnect) {
+            // The dropped wheel couldn't be recovered - escalate to a full
+            // disconnect + reconnect of all wheels.
+            Serial.println("[Supervisor] Partial reconnect failed - doing full reconnect");
+            bleDisconnect();
+            _partialReconnect = false;
+            memset(_wheelRetries, 0, sizeof(_wheelRetries));
+            _connectAttemptMs = 0;   // spawn next task immediately
+            return;                  // stay in CONNECTING
+        }
+
+        // Not a partial reconnect - accept whatever we got
+        if (bleAnyConnected()) {
+            Serial.println("[Supervisor] Connected successfully (partial)");
             memset(_wheelRetries, 0, sizeof(_wheelRetries));
             _lastLeftConnected  = bleIsConnected(WHEEL_LEFT);
             _lastRightConnected = bleIsConnected(WHEEL_RIGHT);
@@ -415,36 +436,41 @@ void Supervisor::handleConnecting() {
     }
 }
 
+void Supervisor::_triggerPartialReconnect() {
+    memset(_wheelRetries, 0, sizeof(_wheelRetries));
+    _partialReconnect = true;
+    _connectAttemptMs = 0;  // reconnect immediately, no rate-limit delay
+    transitionTo(SUPERVISOR_CONNECTING);
+}
+
 void Supervisor::handlePaired() {
     // Monitor individual wheel connection state changes
-    bool leftConnected = bleIsConnected(WHEEL_LEFT);
+    bool leftConnected  = bleIsConnected(WHEEL_LEFT);
     bool rightConnected = bleIsConnected(WHEEL_RIGHT);
-    
-    // Detect and log wheel disconnections
-    if (_lastLeftConnected && !leftConnected) {
-        Serial.println("[Supervisor] WARNING: Left wheel disconnected in PAIRED state");
+
+    bool leftDrop  = _wheelActive(WHEEL_LEFT)  && _lastLeftConnected  && !leftConnected;
+    bool rightDrop = _wheelActive(WHEEL_RIGHT) && _lastRightConnected && !rightConnected;
+
+    if (leftDrop || rightDrop) {
+        if (leftDrop)  Serial.println("[Supervisor] Left wheel dropped in PAIRED - reconnecting");
+        if (rightDrop) Serial.println("[Supervisor] Right wheel dropped in PAIRED - reconnecting");
+        _triggerPartialReconnect();
+        return;
     }
-    if (_lastRightConnected && !rightConnected) {
-        Serial.println("[Supervisor] WARNING: Right wheel disconnected in PAIRED state");
-    }
-    
+
     // Detect and log wheel reconnections
-    if (!_lastLeftConnected && leftConnected) {
+    if (!_lastLeftConnected && leftConnected)
         Serial.println("[Supervisor] Left wheel reconnected in PAIRED state");
-    }
-    if (!_lastRightConnected && rightConnected) {
+    if (!_lastRightConnected && rightConnected)
         Serial.println("[Supervisor] Right wheel reconnected in PAIRED state");
-    }
-    
-    // Update tracking
-    _lastLeftConnected = leftConnected;
+
+    _lastLeftConnected  = leftConnected;
     _lastRightConnected = rightConnected;
-    
-    // Connected but not armed - just maintain connection
-    // Check if we lost ALL connections (partial connectivity OK)
+
+    // Full loss (both gone) - reconnect covers this too but log it explicitly
     if (!bleAnyConnected()) {
         Serial.println("[Supervisor] Lost all connections in PAIRED state");
-        transitionTo(SUPERVISOR_DISCONNECTED);
+        _triggerPartialReconnect();
         return;
     }
 
@@ -462,11 +488,14 @@ void Supervisor::handlePaired() {
 }
 
 void Supervisor::handleArmed() {
-    // Ready to drive, waiting for input
-    // Check if we lost ALL connections (partial connectivity OK)
-    if (!bleAnyConnected()) {
-        Serial.println("[Supervisor] Lost all connections in ARMED state");
-        enterFailsafe("Connection lost");
+    // Per-wheel drop detection - reconnect the dropped wheel automatically
+    bool leftOk  = !_wheelActive(WHEEL_LEFT)  || bleIsConnected(WHEEL_LEFT);
+    bool rightOk = !_wheelActive(WHEEL_RIGHT) || bleIsConnected(WHEEL_RIGHT);
+    if (!leftOk || !rightOk) {
+        if (!leftOk)  Serial.println("[Supervisor] Left wheel dropped in ARMED - reconnecting");
+        if (!rightOk) Serial.println("[Supervisor] Right wheel dropped in ARMED - reconnecting");
+        sendStop();
+        _triggerPartialReconnect();
         return;
     }
     // No telemetry polling here: bleRequest*() calls _sendCommand() on Core 1
@@ -476,11 +505,14 @@ void Supervisor::handleArmed() {
 }
 
 void Supervisor::handleDriving() {
-    // Actively controlling vehicles
-    // Check if we lost ALL connections (partial connectivity OK)
-    if (!bleAnyConnected()) {
-        Serial.println("[Supervisor] Lost all connections while driving");
-        enterFailsafe("Connection lost");
+    // Per-wheel drop detection - stop and reconnect the dropped wheel automatically
+    bool leftOk  = !_wheelActive(WHEEL_LEFT)  || bleIsConnected(WHEEL_LEFT);
+    bool rightOk = !_wheelActive(WHEEL_RIGHT) || bleIsConnected(WHEEL_RIGHT);
+    if (!leftOk || !rightOk) {
+        if (!leftOk)  Serial.println("[Supervisor] Left wheel dropped while DRIVING - stopping and reconnecting");
+        if (!rightOk) Serial.println("[Supervisor] Right wheel dropped while DRIVING - stopping and reconnecting");
+        sendStop();
+        _triggerPartialReconnect();
         return;
     }
     // No telemetry polling while driving ─ same reason as handleArmed().
