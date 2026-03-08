@@ -563,13 +563,41 @@ class M25GUI:
         # Drive Test Section
         self.drive_test_frame = tk.LabelFrame(self.control_frame, text="Quick Drive Test", padx=10, pady=10, font=("", 9, "bold"))
         self.drive_test_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0))
-        
+
         self.drive_test_label = tk.Label(self.drive_test_frame, text="Test sequence: Forward → Backward → Left → Right")
         self.drive_test_label.pack(pady=(0, 5))
-        
+
         self.drive_test_btn = tk.Button(self.drive_test_frame, text="🚀 Run Drive Test", command=self.run_drive_test, state="disabled", cursor="hand2")
         self.drive_test_btn.pack(pady=5)
-        
+
+        # Single direction test row
+        self.single_dir_frame = tk.Frame(self.drive_test_frame)
+        self.single_dir_frame.pack(pady=(5, 2))
+
+        self.single_dir_label = tk.Label(self.single_dir_frame, text="Single direction:")
+        self.single_dir_label.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.single_dir_var = tk.StringVar(value="Forward")
+        self.single_dir_menu = tk.OptionMenu(self.single_dir_frame, self.single_dir_var, "Forward", "Backward")
+        self.single_dir_menu.config(width=10)
+        self.single_dir_menu.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.single_dir_btn = tk.Button(self.single_dir_frame, text="Run", command=self.run_single_direction_test, state="disabled", cursor="hand2", width=8)
+        self.single_dir_btn.pack(side=tk.LEFT)
+
+        # Quick movement buttons row
+        self.quick_move_frame = tk.Frame(self.drive_test_frame)
+        self.quick_move_frame.pack(pady=(2, 5))
+
+        self.quick_label = tk.Label(self.quick_move_frame, text="Quick:")
+        self.quick_label.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.quick_fwd_btn = tk.Button(self.quick_move_frame, text="Forward", command=lambda: self.run_short_movement("forward"), state="disabled", cursor="hand2", width=10)
+        self.quick_fwd_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.quick_bwd_btn = tk.Button(self.quick_move_frame, text="Backward", command=lambda: self.run_short_movement("backward"), state="disabled", cursor="hand2", width=10)
+        self.quick_bwd_btn.pack(side=tk.LEFT)
+
         self.drive_test_status = tk.Label(self.drive_test_frame, text="")
         self.drive_test_status.pack(pady=(0, 5))
 
@@ -810,6 +838,14 @@ class M25GUI:
             self._theme_widget(self.drive_test_frame, "labelframe")
             self._theme_widget(self.drive_test_label, "label")
             self._theme_widget(self.drive_test_btn, "button")
+            self._theme_widget(self.single_dir_frame, "frame")
+            self._theme_widget(self.single_dir_label, "label")
+            self._theme_widget(self.single_dir_menu, "optionmenu")
+            self._theme_widget(self.single_dir_btn, "button")
+            self._theme_widget(self.quick_move_frame, "frame")
+            self._theme_widget(self.quick_label, "label")
+            self._theme_widget(self.quick_fwd_btn, "button")
+            self._theme_widget(self.quick_bwd_btn, "button")
             self._theme_widget(self.drive_test_status, "label")
         
         # Output
@@ -1176,6 +1212,120 @@ class M25GUI:
         
         threading.Thread(target=test_thread, daemon=True).start()
 
+    def run_single_direction_test(self):
+        """Run a single direction test (user-chosen: Forward or Backward)"""
+        direction = self.single_dir_var.get()
+        self.log("info", f"Single direction test: {direction}")
+        self.status_message("info", f"Running {direction} test...")
+
+        if self.demo_mode:
+            self.log("warning", f"Demo mode: {direction} test simulated")
+            self.status_message("success", f"{direction} test completed (simulated)")
+            return
+
+        def test_thread():
+            def ui_log(level_msg, msg):
+                self.root.after(0, lambda: self.log(level_msg, msg))
+            def ui_status(level_msg, msg):
+                self.root.after(0, lambda: self.status_message(level_msg, msg))
+            def ui_test_status(msg):
+                self.root.after(0, lambda: self.drive_test_status.config(text=msg))
+
+            try:
+                if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                    ui_log("error", "Not connected")
+                    ui_status("error", "Test failed: Not connected")
+                    return
+
+                import time
+                builder = ECSPacketBuilder()
+                test_speed = 30
+                test_duration = 1.5
+                speed = test_speed if direction == "Forward" else -test_speed
+
+                ui_test_status(f"{direction}...")
+                ui_log("info", f"  -> {direction} (speed: {speed})")
+
+                pkt = builder.build_write_remote_speed(speed)
+                self.ecs_remote.write_value(self.left_conn, pkt, "write_remote_speed")
+                self.ecs_remote.write_value(self.right_conn, pkt, "write_remote_speed")
+
+                time.sleep(test_duration)
+
+                stop_pkt = builder.build_write_remote_speed(0)
+                self.ecs_remote.write_value(self.left_conn, stop_pkt, "write_remote_speed")
+                self.ecs_remote.write_value(self.right_conn, stop_pkt, "write_remote_speed")
+
+                ui_test_status(f"{direction} test done")
+                ui_log("success", f"{direction} test completed")
+                ui_status("success", f"{direction} test completed")
+
+            except Exception as e:
+                ui_log("error", f"Single direction test failed: {e}")
+                ui_status("error", "Test failed")
+                ui_test_status("Test failed")
+                try:
+                    builder = ECSPacketBuilder()
+                    stop_pkt = builder.build_write_remote_speed(0)
+                    if self.left_conn:
+                        self.ecs_remote.write_value(self.left_conn, stop_pkt, "write_remote_speed")
+                    if self.right_conn:
+                        self.ecs_remote.write_value(self.right_conn, stop_pkt, "write_remote_speed")
+                except:
+                    pass
+
+        threading.Thread(target=test_thread, daemon=True).start()
+
+    def run_short_movement(self, direction: str):
+        """Send a short 0.5s burst in the given direction (forward or backward)"""
+        if self.demo_mode:
+            self.log("warning", f"Demo mode: quick {direction} simulated")
+            return
+
+        def move_thread():
+            def ui_log(level_msg, msg):
+                self.root.after(0, lambda: self.log(level_msg, msg))
+            def ui_test_status(msg):
+                self.root.after(0, lambda: self.drive_test_status.config(text=msg))
+
+            try:
+                if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                    ui_log("error", "Not connected")
+                    return
+
+                import time
+                builder = ECSPacketBuilder()
+                speed = 30 if direction == "forward" else -30
+                label = "Forward" if direction == "forward" else "Backward"
+
+                ui_test_status(f"Quick {label}...")
+                ui_log("info", f"  -> Quick {label}")
+
+                pkt = builder.build_write_remote_speed(speed)
+                self.ecs_remote.write_value(self.left_conn, pkt, "write_remote_speed")
+                self.ecs_remote.write_value(self.right_conn, pkt, "write_remote_speed")
+                time.sleep(0.5)
+                stop_pkt = builder.build_write_remote_speed(0)
+                self.ecs_remote.write_value(self.left_conn, stop_pkt, "write_remote_speed")
+                self.ecs_remote.write_value(self.right_conn, stop_pkt, "write_remote_speed")
+
+                ui_test_status(f"Quick {label} done")
+
+            except Exception as e:
+                ui_log("error", f"Quick movement failed: {e}")
+                ui_test_status("Movement failed")
+                try:
+                    builder = ECSPacketBuilder()
+                    stop_pkt = builder.build_write_remote_speed(0)
+                    if self.left_conn:
+                        self.ecs_remote.write_value(self.left_conn, stop_pkt, "write_remote_speed")
+                    if self.right_conn:
+                        self.ecs_remote.write_value(self.right_conn, stop_pkt, "write_remote_speed")
+                except:
+                    pass
+
+        threading.Thread(target=move_thread, daemon=True).start()
+
     def enable_controls(self, enabled=True):
         """Enable or disable control buttons"""
         state = "normal" if enabled else "disabled"
@@ -1193,6 +1343,9 @@ class M25GUI:
         self.read_profile_btn.config(state=state)
         self.info_dump_btn.config(state=state)
         self.drive_test_btn.config(state=state)
+        self.single_dir_btn.config(state=state)
+        self.quick_fwd_btn.config(state=state)
+        self.quick_bwd_btn.config(state=state)
     
     def toggle_deadman_disable(self):
         """Toggle deadman requirement with confirmation"""
