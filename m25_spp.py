@@ -43,6 +43,7 @@ class BluetoothConnection:
         self.socket = socket.socket(self.AF_BLUETOOTH, socket.SOCK_STREAM, self.BTPROTO_RFCOMM)
         self.socket.connect((self.address, channel))
         self.socket.settimeout(2.0)
+        return True
 
     def disconnect(self):
         """Close Bluetooth connection."""
