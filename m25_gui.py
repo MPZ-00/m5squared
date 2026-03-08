@@ -560,22 +560,26 @@ class M25GUI:
         self.info_dump_btn = tk.Button(self.btn_frame, text="📋 Info Dump", command=self.info_dump, state="disabled", cursor="hand2")
         self.info_dump_btn.pack(side=tk.LEFT, padx=5)
         
-        # Drive Test Section
+        # Drive Test Section - grid layout for aligned rows
         self.drive_test_frame = tk.LabelFrame(self.control_frame, text="Quick Drive Test", padx=10, pady=10, font=("", 9, "bold"))
         self.drive_test_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0))
+        self.drive_test_frame.columnconfigure(0, weight=1)
+        self.drive_test_frame.columnconfigure(1, weight=1)
 
+        # Row 0: description spanning both columns, centered
         self.drive_test_label = tk.Label(self.drive_test_frame, text="Test sequence: Forward → Backward → Left → Right")
-        self.drive_test_label.pack(pady=(0, 5))
+        self.drive_test_label.grid(row=0, column=0, columnspan=2, pady=(0, 5))
 
-        self.drive_test_btn = tk.Button(self.drive_test_frame, text="🚀 Run Drive Test", command=self.run_drive_test, state="disabled", cursor="hand2")
-        self.drive_test_btn.pack(pady=5)
+        # Row 1: Run Drive Test button centered
+        self.drive_test_btn = tk.Button(self.drive_test_frame, text="Run Drive Test", command=self.run_drive_test, state="disabled", cursor="hand2")
+        self.drive_test_btn.grid(row=1, column=0, columnspan=2, pady=5)
 
-        # Single direction test row
+        # Row 2: single direction - label right, controls left
+        self.single_dir_label = tk.Label(self.drive_test_frame, text="Single direction:", anchor=tk.E)
+        self.single_dir_label.grid(row=2, column=0, sticky=tk.E, padx=(0, 8), pady=3)
+
         self.single_dir_frame = tk.Frame(self.drive_test_frame)
-        self.single_dir_frame.pack(pady=(5, 2))
-
-        self.single_dir_label = tk.Label(self.single_dir_frame, text="Single direction:")
-        self.single_dir_label.pack(side=tk.LEFT, padx=(0, 5))
+        self.single_dir_frame.grid(row=2, column=1, sticky=tk.W, pady=3)
 
         self.single_dir_var = tk.StringVar(value="Forward")
         self.single_dir_menu = tk.OptionMenu(self.single_dir_frame, self.single_dir_var, "Forward", "Backward")
@@ -585,12 +589,12 @@ class M25GUI:
         self.single_dir_btn = tk.Button(self.single_dir_frame, text="Run", command=self.run_single_direction_test, state="disabled", cursor="hand2", width=8)
         self.single_dir_btn.pack(side=tk.LEFT)
 
-        # Quick movement buttons row
-        self.quick_move_frame = tk.Frame(self.drive_test_frame)
-        self.quick_move_frame.pack(pady=(2, 5))
+        # Row 3: quick buttons - label right, buttons left
+        self.quick_label = tk.Label(self.drive_test_frame, text="Quick:", anchor=tk.E)
+        self.quick_label.grid(row=3, column=0, sticky=tk.E, padx=(0, 8), pady=3)
 
-        self.quick_label = tk.Label(self.quick_move_frame, text="Quick:")
-        self.quick_label.pack(side=tk.LEFT, padx=(0, 5))
+        self.quick_move_frame = tk.Frame(self.drive_test_frame)
+        self.quick_move_frame.grid(row=3, column=1, sticky=tk.W, pady=3)
 
         self.quick_fwd_btn = tk.Button(self.quick_move_frame, text="Forward", command=lambda: self.run_short_movement("forward"), state="disabled", cursor="hand2", width=10)
         self.quick_fwd_btn.pack(side=tk.LEFT, padx=(0, 5))
@@ -598,8 +602,9 @@ class M25GUI:
         self.quick_bwd_btn = tk.Button(self.quick_move_frame, text="Backward", command=lambda: self.run_short_movement("backward"), state="disabled", cursor="hand2", width=10)
         self.quick_bwd_btn.pack(side=tk.LEFT)
 
+        # Row 4: status label centered
         self.drive_test_status = tk.Label(self.drive_test_frame, text="")
-        self.drive_test_status.pack(pady=(0, 5))
+        self.drive_test_status.grid(row=4, column=0, columnspan=2, pady=(3, 0))
 
         # Output Section
         self.output_frame = tk.LabelFrame(self.main_frame, text="Output", padx=10, pady=10, font=("", 9, "bold"))
