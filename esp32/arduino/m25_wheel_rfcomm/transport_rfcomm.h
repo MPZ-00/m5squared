@@ -23,6 +23,7 @@
 
 #include <Arduino.h>
 #include <BluetoothSerial.h>
+#include <esp_log.h>
 #include "config.h"
 #include "protocol.h"
 
@@ -47,13 +48,27 @@ static unsigned long _rfConnTime      = 0;
 //   Returns true on success.
 // ---------------------------------------------------------------------------
 inline bool rfcomm_init(const char* name) {
+    // Temporarily raise BT_SPP log level to DEBUG so the stack prints the
+    // assigned SCN (server channel number) during begin().  Look for a line
+    // like:  D (xxx) BT_SPP: esp_spp_start_srv, scn: 2
+    esp_log_level_set("BT_SPP", ESP_LOG_DEBUG);
+    esp_log_level_set("BT_API", ESP_LOG_DEBUG);
+
+    Serial.println("[RFCOMM] === SPP INIT - channel number in D(BT_SPP) log below ===");
+
     if (!_rfBT.begin(name)) {
         Serial.println("[RFCOMM] ERROR: BluetoothSerial init failed");
+        esp_log_level_set("BT_SPP", ESP_LOG_INFO);
+        esp_log_level_set("BT_API", ESP_LOG_INFO);
         return false;
     }
+
+    Serial.println("[RFCOMM] === SPP INIT DONE ===");
+    esp_log_level_set("BT_SPP", ESP_LOG_INFO);   // Restore to normal
+    esp_log_level_set("BT_API", ESP_LOG_INFO);
+
     Serial.printf("[RFCOMM] SPP server started as \"%s\"\n", name);
-    Serial.println("[RFCOMM] NOTE: Check actual RFCOMM channel in BT stack output.");
-    Serial.printf("[RFCOMM] m25_spp.py expects channel %d; update if needed.\n",
+    Serial.printf("[RFCOMM] Expected channel: %d  |  Check 'scn:' line above if different\n",
                   RFCOMM_CHANNEL);
     return true;
 }
