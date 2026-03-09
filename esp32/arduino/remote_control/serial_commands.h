@@ -233,10 +233,16 @@ static void _scPrintBle() {
 }
 
 static void _scPrintJs() {
+    // Use a single ADC read so raw and norm values are consistent.
+    // Previously two separate reads were made (joystickReadRaw() + joystickRead())
+    // which could sample different ADC values and produce misleading log output.
     JoystickRaw  raw = joystickReadRaw();
-    JoystickNorm n   = joystickRead();
-    Serial.printf("[JS] raw X=%-5d Y=%-5d  norm X=%+.3f Y=%+.3f  dz=%s\n",
-        raw.x, raw.y, n.x, n.y, n.inDeadzone ? "yes" : "no");
+    JoystickNorm n;
+    n.x = joystickNormalizeAxis(raw.x, _jsXCenter);
+    n.y = joystickNormalizeAxis(raw.y, _jsYCenter);
+    n.inDeadzone = (n.x == 0.0f && n.y == 0.0f);
+    Serial.printf("[JS] raw X=%-5d Y=%-5d  ctr X=%-5d Y=%-5d  norm X=%+.3f Y=%+.3f  dz=%s\n",
+        raw.x, raw.y, _jsXCenter, _jsYCenter, n.x, n.y, n.inDeadzone ? "yes" : "no");
 }
 
 static void _scPrintWheels() {
