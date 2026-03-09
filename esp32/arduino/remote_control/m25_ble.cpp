@@ -1062,13 +1062,13 @@ static void _bleMotorTask(void* /*pv*/) {
                 spd[1] = (uint8_t)(raw        & 0xFF);
             }
 
-            if (debugFlags & DBG_BLE) {
+            if (debugFlags & DBG_MOTOR) {
                 const char* wn = _wheels[i].name ? _wheels[i].name : "?";
                 if (cmd.isStop) {
-                    Serial.printf("[BLE] motor -> %s STOP\n", wn);
+                    Serial.printf("[Motor] -> %s STOP\n", wn);
                 } else {
                     float pct = (i == WHEEL_LEFT) ? -cmd.left : cmd.right;
-                    Serial.printf("[BLE] motor -> %s %.0f%%\n", wn, (double)pct);
+                    Serial.printf("[Motor] -> %s %.0f%%\n", wn, (double)pct);
                 }
             }
 

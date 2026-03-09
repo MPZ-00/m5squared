@@ -66,7 +66,9 @@
 // ---------------------------------------------------------------------------
 // Debug output flags - definitions in device_config.h
 // ---------------------------------------------------------------------------
-uint8_t debugFlags = 0;   // all off by default, accessible globally
+// volatile: read/written from two cores (Core1 = serial handler, Core0 = motor task).
+// Without volatile, Core 0 may cache the stale pre-update value indefinitely.
+volatile uint8_t debugFlags = 0;   // all off by default, accessible globally
 
 // Debug flag metadata for better UI
 struct DebugFlagInfo {

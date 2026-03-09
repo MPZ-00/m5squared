@@ -224,7 +224,7 @@ enum SystemState : uint8_t {
 #define DBG_STATE      0x20   // state transitions (already logged, adds detail)
 
 // Global debug flags variable (defined in serial_commands.h)
-extern uint8_t debugFlags;
+extern volatile uint8_t debugFlags;
 
 // ---------------------------------------------------------------------------
 // Arm mode
