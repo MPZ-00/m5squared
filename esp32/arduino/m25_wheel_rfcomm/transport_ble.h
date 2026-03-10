@@ -135,9 +135,15 @@ inline void ble_on_connect() {
 }
 
 // ble_on_disconnect - call from ble_check_events() on disconnect.
+//   Restarts advertising so the next client can find and connect to us.
+//   The short delay lets the Bluedroid stack finish its cleanup before
+//   advertising is re-enabled (matches fake_m25_wheel behaviour).
 // ---------------------------------------------------------------------------
 inline void ble_on_disconnect() {
-    // Queue already flushed by the ISR callback; nothing extra needed.
+    // Queue already flushed by the ISR callback.
+    delay(500);
+    BLEDevice::startAdvertising();
+    Serial.println("[BLE] Advertising restarted after disconnect");
 }
 
 // ---------------------------------------------------------------------------
