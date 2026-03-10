@@ -17,15 +17,28 @@
 // ---------------------------------------------------------------------------
 // M25 SPP protocol identifiers (from m25_protocol_data.py)
 // ---------------------------------------------------------------------------
-#define SPP_SERVICE_APP_MGMT    0x01
 
-#define SPP_PARAM_SYSTEM_MODE   0x10
-#define SPP_PARAM_DRIVE_MODE    0x20
-#define SPP_PARAM_REMOTE_SPEED  0x30
-#define SPP_PARAM_ASSIST_LEVEL  0x40
+// Service IDs
+#define SPP_SERVICE_APP_MGMT        0x01   // All smartphone app functions
+#define SPP_SERVICE_ACTOR_BUZZER    0x02
+#define SPP_SERVICE_ACTOR_LEDS      0x03
+#define SPP_SERVICE_ACTOR_MOTOR     0x04
+#define SPP_SERVICE_BATT_MGMT       0x08   // Battery management (read-only from remote)
+#define SPP_SERVICE_VERSION_MGMT    0x0A   // Firmware/HW version queries
+
+// APP_MGMT (0x01) parameter IDs
+#define SPP_PARAM_SYSTEM_MODE       0x10
+#define SPP_PARAM_DRIVE_MODE        0x20
+#define SPP_PARAM_REMOTE_SPEED      0x30
+#define SPP_PARAM_ASSIST_LEVEL      0x40
+#define SPP_PARAM_DRIVE_PROFILE     0x60
+#define SPP_PARAM_AUTO_SHUTOFF      0x80
+#define SPP_PARAM_READ_SPEED        0x91
+#define SPP_PARAM_READ_CRUISE       0xD1   // READ_CRUISE_VALUES
+#define SPP_PARAM_DUO_DRIVE         0xF0
 
 // Drive-mode flag bits
-#define DRIVE_FLAG_HILL_HOLD    0x01
+#define DRIVE_FLAG_HILL_HOLD        0x01
 
 // Minimum SPP frame length: proto(1) telegram(1) src(1) dst(1) svc(1) param(1) = 6
 #define SPP_MIN_LEN 6
@@ -54,9 +67,20 @@ inline CmdResult command_apply(const uint8_t* spp, size_t sppLen,
     const uint8_t paramId   = spp[5];
 
     if (serviceId != SPP_SERVICE_APP_MGMT) {
-        if (debug) Serial.printf("[CMD] Unknown service 0x%02X, param 0x%02X\n",
-                                  serviceId, paramId);
-        return CMD_IGNORE;
+        // Other services (BATT_MGMT, VERSION_MGMT, etc.) are read-only queries
+        // from the remote during its init sequence. ACK them so the remote's
+        // init doesn't stall; we have nothing meaningful to return in the payload.
+        if (debug) {
+            const char* svcName = "UNKNOWN";
+            if      (serviceId == SPP_SERVICE_BATT_MGMT)    svcName = "BATT_MGMT";
+            else if (serviceId == SPP_SERVICE_VERSION_MGMT)  svcName = "VERSION_MGMT";
+            else if (serviceId == SPP_SERVICE_ACTOR_BUZZER)  svcName = "ACTOR_BUZZER";
+            else if (serviceId == SPP_SERVICE_ACTOR_LEDS)    svcName = "ACTOR_LEDS";
+            else if (serviceId == SPP_SERVICE_ACTOR_MOTOR)   svcName = "ACTOR_MOTOR";
+            Serial.printf("[CMD] %s (0x%02X) param=0x%02X -> ACK\n",
+                          svcName, serviceId, paramId);
+        }
+        return CMD_SEND_ACK;
     }
 
     switch (paramId) {
@@ -117,9 +141,23 @@ inline CmdResult command_apply(const uint8_t* spp, size_t sppLen,
             }
             return CMD_SEND_ACK;
 
+        // Read/query params from APP_MGMT that we don't maintain state for.
+        // ACK so the remote's init sequence completes; payload is the standard
+        // wheel status (battery, assist, profile) from packet_encode_ack().
+        case SPP_PARAM_DRIVE_PROFILE:
+        case SPP_PARAM_AUTO_SHUTOFF:
+        case SPP_PARAM_READ_SPEED:
+        case SPP_PARAM_READ_CRUISE:
+        case SPP_PARAM_DUO_DRIVE:
+            if (debug) {
+                Serial.printf("[CMD] APP_MGMT param=0x%02X (read/query) -> ACK\n", paramId);
+            }
+            return CMD_SEND_ACK;
+
         default:
-            if (debug) Serial.printf("[CMD] Unknown param 0x%02X\n", paramId);
-            return CMD_IGNORE;
+            // Unknown APP_MGMT param: ACK anyway (matches fake_m25_wheel behaviour)
+            if (debug) Serial.printf("[CMD] APP_MGMT unknown param 0x%02X -> ACK\n", paramId);
+            return CMD_SEND_ACK;
     }
 }
 
