@@ -41,17 +41,24 @@ static bool               _bleWasConnected = false;
 struct _BleRxPacket { uint8_t data[128]; size_t len; };
 static QueueHandle_t _bleRxQueue = nullptr;
 
+// Stale-packet tracking (reset on each new connection)
+static bool          _bleFirstValid   = false;
+static uint16_t      _bleStaleCount   = 0;
+static unsigned long _bleConnTime     = 0;
+
 // ---------------------------------------------------------------------------
 // BLE server callbacks - connection events
 // ---------------------------------------------------------------------------
 class _BleServerCB : public BLEServerCallbacks {
     void onConnect(BLEServer*) override {
         _bleConnected = true;
-        if (_bleRxChar) _bleRxChar->setValue("");   // Flush stale data
+        if (_bleRxQueue) xQueueReset(_bleRxQueue); // Flush packets queued from previous session
+        if (_bleRxChar) _bleRxChar->setValue("");  // Clear stale GATT value
         Serial.println("[BLE] Client connected");
     }
     void onDisconnect(BLEServer*) override {
         _bleConnected = false;
+        if (_bleRxQueue) xQueueReset(_bleRxQueue); // Discard any unprocessed packets
         if (_bleRxChar) _bleRxChar->setValue("");
         Serial.println("[BLE] Client disconnected");
     }
@@ -118,10 +125,42 @@ inline bool ble_init(const char* name,
 }
 
 // ---------------------------------------------------------------------------
+// ble_on_connect - call from ble_check_events() when a connection is detected.
+//   Resets stale-packet counters (analogous to rfcomm_on_connect).
+// ---------------------------------------------------------------------------
+inline void ble_on_connect() {
+    _bleFirstValid = false;
+    _bleStaleCount = 0;
+    _bleConnTime   = millis();
+}
+
+// ble_on_disconnect - call from ble_check_events() on disconnect.
+// ---------------------------------------------------------------------------
+inline void ble_on_disconnect() {
+    // Queue already flushed by the ISR callback; nothing extra needed.
+}
+
+// ---------------------------------------------------------------------------
 // ble_connected - return true if a BLE client is connected.
 // ---------------------------------------------------------------------------
 inline bool ble_connected() {
     return _bleConnected;
+}
+
+// ---------------------------------------------------------------------------
+// ble_first_valid / ble_mark_valid - stale-packet state accessors.
+// ---------------------------------------------------------------------------
+inline bool     ble_first_valid()  { return _bleFirstValid; }
+inline void     ble_mark_valid()   { _bleFirstValid = true; }
+inline uint16_t ble_stale_count()  { return _bleStaleCount; }
+inline void     ble_stale_inc()    { ++_bleStaleCount; }
+inline unsigned long ble_conn_time() { return _bleConnTime; }
+
+// ---------------------------------------------------------------------------
+// ble_disconnect - force-disconnect the current BLE client.
+// ---------------------------------------------------------------------------
+inline void ble_disconnect() {
+    if (_bleServer) _bleServer->disconnect(_bleServer->getConnId());
 }
 
 // ---------------------------------------------------------------------------
@@ -155,14 +194,20 @@ inline bool ble_poll(uint8_t* out, size_t* outLen) {
 
 // ---------------------------------------------------------------------------
 // ble_check_events - detect connect/disconnect transitions.
-//   Provide callbacks (may be nullptr) for side-effects in the main sketch.
+//   Calls internal on_connect/on_disconnect first (stale state, queue flush),
+//   then the user-supplied callbacks.  Mirrors rfcomm_check_events().
 //   Returns true if state changed.
 // ---------------------------------------------------------------------------
 inline bool ble_check_events(void (*onConnect)(), void (*onDisconnect)()) {
     if (_bleConnected == _bleWasConnected) return false;
     _bleWasConnected = _bleConnected;
-    if (_bleConnected) { if (onConnect)    onConnect(); }
-    else               { if (onDisconnect) onDisconnect(); }
+    if (_bleConnected) {
+        ble_on_connect();
+        if (onConnect)    onConnect();
+    } else {
+        ble_on_disconnect();
+        if (onDisconnect) onDisconnect();
+    }
     return true;
 }
 

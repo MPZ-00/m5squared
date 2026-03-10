@@ -63,8 +63,9 @@ static CliActions cliAct = {
 // ---------------------------------------------------------------------------
 // do_process_frame - decode a raw M25 frame and act on it.
 //   Called for frames received by any active transport.
+//   Returns true when the frame decoded and was acted on successfully.
 // ---------------------------------------------------------------------------
-static void do_process_frame(const uint8_t* raw, size_t rawLen) {
+static bool do_process_frame(const uint8_t* raw, size_t rawLen) {
     if (cli_dbg(DBG_RAW_DATA)) {
         proto_print_hex("[RX] Raw", raw, rawLen);
     }
@@ -76,7 +77,7 @@ static void do_process_frame(const uint8_t* raw, size_t rawLen) {
         if (cli_dbg(DBG_PROTOCOL)) {
             Serial.println(F("[RX] Decode FAILED (CRC mismatch or bad crypto)"));
         }
-        return;
+        return false;
     }
 
     if (cli_dbg(DBG_RAW_DATA)) {
@@ -91,6 +92,7 @@ static void do_process_frame(const uint8_t* raw, size_t rawLen) {
     if (result == CMD_SEND_ACK) {
         do_send_response();
     }
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +270,28 @@ void loop() {
         uint8_t frame[128];
         size_t  frameLen = 0;
         while (ble_poll(frame, &frameLen)) {
-            do_process_frame(frame, frameLen);
+            const bool ok = do_process_frame(frame, frameLen);
+            if (!ble_first_valid()) {
+                if (ok) {
+                    const unsigned long elapsed = millis() - ble_conn_time();
+                    if (ble_stale_count() > 0) {
+                        Serial.printf("[BLE] First valid packet after %u stale (%lums after connect)\n",
+                                      ble_stale_count(), elapsed);
+                    }
+                    ble_mark_valid();
+                } else {
+                    ble_stale_inc();
+                    const unsigned long elapsed = millis() - ble_conn_time();
+                    if (elapsed > STALE_TIMEOUT_MS) {
+                        Serial.printf("[BLE] Timeout: %u stale packets over %lums - disconnecting\n",
+                                      ble_stale_count(), elapsed);
+                        ble_disconnect();
+                    } else if (ble_stale_count() % 10 == 1) {
+                        Serial.printf("[BLE] Stale: %u packets discarded, %lums after connect\n",
+                                      ble_stale_count(), elapsed);
+                    }
+                }
+            }
         }
     }
 #endif
