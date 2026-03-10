@@ -29,6 +29,7 @@ Supervisor::Supervisor(Mapper& mapper, const SupervisorConfig& config)
     , _lastTelemetryPollMs(0)
     , _activateHoldStartMs(0)
     , _idleHoldStartMs(0)
+    , _armedEntryMs(0)
     , _partialReconnect(false)
     , _connectionRequested(false)
     , _lastLeftConnected(false)
@@ -476,13 +477,6 @@ void Supervisor::handlePaired() {
 
     pollTelemetry();
 
-#ifdef AUTO_ARM_ON_CONNECT
-    // Auto-arm: skip explicit requestArm() and go straight to ARMED.
-    // The deadman check in processInput() still prevents unintended movement.
-    Serial.println("[Supervisor] AUTO_ARM_ON_CONNECT: arming automatically");
-    bleResetMotorWriteOk();
-    transitionTo(SUPERVISOR_ARMED);
-#endif
     // Without AUTO_ARM_ON_CONNECT: wait for explicit requestArm() call
     // (serial 'arm' command or future hardware button)
 }
@@ -592,11 +586,22 @@ void Supervisor::checkWatchdogs() {
         return;
     }
 
-    // Input watchdog - no input for too long
-    if (_lastInputTimeMs > 0) {  // Only check if we've received input before
-        if (now - _lastInputTimeMs > _config.inputTimeoutMs) {
-            Serial.println("[Supervisor] Input watchdog timeout");
+    // Input watchdog - severity depends on state:
+    //   DRIVING: failsafe immediately (motor commands were flowing, now gone)
+    //   ARMED:   graceful disarm to PAIRED after armIdleTimeoutMs of total idle
+    if (_state == SUPERVISOR_DRIVING) {
+        if (_lastInputTimeMs > 0 && now - _lastInputTimeMs > _config.inputTimeoutMs) {
+            Serial.println("[Supervisor] Input watchdog timeout while DRIVING");
             enterFailsafe("Input timeout");
+            return;
+        }
+    } else if (_state == SUPERVISOR_ARMED) {
+        // Use armIdleTimeoutMs measured from arm entry (or last input, whichever
+        // is more recent) so the user can idle in ARMED intentionally.
+        uint32_t idleRef = (_lastInputTimeMs > _armedEntryMs) ? _lastInputTimeMs : _armedEntryMs;
+        if (now - idleRef > _config.armIdleTimeoutMs) {
+            Serial.println("[Supervisor] Arm idle timeout - disarming to PAIRED");
+            transitionTo(SUPERVISOR_PAIRED);
             return;
         }
     }
@@ -674,12 +679,24 @@ void Supervisor::transitionTo(SupervisorState newState) {
         _mapper.reset();
     }
 
+    // On entry to PAIRED: auto-arm once if configured (fires exactly once per
+    // PAIRED entry, not every loop tick as with the old handlePaired() approach).
+    if (newState == SUPERVISOR_PAIRED) {
+#ifdef AUTO_ARM_ON_CONNECT
+        Serial.println("[Supervisor] AUTO_ARM_ON_CONNECT: arming automatically");
+        bleResetMotorWriteOk();
+        transitionTo(SUPERVISOR_ARMED);
+        return;  // transitionTo() will handle ARMED entry setup below
+#endif
+    }
+
     // Reset joystick hold timers on any entry to ARMED so stale timer values
     // from a previous drive session can't cause an immediate ARMED->DRIVING
     // transition (e.g. after reconnect or reset).
     if (newState == SUPERVISOR_ARMED) {
         _activateHoldStartMs = 0;
         _idleHoldStartMs     = 0;
+        _armedEntryMs        = millis();
     }
     
     // Notify callbacks

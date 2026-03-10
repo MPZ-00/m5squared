@@ -164,6 +164,7 @@ private:
     // Joystick hold timers for ARMED<->DRIVING hysteresis (JS_ACTIVATE_HOLD_MS / JS_IDLE_HOLD_MS)
     uint32_t _activateHoldStartMs;  // millis() when joystick first moved out of deadzone in ARMED
     uint32_t _idleHoldStartMs;      // millis() when joystick first returned to deadzone in DRIVING
+    uint32_t _armedEntryMs;         // millis() when ARMED state was entered (idle disarm timer)
     // Single-wheel reconnect tracking
     bool _partialReconnect;         // true = entered CONNECTING to recover a dropped wheel
     

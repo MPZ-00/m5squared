@@ -188,7 +188,8 @@ struct MapperConfig {
 // ---------------------------------------------------------------------------
 struct SupervisorConfig {
     uint32_t loopIntervalMs;         // Main loop interval (default: 50ms = 20Hz)
-    uint32_t inputTimeoutMs;         // Max time without input before failsafe (default: 500ms)
+    uint32_t inputTimeoutMs;         // Max time without input in DRIVING before failsafe (default: 500ms)
+    uint32_t armIdleTimeoutMs;       // Max time idle in ARMED before graceful disarm to PAIRED (default: 60000ms)
     uint32_t linkTimeoutMs;          // Max time without successful command before failsafe (default: 2000ms)
     uint32_t heartbeatIntervalMs;    // Send heartbeat every N milliseconds (default: 1000ms)
     uint32_t reconnectDelayMs;       // Delay between reconnection attempts (default: 2000ms)
@@ -198,7 +199,8 @@ struct SupervisorConfig {
     
     SupervisorConfig()
         : loopIntervalMs(50)           // 20 Hz
-        , inputTimeoutMs(500)          // 0.5 seconds
+        , inputTimeoutMs(500)          // 0.5 seconds (DRIVING only)
+        , armIdleTimeoutMs(60000)      // 60 seconds idle before auto-disarm
         , linkTimeoutMs(2000)          // 2 seconds
         , heartbeatIntervalMs(1000)    // 1 second
         , reconnectDelayMs(2000)       // 2 seconds
