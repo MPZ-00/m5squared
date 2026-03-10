@@ -21,6 +21,9 @@
 #include "state.h"
 #include "led.h"
 #include "buzzer.h"
+#if TRANSPORT_BLE_ENABLED
+#include "transport_ble.h"
+#endif
 
 // ---------------------------------------------------------------------------
 // Debug flags (bitfield) - toggled via the 'debug' command
@@ -30,6 +33,7 @@
 #define DBG_CRC         0x04
 #define DBG_COMMANDS    0x08
 #define DBG_RAW_DATA    0x10
+#define DBG_STALE       0x20   // BLE stale-packet grace-period log
 
 struct DebugFlagEntry {
     uint8_t     mask;
@@ -43,6 +47,7 @@ static const DebugFlagEntry _dbgTable[] = {
     { DBG_CRC,      "crc",      "CRC check details"       },
     { DBG_COMMANDS, "commands", "Decoded command details"  },
     { DBG_RAW_DATA, "raw",      "Raw hex dumps"           },
+    { DBG_STALE,    "stale",    "BLE stale-packet logging"},
 };
 static const uint8_t _dbgTableLen =
     (uint8_t)(sizeof(_dbgTable) / sizeof(_dbgTable[0]));
@@ -89,6 +94,10 @@ static void _cli_print_help() {
     Serial.println(F("advertise              Restart advertising"));
     Serial.println(F("restart                Reboot ESP32"));
     Serial.println(F("power off              Enter deep sleep"));
+#if TRANSPORT_BLE_ENABLED
+    Serial.println(F("stale                  Show BLE stale-packet state"));
+    Serial.println(F("queue                  Show BLE RX queue depth"));
+#endif
     Serial.println(F("==========================\n"));
 }
 
@@ -298,6 +307,24 @@ inline void cli_poll(const CliActions* act, WheelState* s) {
         } else {
             Serial.println(F("Usage: power off"));
         }
+
+#if TRANSPORT_BLE_ENABLED
+    } else if (cmd == "stale") {
+        Serial.println(F("--- BLE stale-packet state ---"));
+        Serial.printf("  first_valid  : %s\n", ble_first_valid() ? "yes" : "no");
+        Serial.printf("  stale_count  : %u\n", ble_stale_count());
+        const unsigned long ct = ble_conn_time();
+        if (ct > 0) {
+            Serial.printf("  conn_age     : %lums\n", millis() - ct);
+        } else {
+            Serial.println(F("  conn_age     : (not connected)"));
+        }
+        Serial.println(F("------------------------------"));
+
+    } else if (cmd == "queue") {
+        const UBaseType_t waiting = ble_rx_queue_waiting();
+        Serial.printf("BLE RX queue: %u / 8 items waiting\n", (unsigned)waiting);
+#endif
 
     } else {
         Serial.printf("Unknown command '%s'. Type 'help'.\n", cmd.c_str());

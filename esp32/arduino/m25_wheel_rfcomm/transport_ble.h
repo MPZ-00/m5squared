@@ -164,6 +164,14 @@ inline void ble_disconnect() {
 }
 
 // ---------------------------------------------------------------------------
+// ble_rx_queue_waiting - number of frames sitting in the RX queue.
+// ---------------------------------------------------------------------------
+inline UBaseType_t ble_rx_queue_waiting() {
+    if (!_bleRxQueue) return 0;
+    return uxQueueMessagesWaiting(_bleRxQueue);
+}
+
+// ---------------------------------------------------------------------------
 // ble_send - send bytes to connected client via notify.
 // ---------------------------------------------------------------------------
 inline void ble_send(const uint8_t* data, size_t len) {

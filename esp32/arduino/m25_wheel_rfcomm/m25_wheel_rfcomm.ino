@@ -273,20 +273,20 @@ void loop() {
             const bool ok = do_process_frame(frame, frameLen);
             if (!ble_first_valid()) {
                 if (ok) {
-                    const unsigned long elapsed = millis() - ble_conn_time();
-                    if (ble_stale_count() > 0) {
+                    if (cli_dbg(DBG_STALE) && ble_stale_count() > 0) {
                         Serial.printf("[BLE] First valid packet after %u stale (%lums after connect)\n",
-                                      ble_stale_count(), elapsed);
+                                      ble_stale_count(), millis() - ble_conn_time());
                     }
                     ble_mark_valid();
                 } else {
                     ble_stale_inc();
                     const unsigned long elapsed = millis() - ble_conn_time();
                     if (elapsed > STALE_TIMEOUT_MS) {
+                        // Always print: this is a real failure requiring reconnect
                         Serial.printf("[BLE] Timeout: %u stale packets over %lums - disconnecting\n",
                                       ble_stale_count(), elapsed);
                         ble_disconnect();
-                    } else if (ble_stale_count() % 10 == 1) {
+                    } else if (cli_dbg(DBG_STALE) && ble_stale_count() % 10 == 1) {
                         Serial.printf("[BLE] Stale: %u packets discarded, %lums after connect\n",
                                       ble_stale_count(), elapsed);
                     }
