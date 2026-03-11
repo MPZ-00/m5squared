@@ -636,7 +636,24 @@ void _printResponse(const char* wheelName, const ResponseHeader* hdr, const Resp
     }
     else if (data->isAck) {
         if (debugFlags & DBG_BLE) {
-            Serial.printf("[BLE] %s wheel ACK\n", wheelName);
+            Serial.printf("[BLE] %s wheel ACK", wheelName);
+            if (hdr->payloadLen > 0) {
+                Serial.printf(" (payload %zu bytes:", hdr->payloadLen);
+                for (size_t _pi = 0; _pi < hdr->payloadLen && _pi < 8; _pi++)
+                    Serial.printf(" %02X", hdr->payload[_pi]);
+                if (hdr->payloadLen > 8) Serial.print(" ...");
+                Serial.print(")");
+            }
+            Serial.println();
+        } else if (hdr->payloadLen > 0) {
+            // ACK from a read command may carry the response data in its payload.
+            // Log it unconditionally so protocol surprises are always visible.
+            Serial.printf("[BLE] %s wheel ACK with payload (srv=0x%02X, param=0x%02X, %zu bytes:",
+                         wheelName, hdr->serviceId, hdr->paramId, hdr->payloadLen);
+            for (size_t _pi = 0; _pi < hdr->payloadLen && _pi < 8; _pi++)
+                Serial.printf(" %02X", hdr->payload[_pi]);
+            if (hdr->payloadLen > 8) Serial.print(" ...");
+            Serial.println(")");
         }
     }
     else {
@@ -716,8 +733,8 @@ void _parseSppPacket(const uint8_t* spp, size_t sppLen, int wheelIdx) {
     bool parsed = _parseResponseData(&hdr, &data);
 
     if (!parsed && debugFlags & DBG_BLE) {
-        Serial.printf("[BLE] %s wheel: Unknown response type (srv=0x%02X, param=0x%02X)\n",
-                     wheelName, hdr.serviceId, hdr.paramId);
+        Serial.printf("[BLE] %s wheel: Unrecognized response (srv=0x%02X, param=0x%02X, payloadLen=%zu)\n",
+                     wheelName, hdr.serviceId, hdr.paramId, hdr.payloadLen);
     }
 
     if (parsed) {
