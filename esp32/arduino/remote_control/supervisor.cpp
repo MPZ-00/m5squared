@@ -606,23 +606,11 @@ void Supervisor::checkWatchdogs() {
         return;
     }
 
-    // Stale-notify watchdog: if a connected wheel stops sending notifications while
-    // DRIVING the GATT write path is dead (silent rc=-1 - no exception, no return code).
-    if (_state == SUPERVISOR_DRIVING) {
-        for (int i = 0; i < WHEEL_COUNT; i++) {
-            if (!_wheelActive(i) || !bleIsConnected(i)) continue;
-            uint32_t lastNotify = bleGetLastNotifyMs(i);
-            if (lastNotify == 0) continue;  // no notify received yet (brief startup window)
-            uint32_t age = millis() - lastNotify;
-            if (age > BLE_NOTIFY_STALE_MS) {
-                const char* wn = (i == WHEEL_LEFT) ? "Left" : "Right";
-                Serial.printf("[Supervisor] %s wheel notify stale (%u ms) - entering failsafe\n",
-                              wn, (unsigned)age);
-                enterFailsafe("BLE notify stale");
-                return;
-            }
-        }
-    }
+    // Note: a stale-notify watchdog was considered here but removed.
+    // REMOTE_SPEED writes are fire-and-forget (no ACK from wheel), and telemetry
+    // is not polled while DRIVING, so no notifies arrive during normal operation.
+    // Genuine disconnects are caught immediately by the onDisconnect callback
+    // setting w.connected = false, which handleDriving() checks every cycle.
 
     // Input watchdog - severity depends on state:
     //   DRIVING: failsafe immediately (motor commands were flowing, now gone)
