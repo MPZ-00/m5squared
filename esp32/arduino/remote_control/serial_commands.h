@@ -8,18 +8,26 @@
  * Available commands
  * ------------------
  *   help / ?                    List all commands
- *   status                      State snapshot: system, BLE, assist, hill-hold
+ *   status                      Full status: state, wheels, telemetry, watchdogs, record
  *   debug                       Show all available debug flags with status
- *   debug <flag>                Toggle specific flag (js, motor, heartbeat, ble, buttons, state)
+ *   debug <flag>                Toggle specific flag (js, motor, heartbeat, ble, buttons, state, telemetry, proto)
  *   debug all / off             Enable or disable all debug flags
  *   js                          One-shot joystick snapshot (raw + normalized)
  *   ble                         BLE connection status for each wheel
+ *   wheels                      Verbose per-wheel status + key
  *   assist <0|1|2>              Set assist level  0=indoor  1=outdoor  2=learning
  *   hillhold <on|off>           Toggle hill hold (only when motors stopped)
  *   recal                       Recalibrate joystick center position
- *   stop                        Software emergency stop (enters ERROR state)
  *   arm                         Arm motors (PAIRED -> ARMED, manual mode only)
- *   reconnect                   Trigger BLE reconnect (from ERROR or ready)
+ *   disarm                      Disarm motors (ARMED/DRIVING -> PAIRED, safe stop first)
+ *   stop                        Software emergency stop (enters FAILSAFE state)
+ *   reset                       Clear FAILSAFE state -> reconnect
+ *   reconnect                   Trigger BLE reconnect
+ *   disconnect                  Force-disconnect all wheels
+ *   record start [N]            Record BLE traffic for N seconds (default 10), auto-dumps on expiry
+ *   record stop                 Stop recording early
+ *   record dump                 Print captured traffic log
+ *   autoreconnect <on|off>      Enable/disable auto-reconnect
  *   power off                   Turn device off (enters deep sleep)
  *   battery                     Print battery % (requires ENABLE_BATTERY_MONITOR)
  *
@@ -31,12 +39,13 @@
  *   DBG_BLE        0x08  BLE connection events and errors
  *   DBG_BUTTONS    0x10  button press/release events
  *   DBG_STATE      0x20  state transition detail logging
+ *   DBG_TELEMETRY  0x40  BLE telemetry responses (battery, firmware, odometer)
+ *   DBG_PROTO      0x80  raw BLE frame hex dumps (verbose, lowest-level)
  *
  * Adding new debug flags
  * ----------------------
- *   1. Add #define DBG_YOURFLAG 0x40 (next available bit)
- *   2. Add entry to _debugFlagTable[] array
- *   3. Use in code: if (debugFlags & DBG_YOURFLAG) Serial.println(...);
+ *   All 8 bits of debugFlags are now used.  To add more, promote debugFlags
+ *   to uint16_t and add the new DBG_* defines in device_config.h.
  *
  * Integration in remote_control.ino
  * ----------------------------------
@@ -84,6 +93,8 @@ static const DebugFlagInfo _debugFlagTable[] = {
     { DBG_BLE,       "ble",       "BLE events & errors" },
     { DBG_BUTTONS,   "buttons",   "Button press events" },
     { DBG_STATE,     "state",     "State transition details" },
+    { DBG_TELEMETRY, "telemetry", "BLE telemetry responses (battery/FW/odometer)" },
+    { DBG_PROTO,     "proto",     "Raw BLE frame hex dumps (verbose)" },
 };
 static const uint8_t _debugFlagCount = sizeof(_debugFlagTable) / sizeof(_debugFlagTable[0]);
 
@@ -124,26 +135,35 @@ static const char* const _stateNames[] = {
 static void _scPrintHelp() {
     Serial.println(F("--- Commands ---"));
     Serial.println(F("  help / ?                  This message"));
-    Serial.println(F("  status                    System state snapshot"));
+    Serial.println(F("  status                    Full system status (state, wheels, telemetry, watchdogs)"));
     Serial.println(F("  sysinfo                   Chip, heap, uptime, WiFi/BT status"));
+    Serial.println(F("--- Debug ---"));
     Serial.println(F("  debug                     Show all debug flags (with usage)"));
-    Serial.println(F("  debug <flag>              Toggle flag (js|motor|heartbeat|ble|buttons|state)"));
+    Serial.println(F("  debug <flag>              Toggle flag (js|motor|heartbeat|ble|buttons|state|telemetry|proto)"));
     Serial.println(F("  debug all / off           Enable/disable all debug output"));
     Serial.println(F("  js                        One-shot joystick snapshot"));
     Serial.println(F("  buttons                   Debug button hardware & state"));
     Serial.println(F("  ble                       Quick BLE connection status"));
     Serial.println(F("  wheels                    Verbose per-wheel status + key"));
+    Serial.println(F("--- Recording ---"));
+    Serial.println(F("  record start [N]          Record BLE traffic for N seconds (default 10)"));
+    Serial.println(F("  record stop               Stop recording early"));
+    Serial.println(F("  record dump               Print captured traffic log"));
+    Serial.println(F("--- Connection ---"));
     Serial.println(F("  autoreconnect <on|off>    Enable/disable auto-reconnect"));
+    Serial.println(F("  disconnect                Force-disconnect all wheels"));
+    Serial.println(F("  reconnect                 Force BLE reconnect"));
     Serial.println(F("  setmac <left|right> <MAC> Change wheel MAC (disconnects)"));
     Serial.println(F("  setkey <left|right> <hex> Change AES key (32 hex chars)"));
-    Serial.println(F("  assist <0|1|2>            Set assist level"));
-    Serial.println(F("                            0=indoor  1=outdoor  2=learning"));
+    Serial.println(F("--- Control ---"));
+    Serial.println(F("  assist <0|1|2>            Set assist level  0=indoor  1=outdoor  2=learning"));
     Serial.println(F("  hillhold <on|off>         Toggle hill hold"));
     Serial.println(F("  recal                     Recalibrate joystick center"));
     Serial.println(F("  arm                       Arm motors (PAIRED -> ARMED)"));
-    Serial.println(F("  stop                      Software emergency stop"));
-    Serial.println(F("  reset                     Clear ERROR state -> CONNECTING"));
-    Serial.println(F("  reconnect                 Force BLE reconnect (non-ERROR states)"));
+    Serial.println(F("  disarm                    Disarm motors (ARMED/DRIVING -> PAIRED)"));
+    Serial.println(F("  stop                      Software emergency stop (-> FAILSAFE)"));
+    Serial.println(F("  reset                     Clear FAILSAFE state -> reconnect"));
+    Serial.println(F("--- System ---"));
     Serial.println(F("  power off                 Turn device off (enter deep sleep)"));
     Serial.println(F("  restart                   Restart the ESP32"));
 #ifdef ENABLE_BATTERY_MONITOR
@@ -189,27 +209,97 @@ static void _scPrintDebugFlags() {
 }
 
 static void _scPrintStatus(const SerialContext &ctx) {
-    uint8_t si = (uint8_t)*ctx.state;
-    const char* sname = (si < 5) ? _stateNames[si] : "?";
-    Serial.printf("[Status] state=%-12s  assist=%-8s  hillhold=%s\n",
-        sname,
+    Serial.println(F("=== Remote Control Status ==="));
+
+    // --- Supervisor state ---
+    if (ctx.supervisor) {
+        SupervisorState supState = ctx.supervisor->getState();
+        const char* stateName = supervisorStateToString(supState);
+        Serial.printf("[State]    %s", stateName);
+        if (supState == SUPERVISOR_ARMED) {
+            uint32_t remMs = ctx.supervisor->getArmedIdleRemainingMs();
+            uint32_t armMs = ctx.supervisor->getConfig().armIdleTimeoutMs;
+            uint32_t usedMs = armMs - remMs;
+            Serial.printf("  (idle %.1f s / %.0f s before auto-disarm)",
+                          usedMs / 1000.0f, armMs / 1000.0f);
+        }
+        Serial.println();
+
+        // Reconnect info
+        uint8_t retries = ctx.supervisor->getReconnectAttempts();
+        uint8_t maxRet  = ctx.supervisor->getConfig().maxReconnectAttempts;
+        if (retries > 0 || supState == SUPERVISOR_CONNECTING) {
+            Serial.printf("[Reconnect] %d / %d attempts\n", retries, maxRet);
+        }
+    } else {
+        uint8_t si = (uint8_t)*ctx.state;
+        const char* sname = (si < 6) ? _stateNames[si] : "?";
+        Serial.printf("[State]    %s\n", sname);
+    }
+
+    // --- BLE connection ---
+    bool leftConn  = bleIsConnected(WHEEL_LEFT);
+    bool rightConn = bleIsConnected(WHEEL_RIGHT);
+    Serial.printf("[BLE]      Left=%-5s  Right=%-5s  autoReconn=%s\n",
+        leftConn  ? "OK" : "disc",
+        rightConn ? "OK" : "disc",
+        bleGetAutoReconnect() ? "ON" : "off");
+
+    // --- Per-wheel telemetry ---
+    {
+        auto printWheel = [](const char* label, int idx, bool conn) {
+            Serial.printf("[Wheel %s]", label);
+            if (!conn) {
+                Serial.println(F("  not connected"));
+                return;
+            }
+            int8_t batt = bleGetBattery(idx);
+            if (batt >= 0) Serial.printf("  battery=%d%%", batt);
+            else           Serial.printf("  battery=--");
+            uint8_t maj=0, min=0, patch=0;
+            if (bleGetFirmwareVersion(idx, maj, min, patch))
+                Serial.printf("  FW=%d.%d.%d", maj, min, patch);
+            else
+                Serial.printf("  FW=--");
+            float dist = bleGetDistanceKm(idx);
+            if (dist >= 0.0f) Serial.printf("  dist=%.2f km", dist);
+            else              Serial.printf("  dist=--");
+            Serial.println();
+        };
+        printWheel("Left ", WHEEL_LEFT,  leftConn);
+        printWheel("Right", WHEEL_RIGHT, rightConn);
+    }
+
+    // --- Watchdog timers (only meaningful when armed/driving) ---
+    if (ctx.supervisor) {
+        SupervisorState supState = ctx.supervisor->getState();
+        if (supState == SUPERVISOR_ARMED || supState == SUPERVISOR_DRIVING) {
+            const SupervisorConfig& cfg = ctx.supervisor->getConfig();
+            uint32_t sinceInput = ctx.supervisor->getTimeSinceLastInput();
+            uint32_t sinceLink  = ctx.supervisor->getTimeSinceLastLink();
+            Serial.printf("[Watchdog] input=%.2f s (limit %.1f s)  link=%.2f s (limit %.1f s)%s\n",
+                sinceInput / 1000.0f, cfg.inputTimeoutMs / 1000.0f,
+                sinceLink  / 1000.0f, cfg.linkTimeoutMs  / 1000.0f,
+                ctx.supervisor->isInputTimeout() || ctx.supervisor->isLinkTimeout() ? "  *** TIMEOUT ***" : "");
+        }
+    }
+
+    // --- Assist / hill hold ---
+    Serial.printf("[Assist]   %s  HillHold=%s\n",
         assistConfigs[*ctx.assistLevel].name,
         *ctx.hillHoldOn ? "ON" : "off");
-    Serial.printf("[Status] BLE: Left=%s  Right=%s  All=%s\n",
-        bleIsConnected(WHEEL_LEFT)  ? "conn" : "disc",
-        bleIsConnected(WHEEL_RIGHT) ? "conn" : "disc",
-        bleAllConnected()           ? "YES"  : "no");
+
 #ifdef ENABLE_BATTERY_MONITOR
     if (ctx.batteryPct) {
-        Serial.printf("[Status] Battery: %d %%\n", *ctx.batteryPct);
+        Serial.printf("[Battery]  %d %%\n", *ctx.batteryPct);
     }
 #endif
-    
-    // Compact debug flags summary
+
+    // --- Debug flags ---
     if (debugFlags == 0) {
-        Serial.println(F("[Status] Debug: off  (use 'debug' to see options)"));
+        Serial.println(F("[Debug]    off  (use 'debug' to see options)"));
     } else {
-        Serial.print(F("[Status] Debug: "));
+        Serial.print(F("[Debug]    "));
         bool first = true;
         for (uint8_t i = 0; i < _debugFlagCount; i++) {
             if (debugFlags & _debugFlagTable[i].mask) {
@@ -220,6 +310,21 @@ static void _scPrintStatus(const SerialContext &ctx) {
         }
         Serial.printf("  (0x%02X)\n", debugFlags);
     }
+
+    // --- Record status ---
+    if (bleRecordIsActive()) {
+        Serial.printf("[Record]   ACTIVE  (%d entries so far)\n",
+                      (int)bleRecordEntryCount());
+    } else {
+        uint32_t cnt = bleRecordEntryCount();
+        if (cnt > 0) {
+            Serial.printf("[Record]   idle  (last capture: %d entries - use 'record dump')\n", (int)cnt);
+        } else {
+            Serial.println(F("[Record]   idle  (use 'record start [s]' to capture)"));
+        }
+    }
+
+    Serial.println(F("============================="));
 }
 
 static void _scPrintBle() {
@@ -467,6 +572,23 @@ static void _scDispatch(const char* cmd, const SerialContext &ctx) {
         return;
     }
 
+    // disarm - transition ARMED/DRIVING -> PAIRED (safe stop first)
+    if (strcmp(cmd, "disarm") == 0) {
+        if (!ctx.supervisor) {
+            Serial.println(F("[CMD] ERROR: supervisor not available"));
+            return;
+        }
+        SupervisorState supState = ctx.supervisor->getState();
+        if (supState != SUPERVISOR_ARMED && supState != SUPERVISOR_DRIVING) {
+            Serial.printf("[CMD] disarm: must be ARMED or DRIVING (currently %s)\n",
+                          supervisorStateToString(supState));
+            return;
+        }
+        ctx.supervisor->requestDisarm();
+        Serial.println(F("[CMD] Disarmed -> PAIRED"));
+        return;
+    }
+
     // stop (software e-stop -> FAILSAFE state)
     if (strcmp(cmd, "stop") == 0) {
         if (ctx.supervisor) {
@@ -511,6 +633,66 @@ static void _scDispatch(const char* cmd, const SerialContext &ctx) {
         }
         Serial.println(F("[CMD] Forcing reconnect..."));
         ctx.supervisor->requestReconnect();
+        return;
+    }
+
+    // disconnect - force-disconnect all wheels
+    if (strcmp(cmd, "disconnect") == 0) {
+        if (!ctx.supervisor) {
+            Serial.println(F("[CMD] ERROR: supervisor not available"));
+            return;
+        }
+        SupervisorState supState = ctx.supervisor->getState();
+        if (supState == SUPERVISOR_DRIVING) {
+            Serial.println(F("[CMD] disconnect: stop motors first ('stop' or release joystick)"));
+            return;
+        }
+        Serial.println(F("[CMD] Disconnecting all wheels..."));
+        ctx.supervisor->requestDisconnect();
+        return;
+    }
+
+    // record - BLE traffic recorder
+    if (strncmp(cmd, "record", 6) == 0) {
+        const char* arg = cmd + 6;
+        while (*arg == ' ') arg++;
+
+        if (strcmp(arg, "stop") == 0) {
+            if (!bleRecordIsActive()) {
+                Serial.println(F("[CMD] record: not currently recording"));
+            } else {
+                bleRecordStop();
+            }
+            return;
+        }
+
+        if (strcmp(arg, "dump") == 0) {
+            bleRecordDump();
+            return;
+        }
+
+        if (strncmp(arg, "start", 5) == 0) {
+            const char* durStr = arg + 5;
+            while (*durStr == ' ') durStr++;
+            uint32_t dur = (*durStr != '\0') ? (uint32_t)(atoi(durStr) * 1000) : 10000;
+            if (dur == 0) dur = 10000;   // guard against 'record start 0'
+            if (dur > 120000) dur = 120000;  // cap at 2 minutes
+            bleRecordStart(dur);
+            return;
+        }
+
+        // No sub-command: show record status
+        if (bleRecordIsActive()) {
+            Serial.printf("[Record] ACTIVE  (%d entries so far, max %d)\n",
+                          (int)bleRecordEntryCount(), BLE_RECORD_MAX);
+        } else {
+            Serial.printf("[Record] idle  (%d entries captured)\n",
+                          (int)bleRecordEntryCount());
+            Serial.println(F("[Record] Usage:"));
+            Serial.println(F("  record start [N]  start recording for N seconds (default 10)"));
+            Serial.println(F("  record stop       stop early"));
+            Serial.println(F("  record dump       print captured log"));
+        }
         return;
     }
 
