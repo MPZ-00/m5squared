@@ -130,6 +130,10 @@ static const uint8_t M25_ASSIST_LEVEL_MAP[ASSIST_COUNT] = { 0, 1, 2 };
 #define BLE_STACK_INIT_DELAY_MS   1000
 // Retry delay for registerForNotify (descriptor retrieval stabilization)
 #define BLE_NOTIFY_RETRY_DELAY_MS 500
+// Stale-notify threshold: if a connected wheel sends no notify within this window
+// while DRIVING, the GATT write path is declared dead and failsafe is triggered.
+// Must be > 50 ms (motor write period) with enough headroom for ACK round-trips.
+#define BLE_NOTIFY_STALE_MS       2000
 
 // ---------------------------------------------------------------------------
 // Wheel slot indices
@@ -258,6 +262,7 @@ struct WheelConnState_t {
     bool                         receivedFirstAck;   // Track if we got a response (encryption validated)
     uint32_t                     lastConnectAttemptMs;
     uint8_t                      consecutiveFails;   // resets on success; auto-reconnect stops at BLE_MAX_RECONNECT_FAILS
+    volatile uint32_t            lastNotifyMs;       // millis() of last successful notify; 0 before first notify
 
     // ---------------------------------------------------------------------------
     // Cached telemetry (updated asynchronously by the BLE notification callback)
@@ -362,6 +367,11 @@ void bleDisconnect();
 // Call before retrying a failed wheel to ensure a clean slate.
 void bleResetWheel(int idx);
 
+// Full BLE stack reset: disconnect all wheels, deinit Bluedroid, reinit from scratch.
+// Call when repeated GATT errors suggest the local Bluedroid state is wedged.
+// All compile-time MAC/key defaults are restored; runtime bleSetMac/bleSetKey overrides are lost.
+void bleFullReset();
+
 // Connection status queries
 bool bleIsConnected(int wheelIdx);
 bool bleAllConnected();  // True when every active wheel is connected and protocol-ready
@@ -379,6 +389,11 @@ bool bleLastMotorWriteOk();
 // Reset the write-ok flag.  Call when re-arming after a failsafe so that
 // a stale failure from a previous connection does not trip the watchdog.
 void bleResetMotorWriteOk();
+
+// Returns the millis() timestamp of the last BLE notification received from the given wheel.
+// Returns 0 if no notification has been received since connection.
+// Used by the stale-notify watchdog in Supervisor::checkWatchdogs().
+uint32_t bleGetLastNotifyMs(int idx);
 
 // Motor commands (post to motor task queue - non-blocking)
 bool bleSendStop();

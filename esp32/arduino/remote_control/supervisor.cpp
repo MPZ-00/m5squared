@@ -30,6 +30,7 @@ Supervisor::Supervisor(Mapper& mapper, const SupervisorConfig& config)
     , _activateHoldStartMs(0)
     , _idleHoldStartMs(0)
     , _armedEntryMs(0)
+    , _reconnectNotBeforeMs(0)
     , _partialReconnect(false)
     , _connectionRequested(false)
     , _lastLeftConnected(false)
@@ -385,8 +386,9 @@ void Supervisor::handleConnecting() {
             transitionTo(SUPERVISOR_PAIRED);
             _lastLinkTimeMs = millis();
         } else {
-            Serial.println("[Supervisor] All per-wheel retry budgets exhausted - giving up");
+            Serial.println("[Supervisor] All per-wheel retry budgets exhausted - resetting BLE stack");
             memset(_wheelRetries, 0, sizeof(_wheelRetries));
+            bleFullReset();
             transitionTo(SUPERVISOR_DISCONNECTED);
         }
         return;
@@ -398,6 +400,11 @@ void Supervisor::handleConnecting() {
     if (_connectTask != nullptr) {
         return;
     }
+
+    // -----------------------------------------------------------------------
+    // Post-disconnect settle: wait for BLE stack and wheels to recover
+    // -----------------------------------------------------------------------
+    if (millis() < _reconnectNotBeforeMs) return;
 
     // -----------------------------------------------------------------------
     // Rate-limit between task spawns
@@ -540,8 +547,11 @@ void Supervisor::handleStopRequest() {
     transitionTo(SUPERVISOR_DISCONNECTED);
     _stopRequested = false;
     
-    // If reconnection was requested, initiate it now
+    // If reconnection was requested, initiate it now.
+    // Settle delay: local Bluedroid and M25 wheels both need time after a hard
+    // disconnect before the next GATT connect attempt can succeed.
     if (_connectionRequested) {
+        _reconnectNotBeforeMs = millis() + 1500;
         transitionTo(SUPERVISOR_CONNECTING);
     }
 }
@@ -594,6 +604,24 @@ void Supervisor::checkWatchdogs() {
         Serial.println("[Supervisor] Motor write failure detected by watchdog");
         enterFailsafe("BLE write error");
         return;
+    }
+
+    // Stale-notify watchdog: if a connected wheel stops sending notifications while
+    // DRIVING the GATT write path is dead (silent rc=-1 - no exception, no return code).
+    if (_state == SUPERVISOR_DRIVING) {
+        for (int i = 0; i < WHEEL_COUNT; i++) {
+            if (!_wheelActive(i) || !bleIsConnected(i)) continue;
+            uint32_t lastNotify = bleGetLastNotifyMs(i);
+            if (lastNotify == 0) continue;  // no notify received yet (brief startup window)
+            uint32_t age = millis() - lastNotify;
+            if (age > BLE_NOTIFY_STALE_MS) {
+                const char* wn = (i == WHEEL_LEFT) ? "Left" : "Right";
+                Serial.printf("[Supervisor] %s wheel notify stale (%u ms) - entering failsafe\n",
+                              wn, (unsigned)age);
+                enterFailsafe("BLE notify stale");
+                return;
+            }
+        }
     }
 
     // Input watchdog - severity depends on state:

@@ -735,7 +735,9 @@ void _notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size_t leng
             
             // Capture raw incoming frame for traffic recorder
             _bleRecordFrame(BLE_REC_RX, (uint8_t)i, pData, length);
-            
+            // Update notify timestamp so the stale-notify watchdog knows this wheel is alive
+            _wheels[i].lastNotifyMs = millis();
+
             // Raw hex dump (DBG_PROTO: low-level frame debugging)
             if (debugFlags & DBG_PROTO) {
                 Serial.print("[BLE] Raw data: ");
@@ -969,6 +971,7 @@ bool _connectWheel(int idx) {
     }
 
     w.protocolReady = true;
+    w.lastNotifyMs  = millis();  // seed timer; watchdog won't trip before first real notify arrives
     w.consecutiveFails = 0;
     Serial.printf("[BLE] %s wheel ready\n", wheelName);
     return true;
@@ -1081,11 +1084,26 @@ void bleResetWheel(int idx) {
     w.txChar           = nullptr;
     w.receivedFirstAck = false;
     w.consecutiveFails = 0;
+    w.lastNotifyMs     = 0;
 
     // Invalidate telemetry cache so stale data is not served after reconnect
     w.batteryValid  = false;
     w.fwValid       = false;
     w.distanceValid = false;
+}
+
+void bleFullReset() {
+    Serial.println("[BLE] Full stack reset: deinit + reinit");
+    // Hard-reset all GATT clients before tearing down the stack
+    for (int i = 0; i < WHEEL_COUNT; i++) bleResetWheel(i);
+    // Let Bluedroid finish teardown before deinit
+    delay(200);
+    BLEDevice::deinit(true);
+    delay(500);
+    // Reinit restores compile-time MAC/key defaults from device_config.h.
+    // Runtime bleSetMac/bleSetKey overrides are NOT preserved across a full reset.
+    bleInit();
+    Serial.println("[BLE] Stack reset complete");
 }
 
 bool bleConnectWheel(int idx) {
@@ -1180,6 +1198,7 @@ static volatile bool  _motorWriteOk = true;   // cleared by task on write failur
 
 static void _bleMotorTask(void* /*pv*/) {
     _MotorCmd cmd;
+    uint32_t motorFailStreak = 0;  // consecutive failed write cycles (any wheel)
     for (;;) {
         if (xQueueReceive(_motorQueue, &cmd, portMAX_DELAY) != pdTRUE) continue;
 
@@ -1213,6 +1232,19 @@ static void _bleMotorTask(void* /*pv*/) {
             }
             ok &= sent;
         }
+        // Log write failures unconditionally (not behind DBG_BLE):
+        // first failure is always printed; then every 20 cycles (~1 s at 20 Hz).
+        if (!ok) {
+            motorFailStreak++;
+            if (motorFailStreak == 1 || (motorFailStreak % 20) == 0) {
+                Serial.printf("[Motor] write FAILED (streak: %u cycles @ 20 Hz)\n",
+                              (unsigned)motorFailStreak);
+            }
+        } else if (motorFailStreak > 0) {
+            Serial.printf("[Motor] write recovered after %u failed cycles\n",
+                          (unsigned)motorFailStreak);
+            motorFailStreak = 0;
+        }
         _motorWriteOk = ok;
         // Pace writes to ~20 Hz and yield to IDLE0 on Core 0. Without this,
         // xQueueOverwrite at loop() rate keeps the queue permanently occupied,
@@ -1240,6 +1272,11 @@ bool bleLastMotorWriteOk() {
 
 void bleResetMotorWriteOk() {
     _motorWriteOk = true;
+}
+
+uint32_t bleGetLastNotifyMs(int idx) {
+    if (idx < 0 || idx >= WHEEL_COUNT) return 0;
+    return _wheels[idx].lastNotifyMs;
 }
 
 bool bleSendStop() {
