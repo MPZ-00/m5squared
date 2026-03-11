@@ -30,6 +30,7 @@ Supervisor::Supervisor(Mapper& mapper, const SupervisorConfig& config)
     , _activateHoldStartMs(0)
     , _idleHoldStartMs(0)
     , _armedEntryMs(0)
+    , _driveEntryMs(0)
     , _reconnectNotBeforeMs(0)
     , _partialReconnect(false)
     , _connectionRequested(false)
@@ -606,11 +607,31 @@ void Supervisor::checkWatchdogs() {
         return;
     }
 
-    // Note: a stale-notify watchdog was considered here but removed.
-    // REMOTE_SPEED writes are fire-and-forget (no ACK from wheel), and telemetry
-    // is not polled while DRIVING, so no notifies arrive during normal operation.
-    // Genuine disconnects are caught immediately by the onDisconnect callback
-    // setting w.connected = false, which handleDriving() checks every cycle.
+    // Stale-notify watchdog (DRIVING only).
+    //
+    // writeValue(..., false) is fire-and-forget: GATT rc=-1 is logged but
+    // swallowed, ok=true is set, and the wheel holds the last received command
+    // for ~20 s until link supervision fires onDisconnect.
+    //
+    // IF the wheel sends notify responses for REMOTE_SPEED writes, lastNotifyMs
+    // going stale is a reliable signal that writes stopped reaching it.
+    // The watchdog self-disables if no notify is received after DRIVING starts
+    // (100 ms margin), so it silently does nothing if that assumption is wrong.
+    // TODO: Verify with real wheels or m25_wheel_rfcomm before relying on this.
+    if (_config.notifyStaleTimeoutMs > 0 && _state == SUPERVISOR_DRIVING && _driveEntryMs > 0) {
+        for (int _wdi = 0; _wdi < WHEEL_COUNT; _wdi++) {
+            if (!_wheelActive(_wdi) || !bleIsConnected(_wdi)) continue;
+            uint32_t lastNfy = bleGetLastNotifyMs(_wdi);
+            if (lastNfy <= _driveEntryMs + 100) continue;  // not yet armed
+            if (now - lastNfy > _config.notifyStaleTimeoutMs) {
+                const char* wname = (_wdi == 0) ? "Left" : "Right";
+                Serial.printf("[Supervisor] Stale-notify watchdog: %s wheel silent for %u ms\n",
+                              wname, (unsigned)(now - lastNfy));
+                enterFailsafe("Wheel not responding (BLE write lost)");
+                return;
+            }
+        }
+    }
 
     // Input watchdog - severity depends on state:
     //   DRIVING: failsafe immediately (motor commands were flowing, now gone)
@@ -731,6 +752,7 @@ void Supervisor::transitionTo(SupervisorState newState) {
     // before the first motor command is even sent.
     if (newState == SUPERVISOR_DRIVING) {
         bleResetNotifyTimers();
+        _driveEntryMs = millis();  // anchor for the stale-notify watchdog
     }
 
     // Notify callbacks
