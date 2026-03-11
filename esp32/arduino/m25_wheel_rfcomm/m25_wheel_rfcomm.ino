@@ -124,11 +124,10 @@ static void do_send_response() {
 // ---------------------------------------------------------------------------
 static void do_disconnect() {
 #if TRANSPORT_RFCOMM_ENABLED
-    // BluetoothSerial has no explicit disconnect API; flush instead
-    Serial.println(F("[RFCOMM] Disconnect requested (not supported by BluetoothSerial)"));
+    Serial.println(F("[RFCOMM] Disconnect not supported by BluetoothSerial"));
 #endif
 #if TRANSPORT_BLE_ENABLED
-    // BLE server disconnect handled externally if needed
+    if (ble_connected()) ble_disconnect();
 #endif
 }
 

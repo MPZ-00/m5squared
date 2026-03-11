@@ -219,8 +219,8 @@ inline bool ble_check_events(void (*onConnect)(), void (*onDisconnect)()) {
         ble_on_connect();
         if (onConnect)    onConnect();
     } else {
+        if (onDisconnect) onDisconnect();  // LED/buzzer before the 500ms advertising delay
         ble_on_disconnect();
-        if (onDisconnect) onDisconnect();
     }
     return true;
 }
