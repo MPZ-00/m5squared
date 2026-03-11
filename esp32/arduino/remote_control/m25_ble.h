@@ -67,22 +67,22 @@ extern volatile uint8_t debugFlags;
 #define M25_PARAM_WRITE_ASSIST_LEVEL  0x40
 
 // Parameter IDs - Read commands (APP_MGMT)
-#define M25_PARAM_READ_ASSIST_LEVEL   0x42
-#define M25_PARAM_READ_DRIVE_MODE     0x22
+#define M25_PARAM_READ_ASSIST_LEVEL   0x41
+#define M25_PARAM_READ_DRIVE_MODE     0x21
 #define M25_PARAM_READ_CRUISE_VALUES  0xD1
 
 // Parameter IDs - Status responses (APP_MGMT)
-#define M25_PARAM_STATUS_ASSIST_LEVEL 0x41
-#define M25_PARAM_STATUS_DRIVE_MODE   0x21
-#define M25_PARAM_CRUISE_VALUES       0xD0
+#define M25_PARAM_STATUS_ASSIST_LEVEL 0x42
+#define M25_PARAM_STATUS_DRIVE_MODE   0x22
+#define M25_PARAM_CRUISE_VALUES       0xD2
 
 // Parameter IDs - Battery (BATT_MGMT service 0x08)
-#define M25_PARAM_READ_SOC            0x01
-#define M25_PARAM_STATUS_SOC          0x00
+#define M25_PARAM_READ_SOC            0x11
+#define M25_PARAM_STATUS_SOC          0x12
 
 // Parameter IDs - Version (VERSION_MGMT service 0x0A)
-#define M25_PARAM_READ_SW_VERSION     0x01
-#define M25_PARAM_STATUS_SW_VERSION   0x00
+#define M25_PARAM_READ_SW_VERSION     0x21
+#define M25_PARAM_STATUS_SW_VERSION   0x22
 
 // Service IDs
 #define M25_SRV_BATT_MGMT             0x08
