@@ -90,6 +90,13 @@ public:
     void requestArm();
     
     /**
+     * Request disarm (ARMED or DRIVING -> PAIRED)
+     * Sends stop first, then transitions back to PAIRED.
+     * Safe to call from serial command handler at any time.
+     */
+    void requestDisarm();
+    
+    /**
      * Process control input (call when new input is available)
      * 
      * @param control  Control state from joystick/gamepad
@@ -122,8 +129,11 @@ public:
     
     SupervisorState getState() const { return _state; }
     const VehicleState& getVehicleState() const { return _vehicleState; }
+    const SupervisorConfig& getConfig() const { return _config; }
     bool isConnected() const;
     bool isDriving() const { return _state == SUPERVISOR_DRIVING; }
+    // Returns ms remaining until auto-disarm fires (0 if not in ARMED or already expired)
+    uint32_t getArmedIdleRemainingMs() const;
     // Returns the highest per-wheel retry count consumed in the current connect session
     uint8_t getReconnectAttempts() const {
         uint8_t m = 0;

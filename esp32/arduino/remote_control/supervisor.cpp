@@ -173,6 +173,16 @@ void Supervisor::requestArm() {
     }
 }
 
+void Supervisor::requestDisarm() {
+    if (_state == SUPERVISOR_ARMED || _state == SUPERVISOR_DRIVING) {
+        sendStop();
+        transitionTo(SUPERVISOR_PAIRED);
+        if (debugFlags & DBG_STATE) {
+            Serial.println("[Supervisor] Disarmed -> PAIRED");
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Input Processing
 // ---------------------------------------------------------------------------
@@ -745,6 +755,15 @@ bool Supervisor::isInputTimeout() const {
 
 bool Supervisor::isLinkTimeout() const {
     return _lastLinkTimeMs > 0 && (millis() - _lastLinkTimeMs) > _config.linkTimeoutMs;
+}
+
+uint32_t Supervisor::getArmedIdleRemainingMs() const {
+    if (_state != SUPERVISOR_ARMED || _armedEntryMs == 0) return 0;
+    // Count from the later of arm entry or last input, matching checkWatchdogs() logic
+    uint32_t idleRef = (_lastInputTimeMs > _armedEntryMs) ? _lastInputTimeMs : _armedEntryMs;
+    uint32_t elapsed = millis() - idleRef;
+    if (elapsed >= _config.armIdleTimeoutMs) return 0;
+    return _config.armIdleTimeoutMs - elapsed;
 }
 
 void Supervisor::notifyConnectionChange() {
