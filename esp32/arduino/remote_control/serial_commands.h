@@ -15,6 +15,7 @@
  *   js                          One-shot joystick snapshot (raw + normalized)
  *   ble                         BLE connection status for each wheel
  *   wheels                      Verbose per-wheel status + key
+ *   telemetry                   Request fresh telemetry from wheels + print cached values
  *   assist <0|1|2>              Set assist level  0=indoor  1=outdoor  2=learning
  *   hillhold <on|off>           Toggle hill hold (only when motors stopped)
  *   recal                       Recalibrate joystick center position
@@ -145,6 +146,7 @@ static void _scPrintHelp() {
     Serial.println(F("  buttons                   Debug button hardware & state"));
     Serial.println(F("  ble                       Quick BLE connection status"));
     Serial.println(F("  wheels                    Verbose per-wheel status + key"));
+    Serial.println(F("  telemetry                 Request fresh telemetry from wheels + print cached values"));
     Serial.println(F("--- Recording ---"));
     Serial.println(F("  record start [N]          Record BLE traffic for N seconds (default 10)"));
     Serial.println(F("  record stop               Stop recording early"));
@@ -633,6 +635,48 @@ static void _scDispatch(const char* cmd, const SerialContext &ctx) {
         }
         Serial.println(F("[CMD] Forcing reconnect..."));
         ctx.supervisor->requestReconnect();
+        return;
+    }
+
+    // telemetry - request fresh data from all connected wheels + print cached values
+    if (strcmp(cmd, "telemetry") == 0) {
+        if (!bleAnyConnected()) {
+            Serial.println(F("[Telemetry] No wheels connected"));
+            return;
+        }
+        // Fire async BLE requests - responses arrive via notify callbacks
+        bool sentSoc = bleRequestSOC();
+        bool sentFw  = bleRequestFirmwareVersion();
+        bool sentOdo = bleRequestCruiseValues();
+        Serial.printf("[Telemetry] Requests sent  SOC=%s  FW=%s  Odometer=%s\n",
+                      sentSoc ? "ok" : "fail",
+                      sentFw  ? "ok" : "fail",
+                      sentOdo ? "ok" : "fail");
+        // Print whatever is currently in the cache
+        Serial.println(F("[Telemetry] --- Cached values (from last poll) ---"));
+        for (int _ti = 0; _ti < WHEEL_COUNT; _ti++) {
+            if (!_wheelActive(_ti)) continue;
+            const char* label = (_ti == WHEEL_LEFT) ? "Left " : "Right";
+            bool conn = bleIsConnected(_ti);
+            Serial.printf("[Telemetry]   %s: ", label);
+            if (!conn) {
+                Serial.println(F("not connected"));
+                continue;
+            }
+            int8_t batt = bleGetBattery(_ti);
+            if (batt >= 0) Serial.printf("battery=%3d%%  ", batt);
+            else           Serial.printf("battery= --   ");
+            uint8_t maj = 0, min = 0, patch = 0;
+            if (bleGetFirmwareVersion(_ti, maj, min, patch))
+                Serial.printf("FW=%d.%d.%d  ", maj, min, patch);
+            else
+                Serial.printf("FW=--        ");
+            float dist = bleGetDistanceKm(_ti);
+            if (dist >= 0.0f) Serial.printf("dist=%.3f km", dist);
+            else              Serial.printf("dist=--");
+            Serial.println();
+        }
+        Serial.println(F("[Telemetry] Fresh values arrive via BLE notify - run 'telemetry' again or enable 'debug telemetry'"));
         return;
     }
 
