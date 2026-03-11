@@ -196,13 +196,9 @@ struct SupervisorConfig {
     uint8_t  maxReconnectAttempts;   // Max reconnection attempts before giving up (default: 5)
     uint32_t telemetryPollIntervalMs;// How often to poll battery/firmware/odometer (default: 10000ms)
     uint8_t  lowBatteryThreshold;    // Battery % below which low-battery limiting applies (default: 20)
-    // Stale-notify watchdog: if the wheel was sending notify responses during DRIVING
-    // but stops (because BLE writes silently fail, e.g. GATT rc=-1), declare the link
-    // dead and enter FAILSAFE.  The watchdog is self-disabling: it only activates
-    // after at least one notify has been seen since DRIVING was entered, so it will
-    // not false-positive if the wheel does not ACK motor commands.
-    // Set to 0 to disable.
-    uint32_t notifyStaleTimeoutMs;   // (default: 2000 ms)
+    // Requires confirmation: only useful if the wheel sends notifies for REMOTE_SPEED writes.
+    // 0 = disabled.
+    uint32_t notifyStaleTimeoutMs;
     
     SupervisorConfig()
         : loopIntervalMs(50)           // 20 Hz
@@ -212,9 +208,9 @@ struct SupervisorConfig {
         , heartbeatIntervalMs(1000)    // 1 second
         , reconnectDelayMs(2000)       // 2 seconds
         , maxReconnectAttempts(5)      // 5 attempts
-        , telemetryPollIntervalMs(10000) // 10 seconds
-        , lowBatteryThreshold(20)      // 20 %
-        , notifyStaleTimeoutMs(2000)   // 2 seconds
+        , telemetryPollIntervalMs(10000)
+        , lowBatteryThreshold(20)
+        , notifyStaleTimeoutMs(0)    // disabled until confirmed with real wheels
     {}
 };
 

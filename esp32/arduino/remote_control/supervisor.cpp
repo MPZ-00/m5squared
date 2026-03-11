@@ -607,17 +607,8 @@ void Supervisor::checkWatchdogs() {
         return;
     }
 
-    // Stale-notify watchdog (DRIVING only).
-    //
-    // writeValue(..., false) is fire-and-forget: GATT rc=-1 is logged but
-    // swallowed, ok=true is set, and the wheel holds the last received command
-    // for ~20 s until link supervision fires onDisconnect.
-    //
-    // IF the wheel sends notify responses for REMOTE_SPEED writes, lastNotifyMs
-    // going stale is a reliable signal that writes stopped reaching it.
-    // The watchdog self-disables if no notify is received after DRIVING starts
-    // (100 ms margin), so it silently does nothing if that assumption is wrong.
-    // TODO: Verify with real wheels or m25_wheel_rfcomm before relying on this.
+    // Stale-notify watchdog: only useful if wheels ACK REMOTE_SPEED writes.
+    // Disabled by default (notifyStaleTimeoutMs=0) until confirmed with real wheels.
     if (_config.notifyStaleTimeoutMs > 0 && _state == SUPERVISOR_DRIVING && _driveEntryMs > 0) {
         for (int _wdi = 0; _wdi < WHEEL_COUNT; _wdi++) {
             if (!_wheelActive(_wdi) || !bleIsConnected(_wdi)) continue;
