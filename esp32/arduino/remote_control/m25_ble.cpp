@@ -25,12 +25,98 @@ static bool _bleAutoReconnectFlag = true;
 // Every _sendCommand() caller must hold this before touching the BLE stack.
 static SemaphoreHandle_t _bleTxMutex = nullptr;
 
+// ---------------------------------------------------------------------------
+// BLE traffic recorder state
+// ---------------------------------------------------------------------------
+static BleRecordEntry    _recordBuf[BLE_RECORD_MAX];
+static volatile uint16_t _recordCount  = 0;
+static volatile bool     _recordActive = false;
+static volatile uint32_t _recordEndMs  = 0;   // millis() when auto-stop fires
+static portMUX_TYPE      _recordMux    = portMUX_INITIALIZER_UNLOCKED;
+
 WheelConnState_t* _getWheels() {
     return _wheelsStorage;
 }
 
 bool& _getBleAutoReconnect() {
     return _bleAutoReconnectFlag;
+}
+
+// ---------------------------------------------------------------------------
+// BLE traffic recorder implementation
+// ---------------------------------------------------------------------------
+void _bleRecordFrame(uint8_t dir, uint8_t wheelIdx, const uint8_t* data, size_t len) {
+    if (!_recordActive) return;
+    portENTER_CRITICAL(&_recordMux);
+    if (_recordActive && _recordCount < BLE_RECORD_MAX) {
+        uint16_t idx        = _recordCount;
+        BleRecordEntry& e   = _recordBuf[idx];
+        e.ms        = millis();
+        e.direction = dir;
+        e.wheel     = wheelIdx;
+        e.rawLen    = (uint8_t)min(len, (size_t)255);
+        size_t copy = (len < BLE_RECORD_PAYLOAD) ? len : BLE_RECORD_PAYLOAD;
+        memcpy(e.data, data, copy);
+        if (copy < BLE_RECORD_PAYLOAD)
+            memset(e.data + copy, 0, BLE_RECORD_PAYLOAD - copy);
+        _recordCount = idx + 1;
+    }
+    portEXIT_CRITICAL(&_recordMux);
+}
+
+void bleRecordStart(uint32_t durationMs) {
+    portENTER_CRITICAL(&_recordMux);
+    memset(_recordBuf, 0, sizeof(_recordBuf));
+    _recordCount  = 0;
+    _recordActive = true;
+    _recordEndMs  = millis() + durationMs;
+    portEXIT_CRITICAL(&_recordMux);
+    Serial.printf("[Record] Started - %.1f s / %d entries max\n",
+                  durationMs / 1000.0f, BLE_RECORD_MAX);
+}
+
+void bleRecordStop() {
+    portENTER_CRITICAL(&_recordMux);
+    _recordActive = false;
+    portEXIT_CRITICAL(&_recordMux);
+    Serial.printf("[Record] Stopped - %d entries captured\n", (int)_recordCount);
+}
+
+bool bleRecordIsActive() {
+    return _recordActive;
+}
+
+uint32_t bleRecordEntryCount() {
+    return _recordCount;
+}
+
+void bleRecordDump() {
+    uint16_t count = _recordCount;
+    if (count == 0) {
+        Serial.println("[Record] No entries captured");
+        return;
+    }
+    uint32_t t0 = _recordBuf[0].ms;
+    Serial.printf("[Record] %d entries captured (t0=%u ms since boot)\n", (int)count, t0);
+    Serial.println("[Record]  idx   +ms     dir  wheel  len  data");
+    Serial.println("[Record] ----  ------   ---  -----  ---  ----");
+    for (uint16_t i = 0; i < count; i++) {
+        const BleRecordEntry& e = _recordBuf[i];
+        const char* dir   = (e.direction == BLE_REC_TX) ? "TX>" : "<RX";
+        const char* wheel = (e.wheel == WHEEL_LEFT)  ? "Left " :
+                            (e.wheel == WHEEL_RIGHT) ? "Right" : "?    ";
+        Serial.printf("[Record] %-4u  +%-6u  %s  %s  %-3d  ",
+                      i, (uint32_t)(e.ms - t0), dir, wheel, e.rawLen);
+        size_t show = (e.rawLen < BLE_RECORD_PAYLOAD) ? e.rawLen : BLE_RECORD_PAYLOAD;
+        for (size_t j = 0; j < show; j++) {
+            Serial.printf("%02X ", e.data[j]);
+        }
+        if (e.rawLen > BLE_RECORD_PAYLOAD) {
+            Serial.printf("... (+%d)", e.rawLen - BLE_RECORD_PAYLOAD);
+        }
+        Serial.println();
+    }
+    Serial.println("[Record] --- end of record ---");
 }
 
 // ---------------------------------------------------------------------------
@@ -393,6 +479,8 @@ bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
                 // logs them as [E][BLERemoteCharacteristic.cpp:639] and returns silently.
                 w.rxChar->writeValue(buf, len, false);
                 ok = true;
+                // Capture frame for traffic recorder
+                _bleRecordFrame(BLE_REC_TX, (uint8_t)idx, buf, len);
             } catch (...) {
                 Serial.printf("[BLE] writeValue() exception on %s wheel\n",
                               w.name ? w.name : "?");
@@ -548,36 +636,38 @@ void _printResponse(const char* wheelName, const ResponseHeader* hdr, const Resp
         }
     }
     else {
-        // Print parsed data based on response type
-        if (hdr->serviceId == M25_SRV_BATT_MGMT && hdr->paramId == M25_PARAM_STATUS_SOC) {
-            Serial.printf("[BLE] %s wheel battery: %d%%\n", wheelName, data->soc.batteryPercent);
-        }
-        else if (hdr->serviceId == M25_SRV_APP_MGMT) {
-            if (hdr->paramId == M25_PARAM_STATUS_ASSIST_LEVEL) {
-                const char* levelName = (data->assistLevel.level == 0) ? "Indoor" :
-                                       (data->assistLevel.level == 1) ? "Outdoor" :
-                                       (data->assistLevel.level == 2) ? "Learning" : "Unknown";
-                Serial.printf("[BLE] %s wheel assist level: %s\n", wheelName, levelName);
+        // Print parsed data based on response type (gate on DBG_TELEMETRY)
+        if (debugFlags & DBG_TELEMETRY) {
+            if (hdr->serviceId == M25_SRV_BATT_MGMT && hdr->paramId == M25_PARAM_STATUS_SOC) {
+                Serial.printf("[BLE] %s wheel battery: %d%%\n", wheelName, data->soc.batteryPercent);
             }
-            else if (hdr->paramId == M25_PARAM_STATUS_DRIVE_MODE || 
-                     hdr->paramId == M25_PARAM_WRITE_DRIVE_MODE) {
-                Serial.printf("[BLE] %s wheel drive mode: 0x%02X (", wheelName, data->driveMode.mode);
-                if (data->driveMode.remote) Serial.print("REMOTE ");
-                if (data->driveMode.cruise) Serial.print("CRUISE ");
-                if (data->driveMode.autoHold) Serial.print("AUTO_HOLD ");
-                if (data->driveMode.mode == 0) Serial.print("NORMAL");
-                Serial.println(")");
+            else if (hdr->serviceId == M25_SRV_APP_MGMT) {
+                if (hdr->paramId == M25_PARAM_STATUS_ASSIST_LEVEL) {
+                    const char* levelName = (data->assistLevel.level == 0) ? "Indoor" :
+                                           (data->assistLevel.level == 1) ? "Outdoor" :
+                                           (data->assistLevel.level == 2) ? "Learning" : "Unknown";
+                    Serial.printf("[BLE] %s wheel assist level: %s\n", wheelName, levelName);
+                }
+                else if (hdr->paramId == M25_PARAM_STATUS_DRIVE_MODE || 
+                         hdr->paramId == M25_PARAM_WRITE_DRIVE_MODE) {
+                    Serial.printf("[BLE] %s wheel drive mode: 0x%02X (", wheelName, data->driveMode.mode);
+                    if (data->driveMode.remote) Serial.print("REMOTE ");
+                    if (data->driveMode.cruise) Serial.print("CRUISE ");
+                    if (data->driveMode.autoHold) Serial.print("AUTO_HOLD ");
+                    if (data->driveMode.mode == 0) Serial.print("NORMAL");
+                    Serial.println(")");
+                }
+                else if (hdr->paramId == M25_PARAM_CRUISE_VALUES) {
+                    Serial.printf("[BLE] %s wheel cruise: %.2f km, speed %d, push %d\n",
+                                 wheelName, data->cruiseValues.distanceKm,
+                                 data->cruiseValues.speed, data->cruiseValues.pushCounter);
+                }
             }
-            else if (hdr->paramId == M25_PARAM_CRUISE_VALUES) {
-                Serial.printf("[BLE] %s wheel cruise: %.2f km, speed %d, push %d\n",
-                             wheelName, data->cruiseValues.distanceKm,
-                             data->cruiseValues.speed, data->cruiseValues.pushCounter);
+            else if (hdr->serviceId == M25_SRV_VERSION_MGMT && hdr->paramId == M25_PARAM_STATUS_SW_VERSION) {
+                Serial.printf("[BLE] %s wheel firmware: %d.%d.%d (dev state %d)\n",
+                             wheelName, data->swVersion.major, data->swVersion.minor,
+                             data->swVersion.patch, data->swVersion.devState);
             }
-        }
-        else if (hdr->serviceId == M25_SRV_VERSION_MGMT && hdr->paramId == M25_PARAM_STATUS_SW_VERSION) {
-            Serial.printf("[BLE] %s wheel firmware: %d.%d.%d (dev state %d)\n",
-                         wheelName, data->swVersion.major, data->swVersion.minor,
-                         data->swVersion.patch, data->swVersion.devState);
         }
     }
 }
@@ -643,8 +733,11 @@ void _notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size_t leng
         if (_wheels[i].txChar == pChar) {
             WheelConnState_t &w = _wheels[i];
             
-            // Always show raw data for debugging decryption issues
-            if (debugFlags & DBG_BLE) {
+            // Capture raw incoming frame for traffic recorder
+            _bleRecordFrame(BLE_REC_RX, (uint8_t)i, pData, length);
+            
+            // Raw hex dump (DBG_PROTO: low-level frame debugging)
+            if (debugFlags & DBG_PROTO) {
                 Serial.print("[BLE] Raw data: ");
                 for (size_t i = 0; i < length && i < 48; i++) {
                     Serial.printf("%02X ", pData[i]);
@@ -657,7 +750,7 @@ void _notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size_t leng
             uint8_t unstuffed[128];
             size_t unstuffedLen = _removeDelimiters(pData, length, unstuffed, sizeof(unstuffed));
             
-            if (debugFlags & DBG_BLE) {
+            if (debugFlags & DBG_PROTO) {
                 Serial.printf("[BLE] After unstuffing: %zu bytes\n", unstuffedLen);
                 if (unstuffedLen != length) {
                     Serial.print("  Unstuffed: ");
@@ -1213,6 +1306,13 @@ bool bleSendAssistLevel(uint8_t level) {
 }
 
 void bleTick() {
+    // Auto-stop record when its duration expires, then dump the log
+    if (_recordActive && millis() >= _recordEndMs) {
+        _recordActive = false;
+        Serial.printf("[Record] Auto-stopped - %d entries captured\n", (int)_recordCount);
+        bleRecordDump();
+    }
+
     if (!_bleAutoReconnect) return;
     uint32_t now = millis();
     for (int i = 0; i < WHEEL_COUNT; i++) {

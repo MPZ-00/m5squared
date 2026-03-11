@@ -420,5 +420,51 @@ int8_t bleGetBattery(int idx);   // 0-100 %, or -1 if unavailable
 bool   bleGetFirmwareVersion(int idx, uint8_t& major, uint8_t& minor, uint8_t& patch);
 float  bleGetDistanceKm(int idx);             // km, or -1.0f if unavailable
 
+// ---------------------------------------------------------------------------
+// BLE traffic recorder
+//
+// Records raw incoming (RX) and outgoing (TX) BLE frames to a ring buffer
+// for offline analysis.  Useful when working with live wheels to capture
+// actual on-wire traffic and determine timing, frame content, etc.
+//
+// Usage:
+//   bleRecordStart(15000);     // record for 15 s (auto-dumps when done)
+//   bleRecordStop();           // stop early
+//   bleRecordDump();           // print captured log to Serial
+// ---------------------------------------------------------------------------
+#define BLE_RECORD_MAX     200   // max entries (ring buffer - oldest overwritten)
+#define BLE_RECORD_PAYLOAD  48   // bytes stored per frame (rest truncated)
+
+// Direction codes stored in BleRecordEntry::direction
+#define BLE_REC_TX  0   // outgoing frame (remote -> wheel)
+#define BLE_REC_RX  1   // incoming frame (wheel  -> remote)
+
+struct BleRecordEntry {
+    uint32_t ms;          // millis() at capture time
+    uint8_t  direction;   // BLE_REC_TX or BLE_REC_RX
+    uint8_t  wheel;       // WHEEL_LEFT or WHEEL_RIGHT
+    uint8_t  rawLen;      // original frame byte length (may exceed BLE_RECORD_PAYLOAD)
+    uint8_t  data[BLE_RECORD_PAYLOAD];  // frame bytes (truncated if rawLen > BLE_RECORD_PAYLOAD)
+};
+
+// Start recording for durationMs milliseconds.  Clears any previous capture.
+// Auto-stops and auto-dumps when the duration expires (checked in bleTick()).
+void bleRecordStart(uint32_t durationMs = 10000);
+
+// Stop recording early without dumping.
+void bleRecordStop();
+
+// Print all captured entries to Serial in hex-dump format.
+void bleRecordDump();
+
+// Return true while recording is active.
+bool bleRecordIsActive();
+
+// Return the number of entries currently in the buffer.
+uint32_t bleRecordEntryCount();
+
+// Internal helper ─ called by _sendCommand() and _notifyCallback() to capture frames.
+void _bleRecordFrame(uint8_t dir, uint8_t wheelIdx, const uint8_t* data, size_t len);
+
 #endif // M25_BLE_H
 
