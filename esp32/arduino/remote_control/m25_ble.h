@@ -35,7 +35,7 @@
 #include "device_config.h"
 
 // External debug flags (defined in serial_commands.h)
-extern uint8_t debugFlags;
+extern volatile uint8_t debugFlags;
 
 // ---------------------------------------------------------------------------
 // M25 SPP Service / Characteristic UUIDs (m25_bluetooth.py)
