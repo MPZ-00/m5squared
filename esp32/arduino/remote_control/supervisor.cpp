@@ -736,7 +736,15 @@ void Supervisor::transitionTo(SupervisorState newState) {
         _idleHoldStartMs     = 0;
         _armedEntryMs        = millis();
     }
-    
+
+    // On entry to DRIVING: reset per-wheel notify timestamps so the stale-notify
+    // watchdog window begins from motor engagement time, not from connection time.
+    // Without this, a long idle in PAIRED/ARMED would make the timestamp stale
+    // before the first motor command is even sent.
+    if (newState == SUPERVISOR_DRIVING) {
+        bleResetNotifyTimers();
+    }
+
     // Notify callbacks
     notifyStateCallbacks(oldState, newState);
 }

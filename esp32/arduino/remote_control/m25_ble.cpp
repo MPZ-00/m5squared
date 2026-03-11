@@ -1279,6 +1279,15 @@ uint32_t bleGetLastNotifyMs(int idx) {
     return _wheels[idx].lastNotifyMs;
 }
 
+void bleResetNotifyTimers() {
+    uint32_t now = millis();
+    for (int i = 0; i < WHEEL_COUNT; i++) {
+        if (_wheelActive(i) && _wheels[i].connected) {
+            _wheels[i].lastNotifyMs = now;
+        }
+    }
+}
+
 bool bleSendStop() {
     if (_motorQueue) {
         _MotorCmd c = { true, 0.0f, 0.0f };

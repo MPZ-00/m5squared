@@ -395,6 +395,11 @@ void bleResetMotorWriteOk();
 // Used by the stale-notify watchdog in Supervisor::checkWatchdogs().
 uint32_t bleGetLastNotifyMs(int idx);
 
+// Reset the notify timestamps for all active wheels to now.
+// Call on entry to DRIVING so the stale-notify watchdog window starts from
+// motor engagement rather than from the (potentially old) connection time.
+void bleResetNotifyTimers();
+
 // Motor commands (post to motor task queue - non-blocking)
 bool bleSendStop();
 bool bleSendMotorCommand(float leftPercent, float rightPercent);
