@@ -917,10 +917,15 @@ bool _connectWheel(int idx) {
         uint32_t preNotifyDelay = (idx > 0) ? 800 : 500;
         delay(preNotifyDelay);
         
+        // First call triggers retrieveDescriptors() internally; it logs
+        // ESP_GATT_UNKNOWN (0x13) on first connection attempts - this is benign.
+        // Second call registers the callback after descriptors are cached.
+        Serial.printf("[BLE] %s wheel: registering notifications (pass 1)...\n", wheelName);
         w.txChar->registerForNotify(_notifyCallback);
-        Serial.printf("[BLE] %s wheel: Notifications registered, waiting %d ms for stability...\n",
+        Serial.printf("[BLE] %s wheel: waiting %d ms for stability...\n",
                       wheelName, BLE_NOTIFY_RETRY_DELAY_MS);
         delay(BLE_NOTIFY_RETRY_DELAY_MS);
+        Serial.printf("[BLE] %s wheel: registering notifications (pass 2)...\n", wheelName);
         w.txChar->registerForNotify(_notifyCallback);
         Serial.printf("[BLE] %s wheel: Notifications enabled\n", wheelName);
     }
@@ -1204,7 +1209,21 @@ static void _bleMotorTask(void* /*pv*/) {
 
         bool ok = true;
         for (int i = 0; i < WHEEL_COUNT; i++) {
-            if (!_wheelActive(i) || !bleIsConnected(i)) continue;
+            if (!_wheelActive(i)) continue;
+
+            if (debugFlags & DBG_MOTOR) {
+                const char* wn = _wheels[i].name ? _wheels[i].name : "?";
+                if (!bleIsConnected(i)) {
+                    Serial.printf("[Motor] -> %s (not connected)\n", wn);
+                } else if (cmd.isStop) {
+                    Serial.printf("[Motor] -> %s STOP\n", wn);
+                } else {
+                    float pct = (i == WHEEL_LEFT) ? -cmd.left : cmd.right;
+                    Serial.printf("[Motor] -> %s %.0f%%\n", wn, (double)pct);
+                }
+            }
+
+            if (!bleIsConnected(i)) continue;
 
             uint8_t spd[2];
             if (cmd.isStop) {
@@ -1214,16 +1233,6 @@ static void _bleMotorTask(void* /*pv*/) {
                 int16_t raw = (int16_t)constrain(pct * M25_SPEED_SCALE, -32768.0f, 32767.0f);
                 spd[0] = (uint8_t)((raw >> 8) & 0xFF);
                 spd[1] = (uint8_t)(raw        & 0xFF);
-            }
-
-            if (debugFlags & DBG_MOTOR) {
-                const char* wn = _wheels[i].name ? _wheels[i].name : "?";
-                if (cmd.isStop) {
-                    Serial.printf("[Motor] -> %s STOP\n", wn);
-                } else {
-                    float pct = (i == WHEEL_LEFT) ? -cmd.left : cmd.right;
-                    Serial.printf("[Motor] -> %s %.0f%%\n", wn, (double)pct);
-                }
             }
 
             bool sent = _sendCommand(i, M25_SRV_APP_MGMT, M25_PARAM_WRITE_REMOTE_SPEED, spd, 2);
