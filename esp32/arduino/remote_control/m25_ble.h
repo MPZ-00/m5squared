@@ -259,7 +259,8 @@ struct WheelConnState_t {
     BLEClient*                   client;
     BLERemoteCharacteristic*     rxChar;             // For writing commands to wheel
     BLERemoteCharacteristic*     txChar;             // For receiving responses from wheel
-    bool                         receivedFirstAck;   // Track if we got a response (encryption validated)
+    bool                         rxWriteWithResponse; // true when RX char requires write-with-response
+    bool                         receivedFirstAck;
     uint32_t                     lastConnectAttemptMs;
     uint8_t                      consecutiveFails;   // resets on success; auto-reconnect stops at BLE_MAX_RECONNECT_FAILS
     volatile uint32_t            lastNotifyMs;       // millis() of last successful notify; 0 before first notify

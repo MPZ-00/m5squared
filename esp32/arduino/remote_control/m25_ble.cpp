@@ -476,12 +476,15 @@ bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
         size_t len = _buildAndEncrypt(idx, serviceId, paramId, payload, payloadLen, buf);
         if (len > 0) {
             try {
-                // GATT-level errors (rc=-1, rc=259) are NOT C++ exceptions - the library
-                // logs them as [E][BLERemoteCharacteristic.cpp:639] and returns silently.
-                w.rxChar->writeValue(buf, len, false);
-                ok = true;
-                // Capture frame for traffic recorder
-                _bleRecordFrame(BLE_REC_TX, (uint8_t)idx, buf, len);
+                bool sent = w.rxChar->writeValue(buf, len, w.rxWriteWithResponse);
+                if (!sent) {
+                    // write-with-response: server rejected or timed out
+                    w.connected     = false;
+                    w.protocolReady = false;
+                } else {
+                    ok = true;
+                    _bleRecordFrame(BLE_REC_TX, (uint8_t)idx, buf, len);
+                }
             } catch (...) {
                 Serial.printf("[BLE] writeValue() exception on %s wheel\n",
                               w.name ? w.name : "?");
@@ -913,6 +916,19 @@ bool _connectWheel(int idx) {
     }
     w.rxChar = rxChar;
     w.txChar = txChar;
+
+    // Detect write mode required by the wheel's RX characteristic.
+    {
+        // WRITE_NR = write without response; WRITE = write with response.
+        // Sending without response to a WRITE-only char is silently dropped by ATT.
+        bool hasWriteNR = rxChar->canWriteNoResponse();
+        bool hasWrite   = rxChar->canWrite();
+        w.rxWriteWithResponse = hasWrite && !hasWriteNR;
+        Serial.printf("[BLE] %s wheel: RX properties canWrite=%d canWriteNR=%d -> %s\n",
+                      wheelName, hasWrite, hasWriteNR,
+                      w.rxWriteWithResponse ? "write-with-response" : "write-without-response");
+    }
+
     if (w.txChar && w.txChar->canNotify()) {
         // ESP32 BLE stack needs time after getCharacteristic() before descriptor retrieval
         uint32_t preNotifyDelay = (idx > 0) ? 800 : 500;
@@ -1083,9 +1099,10 @@ void bleResetWheel(int idx) {
     w.protocolReady    = false;
     w.telegramId       = M25_TELEGRAM_ID_START;
     w.driveModeBits    = 0;
-    w.rxChar           = nullptr;
-    w.txChar           = nullptr;
-    w.receivedFirstAck = false;
+    w.rxChar               = nullptr;
+    w.txChar               = nullptr;
+    w.rxWriteWithResponse  = false;
+    w.receivedFirstAck     = false;
     w.consecutiveFails = 0;
     w.lastNotifyMs     = 0;
 
