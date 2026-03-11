@@ -232,6 +232,7 @@ static const char* _bleErrStr(int rc) {
         case 0x8E:   return "ESP_GATT_ERROR (generic)";
         case 0x8F:   return "ESP_GATT_CMD_STARTED";
         case 0x96:   return "ESP_GATT_AUTH_FAIL";
+        case 0xFF:   return "connect scan timeout (255) - wheel not advertising or out of range";
         default: {
             static char buf[24];
             snprintf(buf, sizeof(buf), "0x%X (%d)", rc, rc);
@@ -917,9 +918,6 @@ bool _connectWheel(int idx) {
         uint32_t preNotifyDelay = (idx > 0) ? 800 : 500;
         delay(preNotifyDelay);
         
-        // First call triggers retrieveDescriptors() internally; it logs
-        // ESP_GATT_UNKNOWN (0x13) on first connection attempts - this is benign.
-        // Second call registers the callback after descriptors are cached.
         Serial.printf("[BLE] %s wheel: registering notifications (pass 1)...\n", wheelName);
         w.txChar->registerForNotify(_notifyCallback);
         Serial.printf("[BLE] %s wheel: waiting %d ms for stability...\n",
