@@ -101,6 +101,22 @@
 #endif
 
 // =============================================================================
+// FIRMWARE / HARDWARE VERSION
+// Returned in VERSION_MGMT responses.
+// =============================================================================
+#define FW_VERSION_MAJOR  1
+#define FW_VERSION_MINOR  0
+#define HW_VERSION        1
+
+// =============================================================================
+// CRUISE CONTROL DEFAULTS
+// cruiseSpeed: raw speed units (same scale as REMOTE_SPEED).
+// autoShutoffMin: idle-shutoff timeout in minutes.
+// =============================================================================
+#define CRUISE_SPEED_DEFAULT      100
+#define AUTO_SHUTOFF_MIN_DEFAULT   10
+
+// =============================================================================
 // PROTOCOL CONSTANTS (do not change unless the wheel firmware changes)
 // =============================================================================
 #define M25_HEADER_MARKER   0xEF

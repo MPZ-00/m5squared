@@ -22,6 +22,8 @@ struct WheelState {
     uint8_t  assistLevel;    // Assist level 0-2
     bool     hillHold;       // Hill-hold active
     uint8_t  driveProfile;   // Drive profile 0-5
+    int16_t  cruiseSpeed;    // Cruise control threshold (raw units)
+    uint8_t  autoShutoffMin; // Idle auto-shutoff timeout in minutes
     long     rotations;          // Total simulated wheel rotations
     float    distance;           // Approx distance in metres (2 m/rotation)
     unsigned long lastCmdMs;     // millis() of last received REMOTE_SPEED command
@@ -32,12 +34,14 @@ struct WheelState {
 // Initialise wheel state to safe defaults
 // ---------------------------------------------------------------------------
 inline void state_init(WheelState* s) {
-    s->speed        = 0;
-    s->lastSpeed    = 0;
-    s->battery      = 100;
-    s->assistLevel  = 1;
-    s->hillHold     = false;
-    s->driveProfile = 0;
+    s->speed          = 0;
+    s->lastSpeed      = 0;
+    s->battery        = 100;
+    s->assistLevel    = 1;
+    s->hillHold       = false;
+    s->driveProfile   = 0;
+    s->cruiseSpeed    = CRUISE_SPEED_DEFAULT;
+    s->autoShutoffMin = AUTO_SHUTOFF_MIN_DEFAULT;
     s->rotations        = 0;
     s->distance         = 0.0f;
     s->lastCmdMs        = 0;
@@ -94,6 +98,8 @@ inline void state_print(const WheelState* s) {
     Serial.printf("  Assist level:  %d\n",        s->assistLevel);
     Serial.printf("  Drive profile: %d\n",        s->driveProfile);
     Serial.printf("  Hill hold:     %s\n",        s->hillHold ? "ON" : "OFF");
+    Serial.printf("  Cruise speed:  %d raw\n",    s->cruiseSpeed);
+    Serial.printf("  Auto shutoff:  %d min\n",    s->autoShutoffMin);
     Serial.printf("  Rotations:     %ld\n",       s->rotations);
     Serial.printf("  Distance:      %.1f m\n",    s->distance);
     Serial.println(F("===================\n"));

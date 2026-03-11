@@ -48,6 +48,7 @@ static WheelState wheel;
 // CLI action callbacks
 // ---------------------------------------------------------------------------
 static void do_send_response();
+static void do_send_response_for(uint8_t reqService, uint8_t reqParam);
 static void do_disconnect();
 static void do_advertise();
 static bool is_connected();
@@ -88,35 +89,45 @@ static bool do_process_frame(const uint8_t* raw, size_t rawLen) {
     const CmdResult result = command_apply(spp, sppLen, &wheel,
                                            cli_dbg(DBG_COMMANDS));
 
-    // Send ACK - except for high-rate REMOTE_SPEED (would flood the link)
+    // Send ACK - except for high-rate REMOTE_SPEED (would flood the link).
+    // Mirror service/param so the app can route the reply correctly.
     if (result == CMD_SEND_ACK) {
-        do_send_response();
+        do_send_response_for(spp[4], spp[5]);
     }
     return true;
 }
 
 // ---------------------------------------------------------------------------
-// do_send_response - build ACK packet and send on all active transports.
+// _transport_send - push a pre-built frame to all active transports.
+// ---------------------------------------------------------------------------
+static void _transport_send(const uint8_t* frame, size_t frameLen) {
+    if (cli_dbg(DBG_RAW_DATA)) proto_print_hex("[TX] Frame", frame, frameLen);
+#if TRANSPORT_RFCOMM_ENABLED
+    if (rfcomm_connected()) rfcomm_send(frame, frameLen);
+#endif
+#if TRANSPORT_BLE_ENABLED
+    if (ble_connected()) ble_send(frame, frameLen);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// do_send_response - generic ACK (used by CLI; service=APP_MGMT param=0xFF).
 // ---------------------------------------------------------------------------
 static void do_send_response() {
     uint8_t frame[128];
     const size_t frameLen = packet_encode_ack(&wheel, ENC_KEY, frame);
-    if (frameLen == 0) {
-        Serial.println(F("[TX] ERROR: packet_encode_ack failed"));
-        return;
-    }
+    if (frameLen == 0) { Serial.println(F("[TX] ERROR: packet_encode_ack failed")); return; }
+    _transport_send(frame, frameLen);
+}
 
-    if (cli_dbg(DBG_RAW_DATA)) {
-        proto_print_hex("[TX] Frame", frame, frameLen);
-    }
-
-#if TRANSPORT_RFCOMM_ENABLED
-    if (rfcomm_connected()) rfcomm_send(frame, frameLen);
-#endif
-
-#if TRANSPORT_BLE_ENABLED
-    if (ble_connected()) ble_send(frame, frameLen);
-#endif
+// ---------------------------------------------------------------------------
+// do_send_response_for - context-aware reply that mirrors back service/param.
+// ---------------------------------------------------------------------------
+static void do_send_response_for(uint8_t reqService, uint8_t reqParam) {
+    uint8_t frame[128];
+    const size_t frameLen = packet_encode_response(reqService, reqParam, &wheel, ENC_KEY, frame);
+    if (frameLen == 0) { Serial.println(F("[TX] ERROR: packet_encode_response failed")); return; }
+    _transport_send(frame, frameLen);
 }
 
 // ---------------------------------------------------------------------------
