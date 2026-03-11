@@ -89,34 +89,28 @@ static void onSupervisorStateChange(SupervisorState oldState, SupervisorState ne
     switch (newState) {
         case SUPERVISOR_DISCONNECTED:
             ledSetStatus(LED_OFF);
-            ledSetBle(false);
             break;
             
         case SUPERVISOR_CONNECTING:
             ledSetStatus(LED_BLINK_SLOW);
-            ledSetBle(false);
             break;
             
         case SUPERVISOR_PAIRED:
             ledSetStatus(LED_OFF);
-            ledSetBle(true);
             buzzerPlay(BUZZ_CONFIRM);
             break;
             
         case SUPERVISOR_ARMED:
             ledSetStatus(LED_OFF);
-            ledSetBle(true);  // Ensure LED stays solid
             break;
             
         case SUPERVISOR_DRIVING:
             ledSetStatus(LED_OFF);
-            ledSetBle(true);  // Ensure LED stays solid
             break;
             
         case SUPERVISOR_FAILSAFE:
             ledSetStatus(LED_BLINK_FAST);
             buzzerPlay(BUZZ_ERROR);
-            ledSetBle(false);
             break;
     }
 }
@@ -145,7 +139,7 @@ static void enterOff() {
     
     // Turn off all LEDs
     ledSetStatus(LED_OFF);
-    ledSetBle(false);
+    ledSetBleMode(LED_OFF);
     ledSetBattery(0);  // force off
     ledSetHillHold(false);
     ledSetAssistLevel(ASSIST_INDOOR);  // shows off
@@ -451,6 +445,8 @@ void loop() {
     }
 #endif
 
+    // BLE LED: derived from actual connection state every loop (none/partial/all)
+    ledUpdateBle(bleAnyConnected(), bleAllConnected());
     ledTick();
     buzzerTick();
 }

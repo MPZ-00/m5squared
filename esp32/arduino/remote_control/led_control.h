@@ -28,9 +28,10 @@
  *    SLOW (1 Hz)  : learning mode (max 3 km/h)
  *
  *  BLE LED (White, GPIO 27)
- *    OFF          : not initialised
+ *    OFF          : not initialised / device off
  *    SLOW (1 Hz)  : connecting / searching for wheels
- *    ON solid     : both wheels connected
+ *    FAST (2 Hz)  : partial connection (some wheels connected, not all)
+ *    ON solid     : all active wheels connected
  */
 
 #ifndef LED_CONTROL_H
@@ -179,16 +180,22 @@ inline void ledSetAssistLevel(uint8_t level) {
     _ledSetMode(_ledAssist, mode);
 }
 
-// BLE LED: slow blink = connecting/searching, solid = connected
-inline void ledSetBle(bool connected) {
-    LedMode newMode = connected ? LED_ON : LED_BLINK_SLOW;
-    if (_ledBle.mode != newMode) {
-        extern volatile uint8_t debugFlags;
-        if (debugFlags & DBG_STATE) {
-            Serial.printf("[LED] BLE -> %s\n", connected ? "ON" : "BLINK");
-        }
-    }
-    _ledSetMode(_ledBle, newMode);
+// BLE LED: driven from observed connection state.
+//   none connected          -> BLINK_SLOW (searching)
+//   partial (not all active) -> BLINK_FAST
+//   all active connected     -> ON solid
+// Call once per loop with fresh bleAnyConnected() / bleAllConnected() values.
+inline void ledUpdateBle(bool anyConnected, bool allConnected) {
+    LedMode mode;
+    if (allConnected)       mode = LED_ON;
+    else if (anyConnected)  mode = LED_BLINK_FAST;
+    else                    mode = LED_BLINK_SLOW;
+    _ledSetMode(_ledBle, mode);
+}
+
+// Explicit BLE LED mode override - use only for special cases (e.g. device shutdown).
+inline void ledSetBleMode(LedMode mode) {
+    _ledSetMode(_ledBle, mode);
 }
 
 // ---------------------------------------------------------------------------
