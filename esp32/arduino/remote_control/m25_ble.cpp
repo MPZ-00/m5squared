@@ -543,9 +543,12 @@ bool _parseResponseData(const ResponseHeader* hdr, ResponseData* data) {
     const uint8_t* p = hdr->payload;
     size_t len = hdr->payloadLen;
     
-    // Parse based on service and parameter ID
+    // Parse based on service and parameter ID.
+    // The wheel echoes the READ param ID back (not a separate STATUS ID),
+    // so both IDs are accepted here.
     if (hdr->serviceId == M25_SRV_BATT_MGMT) {
-        if (hdr->paramId == M25_PARAM_STATUS_SOC && len >= 1) {
+        if ((hdr->paramId == M25_PARAM_STATUS_SOC ||
+             hdr->paramId == M25_PARAM_READ_SOC) && len >= 1) {
             data->soc.batteryPercent = _parseUint8(p, 0);
             return true;
         }
@@ -563,7 +566,7 @@ bool _parseResponseData(const ResponseHeader* hdr, ResponseData* data) {
             return true;
         }
         else if (hdr->paramId == M25_PARAM_CRUISE_VALUES && len >= 12) {
-            // Payload layout (matches Python parse_cruise_values):
+            // Full cruise status (D2): 12-byte payload
             //   [0]   drive_mode
             //   [1]   push_rim
             //   [2-3] speed (uint16_be)
@@ -572,9 +575,15 @@ bool _parseResponseData(const ResponseHeader* hdr, ResponseData* data) {
             //   [9-10] push_counter (uint16_be)
             //   [11]  error
             data->cruiseValues.speed        = _parseUint16BE(p, 2);
-            data->cruiseValues.distanceMm   = _parseUint32BE(p, 5); // 0.01 m units
-            data->cruiseValues.distanceKm   = (float)data->cruiseValues.distanceMm * 0.00001f; // 0.01m -> km
+            data->cruiseValues.distanceMm   = _parseUint32BE(p, 5);
+            data->cruiseValues.distanceKm   = (float)data->cruiseValues.distanceMm * 0.00001f;
             data->cruiseValues.pushCounter  = _parseUint16BE(p, 9);
+            return true;
+        }
+        else if (hdr->paramId == M25_PARAM_READ_CRUISE_VALUES && len >= 2) {
+            // Compact read response (D1): 2-byte odometer, unit 0.01 m (same scale as D2)
+            data->cruiseValues.distanceMm   = (uint32_t)_parseUint16BE(p, 0);
+            data->cruiseValues.distanceKm   = (float)data->cruiseValues.distanceMm * 0.00001f;
             return true;
         }
         // Also handle write command echoes (ACKs with payload)
@@ -597,10 +606,19 @@ bool _parseResponseData(const ResponseHeader* hdr, ResponseData* data) {
     }
     else if (hdr->serviceId == M25_SRV_VERSION_MGMT) {
         if (hdr->paramId == M25_PARAM_STATUS_SW_VERSION && len >= 4) {
+            // 4-byte STATUS form: devState + major + minor + patch
             data->swVersion.devState = _parseUint8(p, 0);
-            data->swVersion.major = _parseUint8(p, 1);
-            data->swVersion.minor = _parseUint8(p, 2);
-            data->swVersion.patch = _parseUint8(p, 3);
+            data->swVersion.major    = _parseUint8(p, 1);
+            data->swVersion.minor    = _parseUint8(p, 2);
+            data->swVersion.patch    = _parseUint8(p, 3);
+            return true;
+        }
+        if (hdr->paramId == M25_PARAM_READ_SW_VERSION && len >= 3) {
+            // 3-byte READ response: major + minor + patch (no devState prefix)
+            data->swVersion.devState = 0;
+            data->swVersion.major    = _parseUint8(p, 0);
+            data->swVersion.minor    = _parseUint8(p, 1);
+            data->swVersion.patch    = _parseUint8(p, 2);
             return true;
         }
     }
@@ -659,7 +677,8 @@ void _printResponse(const char* wheelName, const ResponseHeader* hdr, const Resp
     else {
         // Print parsed data based on response type (gate on DBG_TELEMETRY)
         if (debugFlags & DBG_TELEMETRY) {
-            if (hdr->serviceId == M25_SRV_BATT_MGMT && hdr->paramId == M25_PARAM_STATUS_SOC) {
+            if (hdr->serviceId == M25_SRV_BATT_MGMT &&
+                (hdr->paramId == M25_PARAM_STATUS_SOC || hdr->paramId == M25_PARAM_READ_SOC)) {
                 Serial.printf("[BLE] %s wheel battery: %d%%\n", wheelName, data->soc.batteryPercent);
             }
             else if (hdr->serviceId == M25_SRV_APP_MGMT) {
@@ -683,11 +702,17 @@ void _printResponse(const char* wheelName, const ResponseHeader* hdr, const Resp
                                  wheelName, data->cruiseValues.distanceKm,
                                  data->cruiseValues.speed, data->cruiseValues.pushCounter);
                 }
+                else if (hdr->paramId == M25_PARAM_READ_CRUISE_VALUES) {
+                    Serial.printf("[BLE] %s wheel odometer: %.3f km\n",
+                                 wheelName, data->cruiseValues.distanceKm);
+                }
             }
-            else if (hdr->serviceId == M25_SRV_VERSION_MGMT && hdr->paramId == M25_PARAM_STATUS_SW_VERSION) {
-                Serial.printf("[BLE] %s wheel firmware: %d.%d.%d (dev state %d)\n",
+            else if (hdr->serviceId == M25_SRV_VERSION_MGMT &&
+                     (hdr->paramId == M25_PARAM_STATUS_SW_VERSION ||
+                      hdr->paramId == M25_PARAM_READ_SW_VERSION)) {
+                Serial.printf("[BLE] %s wheel firmware: %d.%d.%d\n",
                              wheelName, data->swVersion.major, data->swVersion.minor,
-                             data->swVersion.patch, data->swVersion.devState);
+                             data->swVersion.patch);
             }
         }
     }
@@ -701,19 +726,22 @@ void _updateWheelCache(int idx, const ResponseHeader* hdr, const ResponseData* d
     if (!hdr || !data || data->isNack || data->isAck) return;
     WheelConnState_t& w = _wheels[idx];
 
-    if (hdr->serviceId == M25_SRV_BATT_MGMT && hdr->paramId == M25_PARAM_STATUS_SOC) {
+    if (hdr->serviceId == M25_SRV_BATT_MGMT &&
+        (hdr->paramId == M25_PARAM_STATUS_SOC || hdr->paramId == M25_PARAM_READ_SOC)) {
         w.batteryPct   = (int8_t)data->soc.batteryPercent;
         w.batteryValid = true;
     }
     else if (hdr->serviceId == M25_SRV_VERSION_MGMT &&
-             hdr->paramId == M25_PARAM_STATUS_SW_VERSION) {
+             (hdr->paramId == M25_PARAM_STATUS_SW_VERSION ||
+              hdr->paramId == M25_PARAM_READ_SW_VERSION)) {
         w.fwMajor = data->swVersion.major;
         w.fwMinor = data->swVersion.minor;
         w.fwPatch = data->swVersion.patch;
         w.fwValid = true;
     }
     else if (hdr->serviceId == M25_SRV_APP_MGMT &&
-             hdr->paramId == M25_PARAM_CRUISE_VALUES) {
+             (hdr->paramId == M25_PARAM_CRUISE_VALUES ||
+              hdr->paramId == M25_PARAM_READ_CRUISE_VALUES)) {
         w.distanceKm    = data->cruiseValues.distanceKm;
         w.distanceValid = true;
     }
