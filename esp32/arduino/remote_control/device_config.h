@@ -222,6 +222,8 @@ enum SystemState : uint8_t {
 #define DBG_BLE        0x08   // BLE connection events and errors
 #define DBG_BUTTONS    0x10   // button press/release events
 #define DBG_STATE      0x20   // state transitions (already logged, adds detail)
+#define DBG_TELEMETRY  0x40   // BLE telemetry responses (battery, firmware, odometer)
+#define DBG_PROTO      0x80   // raw BLE frames as hex (verbose, lowest-level debug)
 
 // Global debug flags variable (defined in serial_commands.h)
 extern volatile uint8_t debugFlags;
