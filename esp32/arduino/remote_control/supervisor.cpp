@@ -145,6 +145,7 @@ void Supervisor::requestConnect(const char* leftAddr, const char* rightAddr,
 
 void Supervisor::requestDisconnect() {
     if (_state != SUPERVISOR_DISCONNECTED) {
+        _connectionRequested = false;
         _stopRequested = true;
     }
 }
