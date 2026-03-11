@@ -117,6 +117,43 @@ bool _isAck(uint8_t paramId) {
     return paramId == M25_PARAM_ACK;
 }
 
+// Translate BLE/GATT error codes to strings.
+// esp_err_to_name() does not cover GATT status codes (esp_gatt_status_t),
+// so the library logs them as "Unknown ESP_ERR error". This covers the codes
+// we actually encounter.
+static const char* _bleErrStr(int rc) {
+    switch (rc) {
+        case  0:     return "ESP_OK";
+        case -1:     return "ESP_FAIL (stack internal error)";
+        case 0x101:  return "ESP_ERR_NO_MEM";
+        case 0x102:  return "ESP_ERR_INVALID_ARG";
+        case 0x103:  return "ESP_ERR_INVALID_STATE (259) - write during teardown";
+        case 0x104:  return "ESP_ERR_INVALID_SIZE";
+        case 0x105:  return "ESP_ERR_NOT_FOUND";
+        case 0x106:  return "ESP_ERR_NOT_SUPPORTED";
+        case 0x107:  return "ESP_ERR_TIMEOUT";
+        // esp_gatt_status_t (NOT in esp_err_to_name - logged as "Unknown ESP_ERR")
+        case 0x01:   return "ESP_GATT_INVALID_HANDLE";
+        case 0x02:   return "ESP_GATT_READ_NOT_PERMIT";
+        case 0x03:   return "ESP_GATT_WRITE_NOT_PERMIT";
+        case 0x06:   return "ESP_GATT_INVALID_PDU";
+        case 0x08:   return "ESP_GATT_INSUF_AUTHORIZATION";
+        case 0x0A:   return "ESP_GATT_INVALID_OFFSET";
+        case 0x0D:   return "ESP_GATT_INVALID_ATTR_LEN";
+        case 0x13:   return "ESP_GATT_UNKNOWN (19) - no descriptors (benign on first connect)";
+        case 0x85:   return "ESP_GATT_ERROR (133) - not connectable / controller busy";
+        case 0x8D:   return "ESP_GATT_BUSY";
+        case 0x8E:   return "ESP_GATT_ERROR (generic)";
+        case 0x8F:   return "ESP_GATT_CMD_STARTED";
+        case 0x96:   return "ESP_GATT_AUTH_FAIL";
+        default: {
+            static char buf[24];
+            snprintf(buf, sizeof(buf), "0x%X (%d)", rc, rc);
+            return buf;
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Wheel activity filter
 // ---------------------------------------------------------------------------
@@ -352,10 +389,13 @@ bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
         size_t len = _buildAndEncrypt(idx, serviceId, paramId, payload, payloadLen, buf);
         if (len > 0) {
             try {
+                // GATT-level errors (rc=-1, rc=259) are NOT C++ exceptions - the library
+                // logs them as [E][BLERemoteCharacteristic.cpp:639] and returns silently.
                 w.rxChar->writeValue(buf, len, false);
                 ok = true;
             } catch (...) {
-                Serial.printf("[BLE] writeValue() exception on wheel %d\n", idx);
+                Serial.printf("[BLE] writeValue() exception on %s wheel\n",
+                              w.name ? w.name : "?");
                 w.connected     = false;
                 w.protocolReady = false;
             }
@@ -733,6 +773,8 @@ bool _connectWheel(int idx) {
 
     Serial.printf("[BLE] Connecting to BLE address %s...\n", w.mac);
     if (!w.client->connect(BLEAddress(w.mac))) {
+        // Library logs status code above; "Unknown ESP_ERR" means GATT status (not in esp_err_to_name).
+        // status=133 = ESP_GATT_ERROR (not connectable / busy); see _bleErrStr() for others.
         Serial.printf("[BLE] %s wheel: GATT connect FAILED\n", wheelName);
         w.consecutiveFails++;
         return false;
