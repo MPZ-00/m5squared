@@ -27,6 +27,7 @@
 #include "button.h"
 #include "motor_control.h"
 #include "m25_ble.h"
+#include "nvs_config.h"
 #include "serial_commands.h"
 #include "buzzer.h"
 
@@ -289,11 +290,17 @@ void setup() {
     ledSetAssistLevel(assistLevel);
     ledSetHillHold(hillHoldOn);
 
-    static const uint8_t leftKey[] = ENCRYPTION_KEY_LEFT;
-    static const uint8_t rightKey[] = ENCRYPTION_KEY_RIGHT;
+    char    leftMac[18], rightMac[18];
+    uint8_t leftKey[16], rightKey[16];
+    nvsLoadMac(WHEEL_LEFT,  leftMac,  sizeof(leftMac));
+    nvsLoadMac(WHEEL_RIGHT, rightMac, sizeof(rightMac));
+    nvsLoadKey(WHEEL_LEFT,  leftKey);
+    nvsLoadKey(WHEEL_RIGHT, rightKey);
+    Serial.printf("[Boot] Left  wheel: %s\n", leftMac);
+    Serial.printf("[Boot] Right wheel: %s\n", rightMac);
     supervisor.begin();
     supervisor.addStateCallback(onSupervisorStateChange);
-    supervisor.requestConnect(LEFT_WHEEL_MAC, RIGHT_WHEEL_MAC, leftKey, rightKey);
+    supervisor.requestConnect(leftMac, rightMac, leftKey, rightKey);
     
     serialInit(_serialCtx);
 }
@@ -355,15 +362,19 @@ void loop() {
     if (powerPressed && sysState != STATE_BOOT) {
         if (sysState == STATE_OFF) {
             Serial.println("[Power] Turning ON...");
-            static const uint8_t leftKey[] = ENCRYPTION_KEY_LEFT;
-            static const uint8_t rightKey[] = ENCRYPTION_KEY_RIGHT;
+            char    leftMac[18], rightMac[18];
+            uint8_t leftKey[16], rightKey[16];
+            nvsLoadMac(WHEEL_LEFT,  leftMac,  sizeof(leftMac));
+            nvsLoadMac(WHEEL_RIGHT, rightMac, sizeof(rightMac));
+            nvsLoadKey(WHEEL_LEFT,  leftKey);
+            nvsLoadKey(WHEEL_RIGHT, rightKey);
             bleInit("M25-Remote");
             ledSetAssistLevel(assistLevel);
             ledSetHillHold(hillHoldOn);
             #ifdef ENABLE_BATTERY_MONITOR
             ledSetBattery(batteryPct);
             #endif
-            supervisor.requestConnect(LEFT_WHEEL_MAC, RIGHT_WHEEL_MAC, leftKey, rightKey);
+            supervisor.requestConnect(leftMac, rightMac, leftKey, rightKey);
         } else {
             Serial.println("[Power] Turning OFF...");
             enterOff();

@@ -62,6 +62,7 @@
 
 #include <Arduino.h>
 #include "device_config.h"
+#include "nvs_config.h"
 #include "types.h"
 #include "led_control.h"
 #include "joystick.h"
@@ -166,6 +167,9 @@ static void _scPrintHelp() {
     Serial.println(F("  disarm                    Disarm motors (ARMED/DRIVING -> PAIRED)"));
     Serial.println(F("  stop                      Software emergency stop (-> FAILSAFE)"));
     Serial.println(F("  reset                     Clear FAILSAFE state -> reconnect"));
+    Serial.println(F("--- Config (NVS) ---"));
+    Serial.println(F("  config show               Print MACs and keys (NVS vs compiled default)"));
+    Serial.println(F("  config reset              Clear NVS; compiled defaults on next boot"));
     Serial.println(F("--- System ---"));
     Serial.println(F("  power off                 Turn device off (enter deep sleep)"));
     Serial.println(F("  restart                   Restart the ESP32"));
@@ -820,6 +824,11 @@ static void _scDispatch(const char* cmd, const SerialContext &ctx) {
             return;
         }
         bleSetMac(idx, rest);
+        if (nvsSaveMac(idx, rest)) {
+            Serial.println(F("[CMD] setmac: saved to NVS (survives reboot)"));
+        } else {
+            Serial.println(F("[CMD] setmac: WARNING - NVS save failed; change is runtime-only"));
+        }
         return;
     }
 
@@ -839,6 +848,27 @@ static void _scDispatch(const char* cmd, const SerialContext &ctx) {
             return;
         }
         bleSetKey(idx, newKey);
+        if (nvsSaveKey(idx, newKey)) {
+            Serial.println(F("[CMD] setkey: saved to NVS (survives reboot)"));
+        } else {
+            Serial.println(F("[CMD] setkey: WARNING - NVS save failed; change is runtime-only"));
+        }
+        return;
+    }
+
+    // config show / config reset
+    if (strncmp(cmd, "config", 6) == 0) {
+        const char* arg = cmd + 6;
+        while (*arg == ' ') arg++;
+        if (strcmp(arg, "show") == 0 || *arg == '\0') {
+            nvsPrintAll();
+        } else if (strcmp(arg, "reset") == 0) {
+            nvsClearAll();
+            Serial.println(F("[Config] NVS cleared. Compiled defaults active on next boot."));
+            Serial.println(F("[Config] Restart to apply ('restart' command)."));
+        } else {
+            Serial.println(F("[CMD] config: use 'config show' or 'config reset'"));
+        }
         return;
     }
 

@@ -36,9 +36,14 @@
 }
 #endif
 
-// M25 wheel BLE MAC addresses - replace with real values
+// M25 wheel BLE MAC addresses - default values, overridden by load_env.py build
+// flags or by 'setmac' serial command (persisted in NVS).
+#ifndef LEFT_WHEEL_MAC
 #define LEFT_WHEEL_MAC  "28:05:a5:34:d8:9e"
+#endif
+#ifndef RIGHT_WHEEL_MAC
 #define RIGHT_WHEEL_MAC "28:05:a5:35:7b:9a"
+#endif
 
 // ---------------------------------------------------------------------------
 // Wheel operating mode
