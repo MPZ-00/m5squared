@@ -11,6 +11,10 @@
 #include <freertos/task.h>
 #include <freertos/semphr.h>
 #include <esp_err.h>
+#include <esp_bt_defs.h>
+#include <esp_spp_api.h>
+#include <esp_bt.h>
+#include <esp_bt_main.h>
 
 // ---------------------------------------------------------------------------
 // Internal static storage (single instance across translation units)
@@ -130,6 +134,7 @@ static M25DisconnectCallback _callbacks[WHEEL_COUNT];
 #if M25_TRANSPORT_RFCOMM
 static bool _rfcommInitDone = false;
 static volatile bool _rfcommReady = false;
+static volatile int _rfcommPendingIdx = -1;
 static volatile bool _rfcommOpenEvt[WHEEL_COUNT] = { false, false };
 static volatile bool _rfcommCloseEvt[WHEEL_COUNT] = { false, false };
 static volatile int  _rfcommOpenStatus[WHEEL_COUNT] = { -1, -1 };
@@ -262,6 +267,14 @@ static int _findWheelByBda(const uint8_t* bda) {
     return -1;
 }
 
+static int _findWheelByHandle(uint32_t handle) {
+    if (handle == 0) return -1;
+    for (int i = 0; i < WHEEL_COUNT; i++) {
+        if (_wheels[i].sppHandle == handle) return i;
+    }
+    return -1;
+}
+
 static bool _parseMacToBda(const char* mac, esp_bd_addr_t out) {
     if (!mac || !out) return false;
     unsigned v[6];
@@ -347,12 +360,16 @@ static void _rfcommSppCb(esp_spp_cb_event_t event, esp_spp_cb_param_t* param) {
             }
             break;
         case ESP_SPP_OPEN_EVT: {
-            int idx = _findWheelByBda(param->open.rem_bda);
+            int idx = _rfcommPendingIdx;
+            if (idx < 0 || idx >= WHEEL_COUNT) {
+                idx = _findWheelByHandle(param->open.handle);
+            }
             if (idx >= 0) {
                 _wheels[idx].sppHandle = param->open.handle;
                 _wheels[idx].connected = true;
                 _rfcommOpenStatus[idx] = param->open.status;
                 _rfcommOpenEvt[idx] = true;
+                _rfcommPendingIdx = -1;
                 Serial.printf("[RFCOMM] %s wheel link open (status=%d, handle=%u)\n",
                               _wheels[idx].name ? _wheels[idx].name : "?",
                               (int)param->open.status,
@@ -361,7 +378,7 @@ static void _rfcommSppCb(esp_spp_cb_event_t event, esp_spp_cb_param_t* param) {
             break;
         }
         case ESP_SPP_CLOSE_EVT: {
-            int idx = _findWheelByBda(param->close.rem_bda);
+            int idx = _findWheelByHandle(param->close.handle);
             if (idx >= 0) {
                 _wheels[idx].connected = false;
                 _wheels[idx].protocolReady = false;
@@ -375,7 +392,7 @@ static void _rfcommSppCb(esp_spp_cb_event_t event, esp_spp_cb_param_t* param) {
             break;
         }
         case ESP_SPP_DATA_IND_EVT: {
-            int idx = _findWheelByBda(param->data_ind.rem_bda);
+            int idx = _findWheelByHandle(param->data_ind.handle);
             if (idx < 0) break;
             size_t copy = param->data_ind.len;
             if (copy > 0 && param->data_ind.data) {
@@ -1148,6 +1165,7 @@ bool _connectWheel(int idx) {
     _rfcommOpenEvt[idx] = false;
     _rfcommCloseEvt[idx] = false;
     _rfcommOpenStatus[idx] = -1;
+    _rfcommPendingIdx = idx;
     _rfRxLen[idx] = 0;
     w.sppHandle = 0;
 
@@ -1426,7 +1444,7 @@ void bleInit(const char* deviceName) {
         if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
             Serial.printf("[RFCOMM] bluedroid enable failed: %s\n", esp_err_to_name(rc));
         }
-        rc = esp_bt_dev_set_device_name(deviceName);
+        rc = esp_bt_gap_set_device_name(deviceName);
         if (rc != ESP_OK) {
             Serial.printf("[RFCOMM] set device name failed: %s\n", esp_err_to_name(rc));
         }

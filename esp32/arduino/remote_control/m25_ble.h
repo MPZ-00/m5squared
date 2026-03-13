@@ -27,6 +27,7 @@
 #define M25_BLE_H
 
 #include <Arduino.h>
+#include "device_config.h"
 #if M25_TRANSPORT_BLE
 #include <BLEDevice.h>
 #include <BLEClient.h>
@@ -42,7 +43,6 @@
 #include <mbedtls/aes.h>
 #include <esp_system.h>     // esp_fill_random()
 #include <stddef.h>         // offsetof()
-#include "device_config.h"
 
 // External debug flags (defined in serial_commands.h)
 extern volatile uint8_t debugFlags;
