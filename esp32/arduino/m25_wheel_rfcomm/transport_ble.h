@@ -69,14 +69,22 @@ class _BleServerCB : public BLEServerCallbacks {
 // ---------------------------------------------------------------------------
 class _BleRxCB : public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic* ch) override {
-        size_t len = ch->getValue().length();
+        String value = ch->getValue();
+        size_t len = value.length();
         if (len == 0 || len > 128) return;
 
         _BleRxPacket pkt;
-        memcpy(pkt.data, ch->getData(), len);
+        memcpy(pkt.data, value.c_str(), len);
         pkt.len = len;
 
-        if (_bleRxQueue) xQueueSend(_bleRxQueue, &pkt, 0);
+        if (_bleRxQueue) {
+            // High-rate control stream: keep newest packet even under pressure.
+            if (xQueueSend(_bleRxQueue, &pkt, 0) != pdTRUE) {
+                _BleRxPacket drop;
+                xQueueReceive(_bleRxQueue, &drop, 0);   // Drop oldest
+                xQueueSend(_bleRxQueue, &pkt, 0);       // Retry newest
+            }
+        }
     }
 };
 
@@ -108,7 +116,8 @@ inline bool ble_init(const char* name,
 
     // RX characteristic: client -> wheel (write)
     _bleRxChar = svc->createCharacteristic(rxUUID,
-                    BLECharacteristic::PROPERTY_WRITE);
+                    BLECharacteristic::PROPERTY_WRITE |
+                    BLECharacteristic::PROPERTY_WRITE_NR);
     _bleRxChar->setCallbacks(new _BleRxCB());
 
     svc->start();
