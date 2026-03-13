@@ -24,9 +24,16 @@ Import("env")  # type: ignore # noqa: F821  (PlatformIO injects this)
 # -----------------------------------------------------------------------
 # Locate .env (prefer local project config over repo-wide fallback)
 # -----------------------------------------------------------------------
-_script_dir = pathlib.Path(__file__).resolve().parent
+try:
+    _script_dir = pathlib.Path(__file__).resolve().parent
+except NameError:
+    # Some script runners do not define __file__. Fall back to CWD.
+    _script_dir = pathlib.Path.cwd()
 _local_env_path    = _script_dir / ".env"
-_repo_env_path     = _script_dir.parents[2] / ".env"
+_repo_root         = _script_dir
+if len(_script_dir.parents) >= 3:
+    _repo_root = _script_dir.parents[2]
+_repo_env_path     = _repo_root / ".env"
 
 if _local_env_path.exists():
     _env_path = _local_env_path
@@ -37,7 +44,6 @@ else:
         "[load_env] No .env found (checked local and repo-root) -- using compiled defaults"
     )
     Return()  # type: ignore # noqa: F821
-    quit()
 
 print(f"[load_env] Using .env: {_env_path}")
 
