@@ -21,6 +21,12 @@ The ESP32 Arduino Core is compiled with:
 
 We need to increase `CONFIG_GATTC_MAX_CONNECTIONS` to **2** for dual wheel support.
 
+## Current Transport Note
+
+This project now runs primarily over **Bluetooth Classic RFCOMM/SPP** for real wheels.
+The BLE stack limits above are still relevant when using BLE mode, but most field
+bring-up failures are now caused by **MAC/key profile mismatches** rather than link setup.
+
 ---
 
 ## Solution Options
@@ -145,6 +151,31 @@ NimBLE is an alternative BLE stack that's more memory-efficient but requires mor
 
 ## Troubleshooting
 
+**Q: RFCOMM link opens, but encryption validation fails (`Invalid PKCS7 padding`)**
+
+If logs look like this:
+```
+[RFCOMM] Left wheel link open (status=0, handle=...)
+[BLE-DEC] Invalid PKCS7 padding: ...
+[BLE] Left wheel: No response to SYSTEM_MODE (encryption validation failed)
+```
+
+then transport is working and the active AES key is wrong for that wheel.
+
+Do this in serial console:
+1. `config show`  (inspect active MACs and keys)
+2. `config profile env`  (apply build-time `.env` profile if available)
+3. `reconnect` (or `restart`)
+
+If env profile is unavailable, set keys directly:
+1. `setkey left <32-hex>`
+2. `setkey right <32-hex>`
+3. `reconnect`
+
+Notes:
+- `nvs_get_* NOT_FOUND` at first boot is expected when NVS is empty.
+- Expected success indicator: `First response received ... - encryption validated`.
+
 **Q: After editing sdkconfig, wheels still disconnect**
 - Ensure you did a **clean build** (delete build folder)
 - Verify correct sdkconfig file (match ESP32 core version)
@@ -156,9 +187,15 @@ NimBLE is an alternative BLE stack that's more memory-efficient but requires mor
 - Path includes version number, e.g., `.../esp32/2.0.11/tools/sdk/sdkconfig`
 
 **Q: PlatformIO build fails**
-- Ensure `platform = espressif32` is correct
-- Try `platform = espressif32@6.4.0` (specific version)
+- Ensure the required custom platform URL is present in `platformio.ini`:
+   `https://github.com/pioarduino/platform-espressif32/releases/download/55.03.37/platform-espressif32.zip`
+- Do not switch to plain `espressif32` for this project.
 - Check `pio lib install` ran successfully
+
+**Q: `config profile env` says env profile unavailable**
+- Ensure all four values are present in `.env`: `M25_LEFT_KEY`, `M25_RIGHT_KEY`, `M25_LEFT_MAC`, `M25_RIGHT_MAC`.
+- Rebuild and upload so `load_env.py` can inject `ENV_*` build flags.
+- Run `config show` again and verify profile availability.
 
 ---
 
