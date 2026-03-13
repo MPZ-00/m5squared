@@ -77,7 +77,7 @@
 // =============================================================================
 
 // Speed command watchdog: auto-stop if no REMOTE_SPEED received within this period
-#define CMD_TIMEOUT_MS          500
+#define CMD_TIMEOUT_MS          1200
 
 // Battery simulation intervals (milliseconds)
 #define BATTERY_DRAIN_ACTIVE_MS 15000   // Drain faster while moving
