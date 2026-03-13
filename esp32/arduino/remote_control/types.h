@@ -157,7 +157,7 @@ struct MapperConfig {
     int     maxSpeedSlow;       // Max speed in SLOW mode (0-100)
     int     maxSpeedNormal;     // Max speed in NORMAL mode (0-100)
     int     maxSpeedFast;       // Max speed in FAST mode (0-100)
-    float   rampRate;           // Max speed change per second (units/sec)
+    float   rampRate;           // Max speed change per second (units/sec), <=0 disables ramp
     
     // Default constructor with safe defaults
     MapperConfig()
@@ -168,7 +168,9 @@ struct MapperConfig {
         , maxSpeedSlow(30)
         , maxSpeedNormal(60)
         , maxSpeedFast(100)
-        , rampRate(50.0f)
+        // Disable slew limiting by default. At high input update rates it can make
+        // commands appear latched around the first non-zero value.
+        , rampRate(0.0f)
     {}
     
     // Get max speed for a given drive mode

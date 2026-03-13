@@ -52,7 +52,7 @@ bool Mapper::map(const ControlState &state, CommandFrame &outCommand)
     right = clamp(right, -maxSpeed, maxSpeed);
 
     // Apply ramping if we have previous command
-    if (_hasLastCommand && _lastTime > 0)
+    if (_config.rampRate > 0.0f && _hasLastCommand && _lastTime > 0)
     {
         float dt = (currentTime - _lastTime) / 1000.0f; // Convert to seconds
         if (dt > 0.0f && dt < 1.0f)
