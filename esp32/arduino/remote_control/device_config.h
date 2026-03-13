@@ -66,6 +66,23 @@
 #endif
 
 // ---------------------------------------------------------------------------
+// Transport selection
+// Exactly one transport must be enabled.
+// RFCOMM (Bluetooth Classic SPP, channel 6 on real wheels) is preferred here.
+// ---------------------------------------------------------------------------
+#ifndef M25_TRANSPORT_RFCOMM
+#define M25_TRANSPORT_RFCOMM 1
+#endif
+
+#ifndef M25_TRANSPORT_BLE
+#define M25_TRANSPORT_BLE 0
+#endif
+
+#if (M25_TRANSPORT_RFCOMM + M25_TRANSPORT_BLE) != 1
+#error "Enable exactly one transport: M25_TRANSPORT_RFCOMM or M25_TRANSPORT_BLE"
+#endif
+
+// ---------------------------------------------------------------------------
 // Analog Inputs - ADC1 only (safe while Bluetooth is active)
 // ---------------------------------------------------------------------------
 // Joystick:  standard KY-023 or similar 10k potentiometer module

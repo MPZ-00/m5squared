@@ -27,8 +27,18 @@
 #define M25_BLE_H
 
 #include <Arduino.h>
+#if M25_TRANSPORT_BLE
 #include <BLEDevice.h>
 #include <BLEClient.h>
+#endif
+#if M25_TRANSPORT_RFCOMM
+#include <esp_bt.h>
+#include <esp_bt_device.h>
+#include <esp_bt_defs.h>
+#include <esp_bt_main.h>
+#include <esp_gap_bt_api.h>
+#include <esp_spp_api.h>
+#endif
 #include <mbedtls/aes.h>
 #include <esp_system.h>     // esp_fill_random()
 #include <stddef.h>         // offsetof()
@@ -133,6 +143,8 @@ static const uint8_t M25_ASSIST_LEVEL_MAP[ASSIST_COUNT] = { 0, 1, 2 };
 // GATT service discovery can lag after link-level connect on some wheels.
 #define BLE_SERVICE_DISCOVERY_RETRIES 4
 #define BLE_SERVICE_DISCOVERY_DELAY_MS 500
+#define RFCOMM_CHANNEL 6
+#define RFCOMM_CONNECT_TIMEOUT_MS 7000
 // Stale-notify threshold: if a connected wheel sends no notify within this window
 // while DRIVING, the GATT write path is declared dead and failsafe is triggered.
 // Must be > 50 ms (motor write period) with enough headroom for ACK round-trips.
@@ -266,10 +278,16 @@ struct WheelConnState_t {
     bool                         protocolReady;      // SYSTEM_MODE + DRIVE_MODE acked
     uint8_t                      telegramId;         // SPP sequence counter
     uint8_t                      driveModeBits;      // current DRIVE_MODE byte
+#if M25_TRANSPORT_BLE
     BLEClient*                   client;
     BLERemoteCharacteristic*     rxChar;             // For writing commands to wheel
     BLERemoteCharacteristic*     txChar;             // For receiving responses from wheel
     bool                         rxWriteWithResponse; // true when RX char requires write-with-response
+#endif
+#if M25_TRANSPORT_RFCOMM
+    esp_bd_addr_t                bda;                // parsed runtime MAC for esp_spp_connect
+    uint32_t                     sppHandle;          // active RFCOMM handle (0 when disconnected)
+#endif
     bool                         receivedFirstAck;
     uint32_t                     lastConnectAttemptMs;
     uint8_t                      consecutiveFails;   // resets on success; auto-reconnect stops at BLE_MAX_RECONNECT_FAILS
@@ -293,12 +311,14 @@ struct WheelConnState_t {
 // ---------------------------------------------------------------------------
 // BLE disconnect callback
 // ---------------------------------------------------------------------------
+#if M25_TRANSPORT_BLE
 class M25DisconnectCallback : public BLEClientCallbacks {
 public:
     uint8_t wheelIdx;
     void onConnect(BLEClient*) override;
     void onDisconnect(BLEClient*) override;
 };
+#endif
 
 // ---------------------------------------------------------------------------
 // Compile-time default keys (copied into mutable _wheels storage by bleInit)
@@ -355,7 +375,9 @@ void _updateWheelCache(int wheelIdx, const ResponseHeader* hdr, const ResponseDa
 void _parseSppPacket(const uint8_t* spp, size_t sppLen, int wheelIdx);
 
 // BLE notification callback
+#if M25_TRANSPORT_BLE
 void _notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size_t length, bool isNotify);
+#endif
 
 // Connection management
 bool _connectWheel(int idx);

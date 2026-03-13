@@ -10,6 +10,7 @@
 #include <freertos/queue.h>
 #include <freertos/task.h>
 #include <freertos/semphr.h>
+#include <esp_err.h>
 
 // ---------------------------------------------------------------------------
 // Internal static storage (single instance across translation units)
@@ -122,8 +123,19 @@ void bleRecordDump() {
 // ---------------------------------------------------------------------------
 // Disconnect callback instances
 // ---------------------------------------------------------------------------
-
+#if M25_TRANSPORT_BLE
 static M25DisconnectCallback _callbacks[WHEEL_COUNT];
+#endif
+
+#if M25_TRANSPORT_RFCOMM
+static bool _rfcommInitDone = false;
+static volatile bool _rfcommReady = false;
+static volatile bool _rfcommOpenEvt[WHEEL_COUNT] = { false, false };
+static volatile bool _rfcommCloseEvt[WHEEL_COUNT] = { false, false };
+static volatile int  _rfcommOpenStatus[WHEEL_COUNT] = { -1, -1 };
+static uint8_t _rfRxBuf[WHEEL_COUNT][256];
+static size_t  _rfRxLen[WHEEL_COUNT] = { 0, 0 };
+#endif
 
 // ---------------------------------------------------------------------------
 // CRC-16 implementation
@@ -240,6 +252,153 @@ static const char* _bleErrStr(int rc) {
         }
     }
 }
+
+#if M25_TRANSPORT_RFCOMM
+static int _findWheelByBda(const uint8_t* bda) {
+    if (!bda) return -1;
+    for (int i = 0; i < WHEEL_COUNT; i++) {
+        if (memcmp(_wheels[i].bda, bda, ESP_BD_ADDR_LEN) == 0) return i;
+    }
+    return -1;
+}
+
+static bool _parseMacToBda(const char* mac, esp_bd_addr_t out) {
+    if (!mac || !out) return false;
+    unsigned v[6];
+    if (sscanf(mac, "%2x:%2x:%2x:%2x:%2x:%2x",
+               &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) != 6) {
+        return false;
+    }
+    for (int i = 0; i < 6; i++) out[i] = (uint8_t)v[i];
+    return true;
+}
+
+static void _rfcommConsumeBuffered(int idx) {
+    if (idx < 0 || idx >= WHEEL_COUNT) return;
+    while (_rfRxLen[idx] >= 5) {
+        size_t start = 0;
+        while (start < _rfRxLen[idx] && _rfRxBuf[idx][start] != M25_HEADER_MARKER) start++;
+        if (start > 0) {
+            memmove(_rfRxBuf[idx], _rfRxBuf[idx] + start, _rfRxLen[idx] - start);
+            _rfRxLen[idx] -= start;
+            if (_rfRxLen[idx] < 5) return;
+        }
+
+        uint8_t unstuffed[128];
+        size_t uPos = 0;
+        size_t sPos = 0;
+        while (sPos < _rfRxLen[idx] && uPos < 3) {
+            unstuffed[uPos++] = _rfRxBuf[idx][sPos++];
+            if (uPos > 1 && unstuffed[uPos - 1] == M25_HEADER_MARKER &&
+                sPos < _rfRxLen[idx] && _rfRxBuf[idx][sPos] == M25_HEADER_MARKER) {
+                sPos++;
+            }
+        }
+        if (uPos < 3) return;
+
+        uint16_t frameField = ((uint16_t)unstuffed[1] << 8) | unstuffed[2];
+        size_t totalU = (size_t)frameField + 1;
+        if (totalU > sizeof(unstuffed)) {
+            memmove(_rfRxBuf[idx], _rfRxBuf[idx] + 1, _rfRxLen[idx] - 1);
+            _rfRxLen[idx]--;
+            continue;
+        }
+
+        while (sPos < _rfRxLen[idx] && uPos < totalU) {
+            unstuffed[uPos++] = _rfRxBuf[idx][sPos++];
+            if (uPos > 1 && unstuffed[uPos - 1] == M25_HEADER_MARKER &&
+                sPos < _rfRxLen[idx] && _rfRxBuf[idx][sPos] == M25_HEADER_MARKER) {
+                sPos++;
+            }
+        }
+        if (uPos < totalU) return;
+
+        _bleRecordFrame(BLE_REC_RX, (uint8_t)idx, _rfRxBuf[idx], sPos);
+        _wheels[idx].lastNotifyMs = millis();
+
+        uint8_t sppPacket[64];
+        size_t sppLen = 0;
+        if (_m25Decrypt(_wheels[idx].key, unstuffed, uPos, sppPacket, &sppLen)) {
+            if (!_wheels[idx].receivedFirstAck) {
+                _wheels[idx].receivedFirstAck = true;
+                Serial.printf("[RFCOMM] %s wheel: First response received (%zu bytes)\n",
+                              _wheels[idx].name ? _wheels[idx].name : "Unknown", sPos);
+            }
+            _parseSppPacket(sppPacket, sppLen, idx);
+        } else if (debugFlags & DBG_BLE) {
+            Serial.printf("[RFCOMM] %s wheel: Decryption failed\n",
+                          _wheels[idx].name ? _wheels[idx].name : "Unknown");
+        }
+
+        memmove(_rfRxBuf[idx], _rfRxBuf[idx] + sPos, _rfRxLen[idx] - sPos);
+        _rfRxLen[idx] -= sPos;
+    }
+}
+
+static void _rfcommSppCb(esp_spp_cb_event_t event, esp_spp_cb_param_t* param) {
+    if (!param) return;
+    switch (event) {
+        case ESP_SPP_INIT_EVT:
+            if (param->init.status == ESP_SPP_SUCCESS) {
+                _rfcommReady = true;
+                Serial.println("[RFCOMM] SPP stack ready");
+            } else {
+                Serial.printf("[RFCOMM] SPP init failed: status=%d\n", (int)param->init.status);
+            }
+            break;
+        case ESP_SPP_OPEN_EVT: {
+            int idx = _findWheelByBda(param->open.rem_bda);
+            if (idx >= 0) {
+                _wheels[idx].sppHandle = param->open.handle;
+                _wheels[idx].connected = true;
+                _rfcommOpenStatus[idx] = param->open.status;
+                _rfcommOpenEvt[idx] = true;
+                Serial.printf("[RFCOMM] %s wheel link open (status=%d, handle=%u)\n",
+                              _wheels[idx].name ? _wheels[idx].name : "?",
+                              (int)param->open.status,
+                              (unsigned)param->open.handle);
+            }
+            break;
+        }
+        case ESP_SPP_CLOSE_EVT: {
+            int idx = _findWheelByBda(param->close.rem_bda);
+            if (idx >= 0) {
+                _wheels[idx].connected = false;
+                _wheels[idx].protocolReady = false;
+                _wheels[idx].driveModeBits = 0;
+                _wheels[idx].sppHandle = 0;
+                _rfRxLen[idx] = 0;
+                _rfcommCloseEvt[idx] = true;
+                Serial.printf("[RFCOMM] %s wheel disconnected\n",
+                              _wheels[idx].name ? _wheels[idx].name : "?");
+            }
+            break;
+        }
+        case ESP_SPP_DATA_IND_EVT: {
+            int idx = _findWheelByBda(param->data_ind.rem_bda);
+            if (idx < 0) break;
+            size_t copy = param->data_ind.len;
+            if (copy > 0 && param->data_ind.data) {
+                if (_rfRxLen[idx] + copy > sizeof(_rfRxBuf[idx])) {
+                    size_t overflow = (_rfRxLen[idx] + copy) - sizeof(_rfRxBuf[idx]);
+                    if (overflow >= _rfRxLen[idx]) {
+                        _rfRxLen[idx] = 0;
+                    } else {
+                        memmove(_rfRxBuf[idx], _rfRxBuf[idx] + overflow, _rfRxLen[idx] - overflow);
+                        _rfRxLen[idx] -= overflow;
+                    }
+                }
+                memcpy(_rfRxBuf[idx] + _rfRxLen[idx], param->data_ind.data, copy);
+                _rfRxLen[idx] += copy;
+                _rfcommConsumeBuffered(idx);
+            }
+            break;
+        }
+        default:
+            break;
+    }
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // Wheel activity filter
@@ -502,10 +661,15 @@ static void _clearTxFailureState(WheelConnState_t& w) {
 bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
                   const uint8_t* payload, uint8_t payloadLen) {
     WheelConnState_t &w = _wheels[idx];
+#if M25_TRANSPORT_BLE
     // Quick pre-checks before taking the mutex to avoid unnecessary contention.
     // Use w.connected flag here (not isConnected()) ─ isConnected() acquires a
     // Bluedroid-internal lock and can block when the stack is in error recovery.
     if (!w.connected || w.rxChar == nullptr) return false;
+#endif
+#if M25_TRANSPORT_RFCOMM
+    if (!w.connected || w.sppHandle == 0) return false;
+#endif
 
     // Serialize all GATT writes across tasks (motor task Core 0, telemetry Core 1).
     if (_bleTxMutex && xSemaphoreTake(_bleTxMutex, pdMS_TO_TICKS(200)) != pdTRUE) {
@@ -518,10 +682,18 @@ bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
     // isConnected() blocks indefinitely, holding our mutex and deadlocking every
     // other caller.  The disconnect callback sets w.connected = false reliably.
     bool ok = false;
-    if (w.connected && w.rxChar) {
+    if (w.connected
+#if M25_TRANSPORT_BLE
+        && w.rxChar
+#endif
+#if M25_TRANSPORT_RFCOMM
+        && w.sppHandle != 0
+#endif
+        ) {
         uint8_t buf[128];
         size_t len = _buildAndEncrypt(idx, serviceId, paramId, payload, payloadLen, buf);
         if (len > 0) {
+#if M25_TRANSPORT_BLE
             try {
                 bool sent = w.rxChar->writeValue(buf, len, w.rxWriteWithResponse);
                 if (!sent) {
@@ -535,6 +707,19 @@ bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
             } catch (...) {
                 ok = _handleTxFailure(idx, serviceId, paramId, "writeValue exception");
             }
+#endif
+#if M25_TRANSPORT_RFCOMM
+            esp_err_t rc = esp_spp_write(w.sppHandle, (int)len, buf);
+            if (rc != ESP_OK) {
+                char msg[64];
+                snprintf(msg, sizeof(msg), "esp_spp_write rc=%s", esp_err_to_name(rc));
+                ok = _handleTxFailure(idx, serviceId, paramId, msg);
+            } else {
+                _clearTxFailureState(w);
+                ok = true;
+                _bleRecordFrame(BLE_REC_TX, (uint8_t)idx, buf, len);
+            }
+#endif
         } else {
             ok = _handleTxFailure(idx, serviceId, paramId, "build/encrypt failed");
         }
@@ -821,6 +1006,7 @@ void _parseSppPacket(const uint8_t* spp, size_t sppLen, int wheelIdx) {
 // BLE notification callback
 // ---------------------------------------------------------------------------
 
+#if M25_TRANSPORT_BLE
 void _notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size_t length, bool isNotify) {
     // Find which wheel this notification is for
     for (int i = 0; i < WHEEL_COUNT; i++) {
@@ -886,11 +1072,13 @@ void _notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size_t leng
         }
     }
 }
+#endif
 
 // ---------------------------------------------------------------------------
 // Disconnect callback implementation
 // ---------------------------------------------------------------------------
 
+#if M25_TRANSPORT_BLE
 void M25DisconnectCallback::onConnect(BLEClient*) {}
 
 void M25DisconnectCallback::onDisconnect(BLEClient*) {
@@ -905,6 +1093,7 @@ void M25DisconnectCallback::onDisconnect(BLEClient*) {
         Serial.printf("[BLE] %s wheel disconnected\n", _wheels[wheelIdx].name);
     }
 }
+#endif
 
 // ---------------------------------------------------------------------------
 // Connection management
@@ -944,6 +1133,65 @@ bool _connectWheel(int idx) {
     const char* wheelName = w.name ? w.name : "Unknown";
     Serial.printf("[BLE] Connecting to %s wheel (%s)...\n", wheelName, w.mac);
 
+#if M25_TRANSPORT_RFCOMM
+    if (strlen(w.mac) != 17 || !_parseMacToBda(w.mac, w.bda)) {
+        Serial.printf("[RFCOMM] %s wheel: Invalid MAC '%s'\n", wheelName, w.mac);
+        w.consecutiveFails++;
+        return false;
+    }
+    if (!_rfcommReady) {
+        Serial.printf("[RFCOMM] %s wheel: SPP stack not ready yet\n", wheelName);
+        w.consecutiveFails++;
+        return false;
+    }
+
+    _rfcommOpenEvt[idx] = false;
+    _rfcommCloseEvt[idx] = false;
+    _rfcommOpenStatus[idx] = -1;
+    _rfRxLen[idx] = 0;
+    w.sppHandle = 0;
+
+    Serial.printf("[RFCOMM] Connecting %s wheel over SPP channel %d...\n",
+                  wheelName, RFCOMM_CHANNEL);
+    esp_err_t rc = esp_spp_connect(ESP_SPP_SEC_NONE,
+                                   ESP_SPP_ROLE_MASTER,
+                                   RFCOMM_CHANNEL,
+                                   w.bda);
+    if (rc != ESP_OK) {
+        Serial.printf("[RFCOMM] %s wheel: esp_spp_connect failed: %s\n",
+                      wheelName, esp_err_to_name(rc));
+        w.consecutiveFails++;
+        return false;
+    }
+
+    const uint32_t startMs = millis();
+    while (!_rfcommOpenEvt[idx] && (millis() - startMs) < RFCOMM_CONNECT_TIMEOUT_MS) {
+        extern void ledTick();
+        extern void buzzerTick();
+        ledTick();
+        buzzerTick();
+        delay(10);
+    }
+    if (!_rfcommOpenEvt[idx] || _rfcommOpenStatus[idx] != ESP_SPP_SUCCESS || w.sppHandle == 0) {
+        Serial.printf("[RFCOMM] %s wheel: open timeout/status=%d handle=%u\n",
+                      wheelName,
+                      _rfcommOpenStatus[idx],
+                      (unsigned)w.sppHandle);
+        if (w.sppHandle != 0) {
+            esp_spp_disconnect(w.sppHandle);
+            w.sppHandle = 0;
+        }
+        w.connected = false;
+        w.consecutiveFails++;
+        return false;
+    }
+
+    w.connected = true;
+    w.txFailStreak = 0;
+    w.lastTxFailMs = 0;
+#endif
+
+#if M25_TRANSPORT_BLE
     if (w.client == nullptr) {
         w.client = BLEDevice::createClient();
         if (w.client == nullptr) {
@@ -1053,6 +1301,7 @@ bool _connectWheel(int idx) {
     w.connected = true;
     w.txFailStreak = 0;
     w.lastTxFailMs = 0;
+#endif
 
     // Delay to ensure BLE GATT is fully established and wheel is ready to respond
     // Increased from 50ms to 200ms to improve first-connection reliability
@@ -1075,7 +1324,13 @@ bool _connectWheel(int idx) {
     
     if (!w.receivedFirstAck) {
         Serial.printf("[BLE] %s wheel: No response to SYSTEM_MODE (encryption validation failed)\n", wheelName);
+#if M25_TRANSPORT_BLE
         w.client->disconnect();
+#endif
+#if M25_TRANSPORT_RFCOMM
+        if (w.sppHandle) esp_spp_disconnect(w.sppHandle);
+        w.sppHandle = 0;
+#endif
         w.consecutiveFails++;
         w.connected = false;
         return false;
@@ -1133,14 +1388,67 @@ void bleInit(const char* deviceName) {
     // Verify initialization
     if (debugFlags & DBG_BLE) {
         for (int i = 0; i < WHEEL_COUNT; i++) {
-            Serial.printf("[BLE] _wheels[%d]: name=%s, mac=%s, client=%p\n",
+            Serial.printf("[BLE] _wheels[%d]: name=%s, mac=%s",
                           i, _wheels[i].name ? _wheels[i].name : "NULL",
-                          _wheels[i].mac, (void*)_wheels[i].client);
+                          _wheels[i].mac);
+#if M25_TRANSPORT_BLE
+            Serial.printf(", client=%p", (void*)_wheels[i].client);
+#endif
+            Serial.println();
         }
     }
-
+#if M25_TRANSPORT_BLE
     BLEDevice::init(deviceName);
     Serial.println("[BLE] Device initialized");
+#endif
+#if M25_TRANSPORT_RFCOMM
+    if (!_rfcommInitDone) {
+        _rfcommReady = false;
+        esp_err_t rc = esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
+        if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
+            Serial.printf("[RFCOMM] controller_mem_release(BLE) rc=%s\n", esp_err_to_name(rc));
+        }
+
+        esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+        rc = esp_bt_controller_init(&bt_cfg);
+        if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
+            Serial.printf("[RFCOMM] controller init failed: %s\n", esp_err_to_name(rc));
+        }
+        rc = esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT);
+        if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
+            Serial.printf("[RFCOMM] controller enable failed: %s\n", esp_err_to_name(rc));
+        }
+        rc = esp_bluedroid_init();
+        if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
+            Serial.printf("[RFCOMM] bluedroid init failed: %s\n", esp_err_to_name(rc));
+        }
+        rc = esp_bluedroid_enable();
+        if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
+            Serial.printf("[RFCOMM] bluedroid enable failed: %s\n", esp_err_to_name(rc));
+        }
+        rc = esp_bt_dev_set_device_name(deviceName);
+        if (rc != ESP_OK) {
+            Serial.printf("[RFCOMM] set device name failed: %s\n", esp_err_to_name(rc));
+        }
+        rc = esp_spp_register_callback(_rfcommSppCb);
+        if (rc != ESP_OK) {
+            Serial.printf("[RFCOMM] spp callback register failed: %s\n", esp_err_to_name(rc));
+        }
+        rc = esp_spp_init(ESP_SPP_MODE_CB);
+        if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
+            Serial.printf("[RFCOMM] spp init failed: %s\n", esp_err_to_name(rc));
+        }
+        uint32_t sppWaitStart = millis();
+        while (!_rfcommReady && (millis() - sppWaitStart) < 3000) {
+            delay(10);
+        }
+        if (!_rfcommReady) {
+            Serial.println("[RFCOMM] WARNING: SPP init event timeout");
+        }
+        _rfcommInitDone = true;
+    }
+    Serial.println("[RFCOMM] SPP client initialized");
+#endif
     Serial.printf("[BLE] Wheel mode: %s\n", WHEEL_MODE_NAME);
     
     // Allow the ESP32 BLE GATT client stack to fully initialize before any
@@ -1171,7 +1479,9 @@ void bleInit(const char* deviceName) {
     }
 
     for (int i = 0; i < WHEEL_COUNT; i++) {
+#if M25_TRANSPORT_BLE
         _callbacks[i].wheelIdx = (uint8_t)i;
+#endif
     }
 }
 
@@ -1187,8 +1497,19 @@ void bleResetWheel(int idx) {
     // Nulling w.client would force BLEDevice::createClient() on every retry,
     // which leaks GATT client slots from the ESP32 BLE stack and eventually
     // corrupts its internal state, causing persistent encryption failures.
-    if (w.client && w.client->isConnected()) {
+    if (
+#if M25_TRANSPORT_BLE
+        w.client && w.client->isConnected()
+#else
+        w.sppHandle != 0
+#endif
+    ) {
+#if M25_TRANSPORT_BLE
         w.client->disconnect();
+#endif
+#if M25_TRANSPORT_RFCOMM
+        esp_spp_disconnect(w.sppHandle);
+#endif
     }
 
     // Clear all protocol state; preserve mac, name, key, and client object
@@ -1196,9 +1517,15 @@ void bleResetWheel(int idx) {
     w.protocolReady    = false;
     w.telegramId       = M25_TELEGRAM_ID_START;
     w.driveModeBits    = 0;
+#if M25_TRANSPORT_BLE
     w.rxChar               = nullptr;
     w.txChar               = nullptr;
     w.rxWriteWithResponse  = false;
+#endif
+#if M25_TRANSPORT_RFCOMM
+    w.sppHandle            = 0;
+    _rfRxLen[idx]          = 0;
+#endif
     w.receivedFirstAck     = false;
     w.consecutiveFails = 0;
     w.lastNotifyMs     = 0;
@@ -1217,7 +1544,18 @@ void bleFullReset() {
     for (int i = 0; i < WHEEL_COUNT; i++) bleResetWheel(i);
     // Let Bluedroid finish teardown before deinit
     delay(200);
+#if M25_TRANSPORT_BLE
     BLEDevice::deinit(true);
+#endif
+#if M25_TRANSPORT_RFCOMM
+    esp_spp_deinit();
+    esp_bluedroid_disable();
+    esp_bluedroid_deinit();
+    esp_bt_controller_disable();
+    esp_bt_controller_deinit();
+    _rfcommInitDone = false;
+    _rfcommReady = false;
+#endif
     delay(500);
     // Reinit restores compile-time MAC/key defaults from device_config.h.
     // Runtime bleSetMac/bleSetKey overrides are NOT preserved across a full reset.
@@ -1254,7 +1592,7 @@ void bleDisconnect() {
     for (int i = 0; i < WHEEL_COUNT; i++) {
         if (!_wheelActive(i)) continue;
         WheelConnState_t &w = _wheels[i];
-        if (w.connected && w.rxChar) {
+        if (w.connected) {
             // Step 3: WRITE_REMOTE_SPEED = 0  (stop)
             uint8_t spd[2] = { 0, 0 };
             _sendCommand(i, M25_SRV_APP_MGMT, M25_PARAM_WRITE_REMOTE_SPEED, spd, 2);
@@ -1273,7 +1611,13 @@ void bleDisconnect() {
             uint8_t norm = M25_DRIVE_MODE_NORMAL;
             _sendCommand(i, M25_SRV_APP_MGMT, M25_PARAM_WRITE_DRIVE_MODE, &norm, 1);
         }
+        #if M25_TRANSPORT_BLE
         if (w.client && w.client->isConnected()) w.client->disconnect();
+        #endif
+        #if M25_TRANSPORT_RFCOMM
+            if (w.sppHandle) esp_spp_disconnect(w.sppHandle);
+            w.sppHandle = 0;
+        #endif
         w.connected     = false;
         w.protocolReady = false;
         w.driveModeBits = 0;
@@ -1284,8 +1628,13 @@ void bleDisconnect() {
 
 bool bleIsConnected(int wheelIdx) {
     WheelConnState_t &w = _wheels[wheelIdx];
+#if M25_TRANSPORT_BLE
     return w.connected && w.protocolReady
         && w.client != nullptr && w.client->isConnected();
+#endif
+#if M25_TRANSPORT_RFCOMM
+    return w.connected && w.protocolReady && w.sppHandle != 0;
+#endif
 }
 
 bool bleAllConnected() {
@@ -1547,6 +1896,7 @@ void bleSetMac(int idx, const char* mac) {
     }
     
     // Safely check and disconnect existing client
+#if M25_TRANSPORT_BLE
     if (debugFlags & DBG_BLE) {
         Serial.printf("[BLE] Checking client pointer: %p\n", (void*)w.client);
     }
@@ -1561,6 +1911,14 @@ void bleSetMac(int idx, const char* mac) {
             w.client->disconnect();
         }
     }
+#endif
+#if M25_TRANSPORT_RFCOMM
+    if (w.sppHandle) {
+        if (debugFlags & DBG_BLE) Serial.println("[RFCOMM] Disconnecting existing SPP handle...");
+        esp_spp_disconnect(w.sppHandle);
+        w.sppHandle = 0;
+    }
+#endif
     if (debugFlags & DBG_BLE) {
         Serial.println("[BLE] Updating wheel state...");
     }
