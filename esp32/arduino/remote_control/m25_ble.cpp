@@ -12,7 +12,14 @@
 #include <freertos/semphr.h>
 #include <esp_err.h>
 #include <esp_bt_defs.h>
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
 #include <esp_spp_api.h>
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 #include <esp_bt.h>
 #include <esp_bt_main.h>
 
