@@ -11,10 +11,11 @@ Priority order:
 
 Mapping:
   .env key          -> C preprocessor define
-  M25_LEFT_KEY      -> ENCRYPTION_KEY_LEFT   (byte-array initializer)
-  M25_RIGHT_KEY     -> ENCRYPTION_KEY_RIGHT  (byte-array initializer)
-  M25_LEFT_MAC      -> LEFT_WHEEL_MAC        (string literal)
-  M25_RIGHT_MAC     -> RIGHT_WHEEL_MAC       (string literal)
+  M25_LEFT_KEY      -> ENV_ENCRYPTION_KEY_LEFT   (byte-array initializer)
+  M25_RIGHT_KEY     -> ENV_ENCRYPTION_KEY_RIGHT  (byte-array initializer)
+  M25_LEFT_MAC      -> ENV_LEFT_WHEEL_MAC        (string literal)
+  M25_RIGHT_MAC     -> ENV_RIGHT_WHEEL_MAC       (string literal)
+  (all four present)-> ENV_PROFILE_AVAILABLE=1
 """
 
 import pathlib
@@ -71,27 +72,36 @@ def _hex_to_c_bytes(hex_str):
 flags = []
 loaded = []
 
-# Keys (byte-array initializers wrapped in braces)
-for env_key, define in (("M25_LEFT_KEY",  "ENCRYPTION_KEY_LEFT"),
-                         ("M25_RIGHT_KEY", "ENCRYPTION_KEY_RIGHT")):
-    if env_key in cfg and cfg[env_key]:
-        try:
-            byte_str = _hex_to_c_bytes(cfg[env_key])
-            flags.append(f"-D{define}={{{byte_str}}}")
-            loaded.append(define)
-        except ValueError as e:
-            print(f"[load_env] WARNING: {env_key} invalid -- {e}")
+# Build optional env profile only when all required values are present.
+required = ("M25_LEFT_KEY", "M25_RIGHT_KEY", "M25_LEFT_MAC", "M25_RIGHT_MAC")
+missing = [k for k in required if not cfg.get(k)]
 
-# MACs (string literals)
-for env_key, define in (("M25_LEFT_MAC",  "LEFT_WHEEL_MAC"),
-                         ("M25_RIGHT_MAC", "RIGHT_WHEEL_MAC")):
-    if env_key in cfg and cfg[env_key]:
-        mac = cfg[env_key]
-        flags.append(f'-D{define}=\\"{mac}\\"')
-        loaded.append(define)
+if missing:
+    print("[load_env] env profile disabled: incomplete M25_* values in .env")
+    print("[load_env] Using build defaults (default profile) unless overridden by NVS")
+else:
+    try:
+        left_key = _hex_to_c_bytes(cfg["M25_LEFT_KEY"])
+        right_key = _hex_to_c_bytes(cfg["M25_RIGHT_KEY"])
+    except ValueError as e:
+        print(f"[load_env] env profile disabled: invalid key format -- {e}")
+        print("[load_env] Using build defaults (default profile) unless overridden by NVS")
+    else:
+        flags.extend([
+            f"-DENV_ENCRYPTION_KEY_LEFT={{{left_key}}}",
+            f"-DENV_ENCRYPTION_KEY_RIGHT={{{right_key}}}",
+            f'-DENV_LEFT_WHEEL_MAC=\\"{cfg["M25_LEFT_MAC"]}\\"',
+            f'-DENV_RIGHT_WHEEL_MAC=\\"{cfg["M25_RIGHT_MAC"]}\\"',
+            "-DENV_PROFILE_AVAILABLE=1",
+        ])
+        loaded.extend([
+            "ENV_ENCRYPTION_KEY_LEFT",
+            "ENV_ENCRYPTION_KEY_RIGHT",
+            "ENV_LEFT_WHEEL_MAC",
+            "ENV_RIGHT_WHEEL_MAC",
+            "ENV_PROFILE_AVAILABLE",
+        ])
 
 if flags:
     env.Append(BUILD_FLAGS=flags)  # type: ignore # noqa: F821
     print(f"[load_env] Injected from .env: {', '.join(loaded)}")
-else:
-    print("[load_env] No M25 keys/MACs found in .env -- using compiled defaults")

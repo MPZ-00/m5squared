@@ -132,6 +132,18 @@ static const char* const _stateNames[] = {
     "BOOT", "CONNECTING", "READY", "OPERATING", "ERROR", "OFF"
 };
 
+static const bool _scProfileEnvAvailable = (ENV_PROFILE_AVAILABLE != 0);
+static const char _scProfileEnvLeftMac[]  = ENV_LEFT_WHEEL_MAC;
+static const char _scProfileEnvRightMac[] = ENV_RIGHT_WHEEL_MAC;
+static const uint8_t _scProfileEnvLeftKey[16]  = ENV_ENCRYPTION_KEY_LEFT;
+static const uint8_t _scProfileEnvRightKey[16] = ENV_ENCRYPTION_KEY_RIGHT;
+
+// Default profile: the build-time values from device_config.h (unchanged by load_env.py)
+static const char _scProfileDefaultLeftMac[]  = LEFT_WHEEL_MAC;
+static const char _scProfileDefaultRightMac[] = RIGHT_WHEEL_MAC;
+static const uint8_t _scProfileDefaultLeftKey[16]  = ENCRYPTION_KEY_LEFT;
+static const uint8_t _scProfileDefaultRightKey[16] = ENCRYPTION_KEY_RIGHT;
+
 // ---------------------------------------------------------------------------
 // Internal print helpers
 // ---------------------------------------------------------------------------
@@ -168,8 +180,10 @@ static void _scPrintHelp() {
     Serial.println(F("  stop                      Software emergency stop (-> FAILSAFE)"));
     Serial.println(F("  reset                     Clear FAILSAFE state -> reconnect"));
     Serial.println(F("--- Config (NVS) ---"));
-    Serial.println(F("  config show               Print MACs and keys (NVS vs compiled default)"));
-    Serial.println(F("  config reset              Clear NVS; compiled defaults on next boot"));
+    Serial.println(F("  config show               Print MACs and keys (NVS vs build default)"));
+    Serial.println(F("  config reset              Clear NVS; build defaults on next boot"));
+    Serial.println(F("  config profile <env|default> Persist+apply profile now, then reconnect"));
+    Serial.println(F("                               env requires build-time .env values"));
     Serial.println(F("--- System ---"));
     Serial.println(F("  power off                 Turn device off (enter deep sleep)"));
     Serial.println(F("  restart                   Restart the ESP32"));
@@ -420,6 +434,19 @@ static bool _scParseHex16(const char* hex, uint8_t* out) {
         out[i] = (uint8_t)((h << 4) | l);
     }
     return true;
+}
+
+static void _scApplyProfile(const char* lmac, const char* rmac,
+                            const uint8_t* lkey, const uint8_t* rkey,
+                            const SerialContext &ctx) {
+    bleSetMac(WHEEL_LEFT, lmac);
+    bleSetMac(WHEEL_RIGHT, rmac);
+    bleSetKey(WHEEL_LEFT, lkey);
+    bleSetKey(WHEEL_RIGHT, rkey);
+
+    if (ctx.supervisor) {
+        ctx.supervisor->requestReconnect();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -856,18 +883,66 @@ static void _scDispatch(const char* cmd, const SerialContext &ctx) {
         return;
     }
 
-    // config show / config reset
+    // config show / config reset / config profile <env|default>
     if (strncmp(cmd, "config", 6) == 0) {
         const char* arg = cmd + 6;
         while (*arg == ' ') arg++;
         if (strcmp(arg, "show") == 0 || *arg == '\0') {
             nvsPrintAll();
+            Serial.printf("[Config] Profile availability: env=%s, default=YES\n",
+                          _scProfileEnvAvailable ? "YES" : "no");
+        } else if (strncmp(arg, "profile ", 8) == 0) {
+            const char* profile = arg + 8;
+            while (*profile == ' ') profile++;
+
+            if (*ctx.state == STATE_OPERATING) {
+                Serial.println(F("[Config] profile: stop motors first"));
+                return;
+            }
+
+            if (strcmp(profile, "env") == 0) {
+                if (!_scProfileEnvAvailable) {
+                    Serial.println(F("[Config] Profile 'env' is not available in this build."));
+                    Serial.println(F("[Config] Provide M25_* values in .env and rebuild."));
+                    return;
+                }
+
+                bool ok = true;
+                ok &= nvsSaveMac(WHEEL_LEFT, _scProfileEnvLeftMac);
+                ok &= nvsSaveMac(WHEEL_RIGHT, _scProfileEnvRightMac);
+                ok &= nvsSaveKey(WHEEL_LEFT, _scProfileEnvLeftKey);
+                ok &= nvsSaveKey(WHEEL_RIGHT, _scProfileEnvRightKey);
+
+                _scApplyProfile(
+                    _scProfileEnvLeftMac, _scProfileEnvRightMac,
+                    _scProfileEnvLeftKey, _scProfileEnvRightKey,
+                    ctx
+                );
+
+                if (ok) {
+                    Serial.println(F("[Config] Profile 'env': saved to NVS and applied."));
+                } else {
+                    Serial.println(F("[Config] Profile 'env': applied, but NVS save failed (runtime-only)."));
+                }
+                Serial.println(F("[Config] Reconnect requested."));
+            } else if (strcmp(profile, "default") == 0) {
+                nvsClearAll();
+                _scApplyProfile(
+                    _scProfileDefaultLeftMac, _scProfileDefaultRightMac,
+                    _scProfileDefaultLeftKey, _scProfileDefaultRightKey,
+                    ctx
+                );
+                Serial.println(F("[Config] Profile 'default': NVS cleared, build defaults applied."));
+                Serial.println(F("[Config] Reconnect requested."));
+            } else {
+                Serial.println(F("[CMD] config profile: use 'env' or 'default'"));
+            }
         } else if (strcmp(arg, "reset") == 0) {
             nvsClearAll();
-            Serial.println(F("[Config] NVS cleared. Compiled defaults active on next boot."));
+            Serial.println(F("[Config] NVS cleared. Build defaults active on next boot."));
             Serial.println(F("[Config] Restart to apply ('restart' command)."));
         } else {
-            Serial.println(F("[CMD] config: use 'config show' or 'config reset'"));
+            Serial.println(F("[CMD] config: use 'config show', 'config reset', or 'config profile <env|default>'"));
         }
         return;
     }
