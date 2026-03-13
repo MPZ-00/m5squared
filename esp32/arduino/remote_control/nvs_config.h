@@ -50,7 +50,12 @@ static const uint8_t _nvsDfltRKey[] = ENCRYPTION_KEY_RIGHT;
 // ---------------------------------------------------------------------------
 inline bool nvsLoadMac(int idx, char* buf, size_t bufLen) {
     Preferences p;
-    p.begin(NVS_NAMESPACE, /*readOnly=*/true);
+    // Open RW so missing namespace is created silently on first boot.
+    // Opening RO on a missing namespace logs noisy NOT_FOUND errors.
+    if (!p.begin(NVS_NAMESPACE, /*readOnly=*/false)) {
+        strlcpy(buf, (idx == WHEEL_LEFT) ? _nvsDfltLMac : _nvsDfltRMac, bufLen);
+        return false;
+    }
     String val = p.getString((idx == WHEEL_LEFT) ? "lmac" : "rmac", "");
     p.end();
     if (val.length() == 17) {
@@ -67,7 +72,11 @@ inline bool nvsLoadMac(int idx, char* buf, size_t bufLen) {
 // ---------------------------------------------------------------------------
 inline bool nvsLoadKey(int idx, uint8_t* dest) {
     Preferences p;
-    p.begin(NVS_NAMESPACE, /*readOnly=*/true);
+    // Open RW so missing namespace is created silently on first boot.
+    if (!p.begin(NVS_NAMESPACE, /*readOnly=*/false)) {
+        memcpy(dest, (idx == WHEEL_LEFT) ? _nvsDfltLKey : _nvsDfltRKey, 16);
+        return false;
+    }
     const char* nvKey = (idx == WHEEL_LEFT) ? "lkey" : "rkey";
     size_t n   = p.getBytesLength(nvKey);
     bool found = (n == 16) && (p.getBytes(nvKey, dest, 16) == 16);
@@ -124,19 +133,19 @@ inline void nvsPrintAll() {
     bool rkeyNvs = nvsLoadKey(WHEEL_RIGHT, rkey);
 
     Serial.println(F("[Config] --- Wheel Configuration ---"));
-    Serial.printf("[Config] Left  MAC : %s  (%s)\n", lmac, lmacNvs ? "NVS" : "compiled default");
-    Serial.printf("[Config] Right MAC : %s  (%s)\n", rmac, rmacNvs ? "NVS" : "compiled default");
+    Serial.printf("[Config] Left  MAC : %s  (%s)\n", lmac, lmacNvs ? "NVS" : "build default");
+    Serial.printf("[Config] Right MAC : %s  (%s)\n", rmac, rmacNvs ? "NVS" : "build default");
 
     Serial.print(F("[Config] Left  Key : "));
     for (int i = 0; i < 16; i++) Serial.printf("%02x", lkey[i]);
-    Serial.printf("  (%s)\n", lkeyNvs ? "NVS" : "compiled default");
+    Serial.printf("  (%s)\n", lkeyNvs ? "NVS" : "build default");
 
     Serial.print(F("[Config] Right Key : "));
     for (int i = 0; i < 16; i++) Serial.printf("%02x", rkey[i]);
-    Serial.printf("  (%s)\n", rkeyNvs ? "NVS" : "compiled default");
+    Serial.printf("  (%s)\n", rkeyNvs ? "NVS" : "build default");
 
     Serial.println(F("[Config] Changes take effect immediately AND survive reboot."));
-    Serial.println(F("[Config] 'config reset' clears NVS; compiled defaults restored on next boot."));
+    Serial.println(F("[Config] 'config reset' clears NVS; build defaults restored on next boot."));
 }
 
 #endif // NVS_CONFIG_H

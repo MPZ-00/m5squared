@@ -44,6 +44,7 @@ else:
         "[load_env] No .env found (checked local and repo-root) -- using compiled defaults"
     )
     Return()  # type: ignore # noqa: F821
+    quit()
 
 print(f"[load_env] Using .env: {_env_path}")
 
