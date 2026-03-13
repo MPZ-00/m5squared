@@ -135,6 +135,8 @@ static M25DisconnectCallback _callbacks[WHEEL_COUNT];
 static bool _rfcommInitDone = false;
 static volatile bool _rfcommReady = false;
 static volatile int _rfcommPendingIdx = -1;
+static bool _rfcommCbRegistered = false;
+static bool _rfcommSppInitRequested = false;
 static volatile bool _rfcommOpenEvt[WHEEL_COUNT] = { false, false };
 static volatile bool _rfcommCloseEvt[WHEEL_COUNT] = { false, false };
 static volatile int  _rfcommOpenStatus[WHEEL_COUNT] = { -1, -1 };
@@ -1422,40 +1424,69 @@ void bleInit(const char* deviceName) {
 #if M25_TRANSPORT_RFCOMM
     if (!_rfcommInitDone) {
         _rfcommReady = false;
-        esp_err_t rc = esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
-        if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
-            Serial.printf("[RFCOMM] controller_mem_release(BLE) rc=%s\n", esp_err_to_name(rc));
+
+        esp_err_t rc = ESP_OK;
+        esp_bt_controller_status_t ctl = esp_bt_controller_get_status();
+        if (ctl == ESP_BT_CONTROLLER_STATUS_IDLE) {
+            esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+            rc = esp_bt_controller_init(&bt_cfg);
+            if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
+                Serial.printf("[RFCOMM] controller init failed: %s\n", esp_err_to_name(rc));
+            }
+            ctl = esp_bt_controller_get_status();
         }
 
-        esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
-        rc = esp_bt_controller_init(&bt_cfg);
-        if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
-            Serial.printf("[RFCOMM] controller init failed: %s\n", esp_err_to_name(rc));
+        if (ctl != ESP_BT_CONTROLLER_STATUS_ENABLED) {
+            // Arduino/IDF configs often expect BTDM mode, not classic-only mode.
+            rc = esp_bt_controller_enable(ESP_BT_MODE_BTDM);
+            if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
+                Serial.printf("[RFCOMM] controller enable failed: %s\n", esp_err_to_name(rc));
+            }
         }
-        rc = esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT);
-        if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
-            Serial.printf("[RFCOMM] controller enable failed: %s\n", esp_err_to_name(rc));
+
+        esp_bluedroid_status_t bl = esp_bluedroid_get_status();
+        if (bl == ESP_BLUEDROID_STATUS_UNINITIALIZED) {
+            rc = esp_bluedroid_init();
+            if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
+                Serial.printf("[RFCOMM] bluedroid init failed: %s\n", esp_err_to_name(rc));
+            }
+            bl = esp_bluedroid_get_status();
         }
-        rc = esp_bluedroid_init();
-        if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
-            Serial.printf("[RFCOMM] bluedroid init failed: %s\n", esp_err_to_name(rc));
+
+        if (bl != ESP_BLUEDROID_STATUS_ENABLED) {
+            rc = esp_bluedroid_enable();
+            if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
+                Serial.printf("[RFCOMM] bluedroid enable failed: %s\n", esp_err_to_name(rc));
+            }
         }
-        rc = esp_bluedroid_enable();
-        if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
-            Serial.printf("[RFCOMM] bluedroid enable failed: %s\n", esp_err_to_name(rc));
-        }
+
         rc = esp_bt_gap_set_device_name(deviceName);
         if (rc != ESP_OK) {
             Serial.printf("[RFCOMM] set device name failed: %s\n", esp_err_to_name(rc));
         }
-        rc = esp_spp_register_callback(_rfcommSppCb);
-        if (rc != ESP_OK) {
-            Serial.printf("[RFCOMM] spp callback register failed: %s\n", esp_err_to_name(rc));
+
+        if (!_rfcommCbRegistered) {
+            rc = esp_spp_register_callback(_rfcommSppCb);
+            if (rc == ESP_OK || rc == ESP_ERR_INVALID_STATE) {
+                _rfcommCbRegistered = true;
+            } else {
+                Serial.printf("[RFCOMM] spp callback register failed: %s\n", esp_err_to_name(rc));
+            }
         }
-        rc = esp_spp_init(ESP_SPP_MODE_CB);
-        if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
-            Serial.printf("[RFCOMM] spp init failed: %s\n", esp_err_to_name(rc));
+
+        if (!_rfcommSppInitRequested) {
+            rc = esp_spp_init(ESP_SPP_MODE_CB);
+            if (rc == ESP_OK) {
+                _rfcommSppInitRequested = true;
+            } else if (rc == ESP_ERR_INVALID_STATE) {
+                // Already initialized from an earlier run; proceed.
+                _rfcommSppInitRequested = true;
+                _rfcommReady = true;
+            } else {
+                Serial.printf("[RFCOMM] spp init failed: %s\n", esp_err_to_name(rc));
+            }
         }
+
         uint32_t sppWaitStart = millis();
         while (!_rfcommReady && (millis() - sppWaitStart) < 3000) {
             delay(10);
@@ -1573,6 +1604,8 @@ void bleFullReset() {
     esp_bt_controller_deinit();
     _rfcommInitDone = false;
     _rfcommReady = false;
+    _rfcommCbRegistered = false;
+    _rfcommSppInitRequested = false;
 #endif
     delay(500);
     // Reinit restores compile-time MAC/key defaults from device_config.h.
