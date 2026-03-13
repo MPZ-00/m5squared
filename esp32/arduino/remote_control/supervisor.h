@@ -254,6 +254,8 @@ private:
     // Utilities
     // ---------------------------------------------------------------------------
     void notifyStateCallbacks(SupervisorState oldState, SupervisorState newState);
+    // Push the currently stored connection credentials into BLE runtime state.
+    void applyRuntimeWheelConfig();
 };
 
 #endif // SUPERVISOR_H

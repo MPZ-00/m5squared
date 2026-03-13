@@ -135,12 +135,29 @@ void Supervisor::requestConnect(const char* leftAddr, const char* rightAddr,
     if (debugFlags & DBG_BLE) {
         Serial.printf("[Supervisor] Stored: L=%s R=%s\n", _leftAddr, _rightAddr);
     }
+
+    // Keep BLE runtime credentials in sync with the latest requested values.
+    // This ensures serial 'wheels' and the next connect attempt both use NVS data.
+    applyRuntimeWheelConfig();
     
     _connectionRequested = true;
     
     if (_state == SUPERVISOR_DISCONNECTED) {
         transitionTo(SUPERVISOR_CONNECTING);
     }
+}
+
+void Supervisor::applyRuntimeWheelConfig() {
+    // MACs must be canonical form to be accepted by bleSetMac().
+    if (strlen(_leftAddr) == 17) {
+        bleSetMac(WHEEL_LEFT, _leftAddr);
+    }
+    if (strlen(_rightAddr) == 17) {
+        bleSetMac(WHEEL_RIGHT, _rightAddr);
+    }
+
+    bleSetKey(WHEEL_LEFT, _leftKey);
+    bleSetKey(WHEEL_RIGHT, _rightKey);
 }
 
 void Supervisor::requestDisconnect() {
@@ -442,6 +459,10 @@ void Supervisor::handleConnecting() {
     // -----------------------------------------------------------------------
     // Spawn connect task on Core 0 (BLE stack core)
     // -----------------------------------------------------------------------
+    // Re-apply runtime credentials before each connect round. bleFullReset()
+    // restores compile-time defaults, so reconnect must push stored values again.
+    applyRuntimeWheelConfig();
+
     _connectAbort = false;
     _connectDone  = false;
     BaseType_t rc = xTaskCreatePinnedToCore(
