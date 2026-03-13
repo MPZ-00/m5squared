@@ -130,10 +130,20 @@ static const uint8_t M25_ASSIST_LEVEL_MAP[ASSIST_COUNT] = { 0, 1, 2 };
 #define BLE_STACK_INIT_DELAY_MS   1000
 // Retry delay for registerForNotify (descriptor retrieval stabilization)
 #define BLE_NOTIFY_RETRY_DELAY_MS 500
+// GATT service discovery can lag after link-level connect on some wheels.
+#define BLE_SERVICE_DISCOVERY_RETRIES 4
+#define BLE_SERVICE_DISCOVERY_DELAY_MS 500
 // Stale-notify threshold: if a connected wheel sends no notify within this window
 // while DRIVING, the GATT write path is declared dead and failsafe is triggered.
 // Must be > 50 ms (motor write period) with enough headroom for ACK round-trips.
 #define BLE_NOTIFY_STALE_MS       2000
+
+// TX failure handling:
+// tolerate brief GATT write hiccups and only mark a wheel disconnected after
+// a short consecutive-failure streak within this rolling time window.
+#define BLE_TX_FAIL_DISCONNECT_STREAK  4
+#define BLE_TX_FAIL_WINDOW_MS          1000
+#define BLE_TX_FAIL_LOG_EVERY          5
 
 // ---------------------------------------------------------------------------
 // Wheel slot indices
@@ -264,6 +274,8 @@ struct WheelConnState_t {
     uint32_t                     lastConnectAttemptMs;
     uint8_t                      consecutiveFails;   // resets on success; auto-reconnect stops at BLE_MAX_RECONNECT_FAILS
     volatile uint32_t            lastNotifyMs;       // millis() of last successful notify; 0 before first notify
+    uint8_t                      txFailStreak;       // consecutive TX failures within BLE_TX_FAIL_WINDOW_MS
+    uint32_t                     lastTxFailMs;       // millis() of most recent TX failure
 
     // ---------------------------------------------------------------------------
     // Cached telemetry (updated asynchronously by the BLE notification callback)

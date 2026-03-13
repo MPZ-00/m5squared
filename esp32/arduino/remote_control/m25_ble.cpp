@@ -451,6 +451,54 @@ size_t _buildAndEncrypt(int idx, uint8_t serviceId, uint8_t paramId,
     return encLen;
 }
 
+// Returns true while the wheel is still considered usable (transient failure),
+// false once the disconnect threshold has been reached.
+static bool _handleTxFailure(int idx, uint8_t serviceId, uint8_t paramId, const char* reason) {
+    WheelConnState_t &w = _wheels[idx];
+    const uint32_t now = millis();
+
+    // Failures far apart should not accumulate into a disconnect decision.
+    if (w.lastTxFailMs == 0 || (now - w.lastTxFailMs) > BLE_TX_FAIL_WINDOW_MS) {
+        w.txFailStreak = 0;
+    }
+    w.lastTxFailMs = now;
+    if (w.txFailStreak < 255) w.txFailStreak++;
+
+    if ((debugFlags & DBG_BLE) &&
+        (w.txFailStreak == 1 || (w.txFailStreak % BLE_TX_FAIL_LOG_EVERY) == 0)) {
+        Serial.printf("[BLE] %s wheel TX fail: %s (svc=0x%02X param=0x%02X, streak=%u/%u)\n",
+                      w.name ? w.name : "?", reason ? reason : "unknown",
+                      serviceId, paramId,
+                      (unsigned)w.txFailStreak,
+                      (unsigned)BLE_TX_FAIL_DISCONNECT_STREAK);
+    }
+
+    if (w.txFailStreak < BLE_TX_FAIL_DISCONNECT_STREAK) {
+        return true;   // Treat as transient: keep session alive.
+    }
+
+    Serial.printf("[BLE] %s wheel marked disconnected after TX failures (%u in %ums, last svc=0x%02X param=0x%02X, reason=%s)\n",
+                  w.name ? w.name : "?",
+                  (unsigned)w.txFailStreak,
+                  (unsigned)BLE_TX_FAIL_WINDOW_MS,
+                  serviceId, paramId,
+                  reason ? reason : "unknown");
+    w.connected     = false;
+    w.protocolReady = false;
+    w.driveModeBits = 0;
+    return false;
+}
+
+static void _clearTxFailureState(WheelConnState_t& w) {
+    if (w.txFailStreak > 0 && (debugFlags & DBG_BLE)) {
+        Serial.printf("[BLE] %s wheel TX recovered after %u failures\n",
+                      w.name ? w.name : "?",
+                      (unsigned)w.txFailStreak);
+    }
+    w.txFailStreak = 0;
+    w.lastTxFailMs = 0;
+}
+
 bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
                   const uint8_t* payload, uint8_t payloadLen) {
     WheelConnState_t &w = _wheels[idx];
@@ -461,8 +509,7 @@ bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
 
     // Serialize all GATT writes across tasks (motor task Core 0, telemetry Core 1).
     if (_bleTxMutex && xSemaphoreTake(_bleTxMutex, pdMS_TO_TICKS(200)) != pdTRUE) {
-        Serial.printf("[BLE] mutex timeout on wheel %d\n", idx);
-        return false;
+        return _handleTxFailure(idx, serviceId, paramId, "tx mutex timeout");
     }
 
     // Inside the lock: use w.connected flag only ─ NEVER call isConnected() here.
@@ -479,22 +526,20 @@ bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
                 bool sent = w.rxChar->writeValue(buf, len, w.rxWriteWithResponse);
                 if (!sent) {
                     // write-with-response: server rejected or timed out
-                    w.connected     = false;
-                    w.protocolReady = false;
+                    ok = _handleTxFailure(idx, serviceId, paramId, "writeValue returned false");
                 } else {
+                    _clearTxFailureState(w);
                     ok = true;
                     _bleRecordFrame(BLE_REC_TX, (uint8_t)idx, buf, len);
                 }
             } catch (...) {
-                Serial.printf("[BLE] writeValue() exception on %s wheel\n",
-                              w.name ? w.name : "?");
-                w.connected     = false;
-                w.protocolReady = false;
+                ok = _handleTxFailure(idx, serviceId, paramId, "writeValue exception");
             }
+        } else {
+            ok = _handleTxFailure(idx, serviceId, paramId, "build/encrypt failed");
         }
     } else {
-        w.connected     = false;
-        w.protocolReady = false;
+        ok = _handleTxFailure(idx, serviceId, paramId, "wheel not connected");
     }
 
     if (_bleTxMutex) xSemaphoreGive(_bleTxMutex);
@@ -852,6 +897,8 @@ void M25DisconnectCallback::onDisconnect(BLEClient*) {
     _wheels[wheelIdx].connected     = false;
     _wheels[wheelIdx].protocolReady = false;
     _wheels[wheelIdx].driveModeBits = 0;
+    _wheels[wheelIdx].txFailStreak  = 0;
+    _wheels[wheelIdx].lastTxFailMs  = 0;
     
     // Only print message for active wheels (respect WHEEL_MODE)
     if (_wheelActive(wheelIdx)) {
@@ -925,15 +972,21 @@ bool _connectWheel(int idx) {
     }
 
     BLERemoteService* svc = nullptr;
-    for (int _gattRetry = 0; _gattRetry < 3 && !svc; _gattRetry++) {
+    for (int _gattRetry = 0; _gattRetry < BLE_SERVICE_DISCOVERY_RETRIES && !svc; _gattRetry++) {
         svc = w.client->getService(BLEUUID(M25_SPP_SERVICE_UUID));
-        if (!svc && _gattRetry < 2) {
-            Serial.printf("[BLE] %s wheel: SPP service not ready, retrying (%d/3)...\n", wheelName, _gattRetry + 1);
-            delay(500);
+        if (!svc && _gattRetry < (BLE_SERVICE_DISCOVERY_RETRIES - 1)) {
+            Serial.printf("[BLE] %s wheel: SPP service not ready, retrying (%d/%d)...\n",
+                          wheelName,
+                          _gattRetry + 1,
+                          BLE_SERVICE_DISCOVERY_RETRIES);
+            delay(BLE_SERVICE_DISCOVERY_DELAY_MS);
         }
     }
     if (!svc) {
-        Serial.printf("[BLE] %s wheel: SPP service not found\n", wheelName);
+        Serial.printf("[BLE] %s wheel: SPP service not found after %d retries (connected=%d)\n",
+                      wheelName,
+                      BLE_SERVICE_DISCOVERY_RETRIES,
+                      w.client && w.client->isConnected());
         w.client->disconnect();
         w.consecutiveFails++;
         return false;
@@ -998,6 +1051,8 @@ bool _connectWheel(int idx) {
     w.receivedFirstAck = false;  // Reset ACK flag
 
     w.connected = true;
+    w.txFailStreak = 0;
+    w.lastTxFailMs = 0;
 
     // Delay to ensure BLE GATT is fully established and wheel is ready to respond
     // Increased from 50ms to 200ms to improve first-connection reliability
@@ -1147,6 +1202,8 @@ void bleResetWheel(int idx) {
     w.receivedFirstAck     = false;
     w.consecutiveFails = 0;
     w.lastNotifyMs     = 0;
+    w.txFailStreak     = 0;
+    w.lastTxFailMs     = 0;
 
     // Invalidate telemetry cache so stale data is not served after reconnect
     w.batteryValid  = false;
@@ -1220,6 +1277,8 @@ void bleDisconnect() {
         w.connected     = false;
         w.protocolReady = false;
         w.driveModeBits = 0;
+        w.txFailStreak  = 0;
+        w.lastTxFailMs  = 0;
     }
 }
 
@@ -1508,6 +1567,8 @@ void bleSetMac(int idx, const char* mac) {
     w.connected     = false;
     w.protocolReady = false;
     w.consecutiveFails = 0;
+    w.txFailStreak  = 0;
+    w.lastTxFailMs  = 0;
     strncpy(w.mac, mac, 17);
     w.mac[17] = '\0';
     Serial.printf("[BLE] %s wheel MAC -> %s  (reconnect required)\n", 
@@ -1539,6 +1600,8 @@ void bleSetKey(int idx, const uint8_t* newKey) {
     }
     
     memcpy(w.key, newKey, 16);
+    w.txFailStreak = 0;
+    w.lastTxFailMs = 0;
     
     if (debugFlags & DBG_BLE) {
         Serial.printf("[BLE] _wheels[%d].name after: %s\n", idx, w.name ? w.name : "NULL");
@@ -1630,6 +1693,7 @@ void blePrintWheelDetails() {
         Serial.printf("  protocolRdy  : %s\n", w.protocolReady ? "yes" : "no");
         Serial.printf("  failCount    : %u / %u\n", (unsigned)w.consecutiveFails,
                                                      (unsigned)BLE_MAX_RECONNECT_FAILS);
+        Serial.printf("  txFailStreak : %u\n", (unsigned)w.txFailStreak);
         Serial.printf("  driveMode    : 0x%02X\n", w.driveModeBits);
         Serial.printf("  telegramId   : %u\n",     (unsigned)w.telegramId);
         // Cached telemetry
