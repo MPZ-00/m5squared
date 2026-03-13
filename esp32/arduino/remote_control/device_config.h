@@ -65,6 +65,8 @@
   #define WHEEL_MODE_NAME "Unknown"
 #endif
 
+#define M25_TRANSPORT_RFCOMM 1
+
 // ---------------------------------------------------------------------------
 // Transport selection
 // Exactly one transport must be enabled.
@@ -241,9 +243,10 @@ enum SystemState : uint8_t {
 #define DBG_STATE      0x20   // state transitions (already logged, adds detail)
 #define DBG_TELEMETRY  0x40   // BLE telemetry responses (battery, firmware, odometer)
 #define DBG_PROTO      0x80   // raw BLE frames as hex (verbose, lowest-level debug)
+#define DBG_BT_AUTH    0x100  // RFCOMM/BT Classic auth and pairing events
 
 // Global debug flags variable (defined in serial_commands.h)
-extern volatile uint8_t debugFlags;
+extern volatile uint16_t debugFlags;
 
 // ---------------------------------------------------------------------------
 // Arm mode

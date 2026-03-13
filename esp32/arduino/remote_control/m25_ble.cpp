@@ -136,6 +136,7 @@ static bool _rfcommInitDone = false;
 static volatile bool _rfcommReady = false;
 static volatile int _rfcommPendingIdx = -1;
 static bool _rfcommCbRegistered = false;
+static bool _rfcommGapCbRegistered = false;
 static bool _rfcommSppInitRequested = false;
 static volatile bool _rfcommOpenEvt[WHEEL_COUNT] = { false, false };
 static volatile bool _rfcommCloseEvt[WHEEL_COUNT] = { false, false };
@@ -277,6 +278,51 @@ static int _findWheelByHandle(uint32_t handle) {
     return -1;
 }
 
+static const char* _sppEvtName(esp_spp_cb_event_t ev) {
+    switch (ev) {
+        case ESP_SPP_INIT_EVT: return "INIT";
+        case ESP_SPP_DISCOVERY_COMP_EVT: return "DISCOVERY_COMP";
+        case ESP_SPP_OPEN_EVT: return "OPEN";
+        case ESP_SPP_CLOSE_EVT: return "CLOSE";
+        case ESP_SPP_START_EVT: return "START";
+        case ESP_SPP_CL_INIT_EVT: return "CL_INIT";
+        case ESP_SPP_DATA_IND_EVT: return "DATA_IND";
+        case ESP_SPP_CONG_EVT: return "CONG";
+        case ESP_SPP_WRITE_EVT: return "WRITE";
+        case ESP_SPP_SRV_OPEN_EVT: return "SRV_OPEN";
+        default: return "OTHER";
+    }
+}
+
+static void _rfcommGapCb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t* param) {
+    if (!(debugFlags & DBG_BT_AUTH)) return;
+    switch (event) {
+        case ESP_BT_GAP_AUTH_CMPL_EVT:
+            Serial.printf("[AUTH] AUTH_CMPL status=%d addr=%02X:%02X:%02X:%02X:%02X:%02X name=%s\n",
+                          param->auth_cmpl.stat,
+                          param->auth_cmpl.bda[0], param->auth_cmpl.bda[1],
+                          param->auth_cmpl.bda[2], param->auth_cmpl.bda[3],
+                          param->auth_cmpl.bda[4], param->auth_cmpl.bda[5],
+                          (const char*)param->auth_cmpl.device_name);
+            break;
+        case ESP_BT_GAP_PIN_REQ_EVT:
+            Serial.printf("[AUTH] PIN_REQ min16=%d\n", param->pin_req.min_16_digit);
+            break;
+        case ESP_BT_GAP_CFM_REQ_EVT:
+            Serial.printf("[AUTH] CFM_REQ num=%lu\n", (unsigned long)param->cfm_req.num_val);
+            break;
+        case ESP_BT_GAP_KEY_NOTIF_EVT:
+            Serial.printf("[AUTH] KEY_NOTIF passkey=%lu\n", (unsigned long)param->key_notif.passkey);
+            break;
+        case ESP_BT_GAP_KEY_REQ_EVT:
+            Serial.println("[AUTH] KEY_REQ");
+            break;
+        default:
+            Serial.printf("[AUTH] GAP event=%d\n", (int)event);
+            break;
+    }
+}
+
 static bool _parseMacToBda(const char* mac, esp_bd_addr_t out) {
     if (!mac || !out) return false;
     unsigned v[6];
@@ -352,6 +398,9 @@ static void _rfcommConsumeBuffered(int idx) {
 
 static void _rfcommSppCb(esp_spp_cb_event_t event, esp_spp_cb_param_t* param) {
     if (!param) return;
+    if (debugFlags & DBG_BT_AUTH) {
+        Serial.printf("[AUTH] SPP event=%s(%d)\n", _sppEvtName(event), (int)event);
+    }
     switch (event) {
         case ESP_SPP_INIT_EVT:
             if (param->init.status == ESP_SPP_SUCCESS) {
@@ -1460,6 +1509,15 @@ void bleInit(const char* deviceName) {
             }
         }
 
+        if (!_rfcommGapCbRegistered) {
+            rc = esp_bt_gap_register_callback(_rfcommGapCb);
+            if (rc == ESP_OK || rc == ESP_ERR_INVALID_STATE) {
+                _rfcommGapCbRegistered = true;
+            } else {
+                Serial.printf("[RFCOMM] gap callback register failed: %s\n", esp_err_to_name(rc));
+            }
+        }
+
         rc = esp_bt_gap_set_device_name(deviceName);
         if (rc != ESP_OK) {
             Serial.printf("[RFCOMM] set device name failed: %s\n", esp_err_to_name(rc));
@@ -1475,7 +1533,9 @@ void bleInit(const char* deviceName) {
         }
 
         if (!_rfcommSppInitRequested) {
-            rc = esp_spp_init(ESP_SPP_MODE_CB);
+            esp_spp_cfg_t sppCfg = BT_SPP_DEFAULT_CONFIG();
+            sppCfg.mode = ESP_SPP_MODE_CB;
+            rc = esp_spp_enhanced_init(&sppCfg);
             if (rc == ESP_OK) {
                 _rfcommSppInitRequested = true;
             } else if (rc == ESP_ERR_INVALID_STATE) {
@@ -1605,6 +1665,7 @@ void bleFullReset() {
     _rfcommInitDone = false;
     _rfcommReady = false;
     _rfcommCbRegistered = false;
+    _rfcommGapCbRegistered = false;
     _rfcommSppInitRequested = false;
 #endif
     delay(500);

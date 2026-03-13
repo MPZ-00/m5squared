@@ -10,7 +10,7 @@
  *   help / ?                    List all commands
  *   status                      Full status: state, wheels, telemetry, watchdogs, record
  *   debug                       Show all available debug flags with status
- *   debug <flag>                Toggle specific flag (js, motor, heartbeat, ble, buttons, state, telemetry, proto)
+ *   debug <flag>                Toggle specific flag (js, motor, heartbeat, ble, buttons, state, telemetry, proto, auth)
  *   debug all / off             Enable or disable all debug flags
  *   js                          One-shot joystick snapshot (raw + normalized)
  *   ble                         BLE connection status for each wheel
@@ -41,12 +41,12 @@
  *   DBG_BUTTONS    0x10  button press/release events
  *   DBG_STATE      0x20  state transition detail logging
  *   DBG_TELEMETRY  0x40  BLE telemetry responses (battery, firmware, odometer)
- *   DBG_PROTO      0x80  raw BLE frame hex dumps (verbose, lowest-level)
+ *   DBG_PROTO      0x80   raw BLE frame hex dumps (verbose, lowest-level)
+ *   DBG_BT_AUTH    0x100  BT Classic auth/pairing and SPP state events
  *
  * Adding new debug flags
  * ----------------------
- *   All 8 bits of debugFlags are now used.  To add more, promote debugFlags
- *   to uint16_t and add the new DBG_* defines in device_config.h.
+ *   debugFlags is a uint16_t bitfield so extended debug flags are supported.
  *
  * Integration in remote_control.ino
  * ----------------------------------
@@ -78,11 +78,11 @@
 // ---------------------------------------------------------------------------
 // volatile: read/written from two cores (Core1 = serial handler, Core0 = motor task).
 // Without volatile, Core 0 may cache the stale pre-update value indefinitely.
-volatile uint8_t debugFlags = 0;   // all off by default, accessible globally
+volatile uint16_t debugFlags = 0;   // all off by default, accessible globally
 
 // Debug flag metadata for better UI
 struct DebugFlagInfo {
-    uint8_t     mask;
+    uint16_t    mask;
     const char* name;
     const char* description;
 };
@@ -96,6 +96,7 @@ static const DebugFlagInfo _debugFlagTable[] = {
     { DBG_STATE,     "state",     "State transition details" },
     { DBG_TELEMETRY, "telemetry", "BLE telemetry responses (battery/FW/odometer)" },
     { DBG_PROTO,     "proto",     "Raw BLE frame hex dumps (verbose)" },
+    { DBG_BT_AUTH,   "auth",      "RFCOMM auth/pairing and SPP events" },
 };
 static const uint8_t _debugFlagCount = sizeof(_debugFlagTable) / sizeof(_debugFlagTable[0]);
 
@@ -140,7 +141,7 @@ static void _scPrintHelp() {
     Serial.println(F("  sysinfo                   Chip, heap, uptime, WiFi/BT status"));
     Serial.println(F("--- Debug ---"));
     Serial.println(F("  debug                     Show all debug flags (with usage)"));
-    Serial.println(F("  debug <flag>              Toggle flag (js|motor|heartbeat|ble|buttons|state|telemetry|proto)"));
+    Serial.println(F("  debug <flag>              Toggle flag (js|motor|heartbeat|ble|buttons|state|telemetry|proto|auth)"));
     Serial.println(F("  debug all / off           Enable/disable all debug output"));
     Serial.println(F("  js                        One-shot joystick snapshot"));
     Serial.println(F("  buttons                   Debug button hardware & state"));
@@ -176,7 +177,7 @@ static void _scPrintHelp() {
 
 static void _scPrintDebugFlags() {
     Serial.println(F("--- Debug Flags ---"));
-    Serial.printf("Current: 0x%02X", debugFlags);
+    Serial.printf("Current: 0x%04X", debugFlags);
     if (debugFlags == 0) {
         Serial.println(F("  (all disabled)"));
     } else {
@@ -310,7 +311,7 @@ static void _scPrintStatus(const SerialContext &ctx) {
                 first = false;
             }
         }
-        Serial.printf("  (0x%02X)\n", debugFlags);
+        Serial.printf("  (0x%04X)\n", debugFlags);
     }
 
     // --- Record status ---
@@ -457,7 +458,7 @@ static void _scDispatch(const char* cmd, const SerialContext &ctx) {
         
         // debug all
         if (strcmp(arg, "all") == 0) {
-            debugFlags = 0xFF;  // Enable all flags
+            debugFlags = 0xFFFF;  // Enable all flags
             Serial.println(F("[Debug] All flags enabled"));
             _scPrintDebugFlags();
             return;

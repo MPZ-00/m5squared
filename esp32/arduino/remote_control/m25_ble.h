@@ -45,7 +45,7 @@
 #include <stddef.h>         // offsetof()
 
 // External debug flags (defined in serial_commands.h)
-extern volatile uint8_t debugFlags;
+extern volatile uint16_t debugFlags;
 
 // ---------------------------------------------------------------------------
 // M25 SPP Service / Characteristic UUIDs (m25_bluetooth.py)

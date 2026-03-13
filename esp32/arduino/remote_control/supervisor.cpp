@@ -11,7 +11,7 @@
 #include "m25_ble.h"
 
 // External debug flags (defined in serial_commands.h)
-extern volatile uint8_t debugFlags;
+extern volatile uint16_t debugFlags;
 
 // ---------------------------------------------------------------------------
 // Constructor
