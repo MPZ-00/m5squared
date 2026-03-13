@@ -31,7 +31,7 @@
 // BLE    = BLE GATT (original fake_m25_wheel style; useful for BLE-only hosts).
 // =============================================================================
 #define TRANSPORT_RFCOMM_ENABLED  1   // Bluetooth Classic SPP
-#define TRANSPORT_BLE_ENABLED     1   // BLE GATT (disable when using RFCOMM only)
+#define TRANSPORT_BLE_ENABLED     0   // BLE GATT (disable when using RFCOMM only)
 
 // RFCOMM channel the real wheel advertises on.
 // m25_spp.py hard-codes channel 6; our SPP server will target this channel via

@@ -33,6 +33,8 @@
 static BluetoothSerial _rfBT;
 static bool            _rfConnected     = false;
 static bool            _rfWasConnected  = false;
+static bool            _rfServerScnKnown = false;
+static uint8_t         _rfServerScn      = 0;
 
 // Receive accumulation buffer
 static uint8_t  _rfRxBuf[256];
@@ -44,10 +46,32 @@ static uint16_t      _rfStaleCount    = 0;
 static unsigned long _rfConnTime      = 0;
 
 // ---------------------------------------------------------------------------
+// _rfcomm_spp_callback - capture the actual server channel from the stack.
+// ---------------------------------------------------------------------------
+static void _rfcomm_spp_callback(esp_spp_cb_event_t event,
+                                 esp_spp_cb_param_t* param) {
+    if (event != ESP_SPP_START_EVT || param == nullptr) return;
+
+    if (param->start.status == ESP_SPP_SUCCESS) {
+        _rfServerScnKnown = true;
+        _rfServerScn      = param->start.scn;
+        Serial.printf("[RFCOMM] Active SPP channel: %u\n", (unsigned)_rfServerScn);
+    } else {
+        _rfServerScnKnown = false;
+        _rfServerScn      = 0;
+        Serial.printf("[RFCOMM] Failed to read SPP channel (status=%d)\n",
+                      param->start.status);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // rfcomm_init - start SPP server.
 //   Returns true on success.
 // ---------------------------------------------------------------------------
 inline bool rfcomm_init(const char* name) {
+    _rfServerScnKnown = false;
+    _rfServerScn      = 0;
+
     // Temporarily raise BT_SPP log level to DEBUG so the stack prints the
     // assigned SCN (server channel number) during begin().  Look for a line
     // like:  D (xxx) BT_SPP: esp_spp_start_srv, scn: 2
@@ -55,6 +79,8 @@ inline bool rfcomm_init(const char* name) {
     esp_log_level_set("BT_API", ESP_LOG_DEBUG);
 
     Serial.println("[RFCOMM] === SPP INIT - channel number in D(BT_SPP) log below ===");
+
+    _rfBT.register_callback(_rfcomm_spp_callback);
 
     if (!_rfBT.begin(name)) {
         Serial.println("[RFCOMM] ERROR: BluetoothSerial init failed");
@@ -78,6 +104,17 @@ inline bool rfcomm_init(const char* name) {
 // ---------------------------------------------------------------------------
 inline bool rfcomm_connected() {
     return _rfBT.connected();
+}
+
+// ---------------------------------------------------------------------------
+// rfcomm_server_channel_known / rfcomm_server_channel - actual server SCN.
+// ---------------------------------------------------------------------------
+inline bool rfcomm_server_channel_known() {
+    return _rfServerScnKnown;
+}
+
+inline uint8_t rfcomm_server_channel() {
+    return _rfServerScn;
 }
 
 // ---------------------------------------------------------------------------

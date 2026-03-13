@@ -21,6 +21,9 @@
 #include "state.h"
 #include "led.h"
 #include "buzzer.h"
+#if TRANSPORT_RFCOMM_ENABLED
+#include "transport_rfcomm.h"
+#endif
 #if TRANSPORT_BLE_ENABLED
 #include "transport_ble.h"
 #endif
@@ -90,6 +93,9 @@ static void _cli_print_help() {
     Serial.println(F("beep [1-10]            Play beeps"));
     Serial.println(F("tone <freq>            Play passive buzzer tone (Hz)"));
     Serial.println(F("send                   Send ACK response now"));
+#if TRANSPORT_RFCOMM_ENABLED
+    Serial.println(F("scn                    Show actual RFCOMM/SPP channel"));
+#endif
     Serial.println(F("disconnect             Disconnect current client"));
     Serial.println(F("advertise              Restart advertising"));
     Serial.println(F("restart                Reboot ESP32"));
@@ -281,6 +287,21 @@ inline void cli_poll(const CliActions* act, WheelState* s) {
         } else {
             Serial.println(F("Not connected"));
         }
+
+#if TRANSPORT_RFCOMM_ENABLED
+    } else if (cmd == "scn") {
+        if (rfcomm_server_channel_known()) {
+            const uint8_t actual = rfcomm_server_channel();
+            Serial.printf("RFCOMM server channel: %u", (unsigned)actual);
+            if (actual != RFCOMM_CHANNEL) {
+                Serial.printf(" (config expects %d)", RFCOMM_CHANNEL);
+            }
+            Serial.println();
+        } else {
+            Serial.printf("RFCOMM server channel not available yet (config expects %d)\n",
+                          RFCOMM_CHANNEL);
+        }
+#endif
 
     } else if (cmd == "disconnect") {
         if (act->connected && act->connected()) {
