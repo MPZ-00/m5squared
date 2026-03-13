@@ -133,6 +133,14 @@
 #define FW_VERSION_MINOR  0
 #define HW_VERSION        1
 
+#ifndef FW_GIT_HASH
+#define FW_GIT_HASH "nogit"
+#endif
+
+#ifndef FW_GIT_DIRTY
+#define FW_GIT_DIRTY 0
+#endif
+
 // =============================================================================
 // CRUISE CONTROL DEFAULTS
 // cruiseSpeed: raw speed units (same scale as REMOTE_SPEED).

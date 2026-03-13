@@ -108,6 +108,11 @@ conn.connect(channel=channel)
 |---------|-------------|
 | `help` | List all commands |
 | `status` | Show current wheel state |
+| `mac` | Show Bluetooth / base MAC identity |
+| `whoami` | Show device identity, wheel side, transports, MAC |
+| `version` | Show firmware version, git hash, build timestamp |
+| `uptime` | Show uptime and last reset reason |
+| `stats` | Show runtime counters and diagnostics |
 | `key` | Show encryption key |
 | `config [show]` | Show active wheel-side configuration |
 | `config set left\|right` | Persist wheel side and reboot |

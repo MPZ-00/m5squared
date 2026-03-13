@@ -12,6 +12,7 @@ Mapping:
 """
 
 import pathlib
+import subprocess
 
 Import("env")  # type: ignore # noqa: F821
 
@@ -63,3 +64,43 @@ if flags:
     print(f"[load_env] Injected from .env: {', '.join(loaded)}")
 else:
     print("[load_env] No M25 wheel keys found in local .env -- using compiled defaults")
+
+
+def _find_git_root(start_dir):
+    current = start_dir
+    while True:
+        if (current / ".git").exists():
+            return current
+        if current.parent == current:
+            return None
+        current = current.parent
+
+
+def _git_cmd(repo_dir, *args):
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo_dir,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+git_root = _find_git_root(_script_dir)
+if not git_root:
+    print("[load_env] No git repo found -- FW_GIT_HASH=nogit")
+else:
+    rev = _git_cmd(git_root, "rev-parse", "--short=10", "HEAD")
+    if rev.returncode == 0 and rev.stdout.strip():
+        git_hash = rev.stdout.strip()
+        dirty = _git_cmd(git_root, "diff", "--quiet")
+        git_flags = [
+            f'-DFW_GIT_HASH=\\"{git_hash}\\"',
+            f"-DFW_GIT_DIRTY={1 if dirty.returncode != 0 else 0}",
+        ]
+        env.Append(BUILD_FLAGS=git_flags)  # type: ignore # noqa: F821
+        print(
+            f"[load_env] Injected git metadata: hash={git_hash} dirty={1 if dirty.returncode != 0 else 0}"
+        )
+    else:
+        print("[load_env] Git hash unavailable -- FW_GIT_HASH=nogit")

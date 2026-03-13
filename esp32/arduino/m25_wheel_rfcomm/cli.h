@@ -69,6 +69,11 @@ struct CliActions {
     void (*disconnect)();      // Disconnect the current client
     void (*advertise)();       // (Re)start advertising
     bool (*connected)();       // Returns true if client is connected
+    void (*printMac)();        // Print BT identity / MAC info
+    void (*printWhoAmI)();     // Print device identity / runtime config
+    void (*printVersion)();    // Print firmware + build version info
+    void (*printUptime)();     // Print uptime / reset reason
+    void (*printStats)();      // Print runtime counters / diagnostics
     const uint8_t* key;        // Encryption key (for 'key' command)
     WheelRuntimeConfig* wheelConfig; // Active runtime wheel configuration
 };
@@ -80,6 +85,11 @@ static void _cli_print_help() {
     Serial.println(F("\n=== Available Commands ==="));
     Serial.println(F("help                   Show this help"));
     Serial.println(F("status                 Show wheel state"));
+    Serial.println(F("mac                    Show Bluetooth MAC / identity"));
+    Serial.println(F("whoami                 Show device identity / active config"));
+    Serial.println(F("version                Show firmware version + git build"));
+    Serial.println(F("uptime                 Show uptime + reset reason"));
+    Serial.println(F("stats                  Show runtime counters / diagnostics"));
     Serial.println(F("key                    Show encryption key"));
     Serial.println(F("config [show]          Show active wheel-side config"));
     Serial.println(F("config set left|right  Persist wheel side and reboot"));
@@ -234,6 +244,26 @@ inline void cli_poll(const CliActions* act, WheelState* s) {
 
     } else if (cmd == "status") {
         state_print(s);
+
+    } else if (cmd == "mac") {
+        if (act->printMac) act->printMac();
+        else Serial.println(F("MAC info unavailable"));
+
+    } else if (cmd == "whoami") {
+        if (act->printWhoAmI) act->printWhoAmI();
+        else Serial.println(F("Identity info unavailable"));
+
+    } else if (cmd == "version") {
+        if (act->printVersion) act->printVersion();
+        else Serial.println(F("Version info unavailable"));
+
+    } else if (cmd == "uptime") {
+        if (act->printUptime) act->printUptime();
+        else Serial.println(F("Uptime info unavailable"));
+
+    } else if (cmd == "stats") {
+        if (act->printStats) act->printStats();
+        else Serial.println(F("Stats unavailable"));
 
     } else if (cmd == "key") {
         _cli_print_key(act->key);
