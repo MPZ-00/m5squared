@@ -22,6 +22,7 @@
  */
 
 #include "config.h"
+#include "nvs_config.h"
 #include "state.h"
 #include "protocol.h"
 #include "crypto.h"
@@ -35,14 +36,10 @@
 #include "safety.h"
 
 // ---------------------------------------------------------------------------
-// Encryption key (from config.h)
-// ---------------------------------------------------------------------------
-static const uint8_t ENC_KEY[16] = ENCRYPTION_KEY;
-
-// ---------------------------------------------------------------------------
 // Wheel state - single global instance
 // ---------------------------------------------------------------------------
 static WheelState wheel;
+static WheelRuntimeConfig wheelCfg;
 
 // ---------------------------------------------------------------------------
 // CLI action callbacks
@@ -58,7 +55,8 @@ static CliActions cliAct = {
     .disconnect   = do_disconnect,
     .advertise    = do_advertise,
     .connected    = is_connected,
-    .key          = ENC_KEY,
+    .key          = nullptr,
+    .wheelConfig  = &wheelCfg,
 };
 
 // ---------------------------------------------------------------------------
@@ -74,7 +72,7 @@ static bool do_process_frame(const uint8_t* raw, size_t rawLen) {
     // Decode: parse frame header/CRC, decrypt payload, strip padding
     uint8_t spp[64];
     size_t  sppLen = 0;
-    if (!packet_decode(raw, rawLen, ENC_KEY, spp, &sppLen)) {
+    if (!packet_decode(raw, rawLen, wheelCfg.key, spp, &sppLen)) {
         if (cli_dbg(DBG_PROTOCOL)) {
             Serial.println(F("[RX] Decode FAILED (CRC mismatch or bad crypto)"));
         }
@@ -115,7 +113,7 @@ static void _transport_send(const uint8_t* frame, size_t frameLen) {
 // ---------------------------------------------------------------------------
 static void do_send_response() {
     uint8_t frame[128];
-    const size_t frameLen = packet_encode_ack(&wheel, ENC_KEY, frame);
+    const size_t frameLen = packet_encode_ack(&wheel, wheelCfg.key, frame);
     if (frameLen == 0) { Serial.println(F("[TX] ERROR: packet_encode_ack failed")); return; }
     _transport_send(frame, frameLen);
 }
@@ -125,7 +123,7 @@ static void do_send_response() {
 // ---------------------------------------------------------------------------
 static void do_send_response_for(uint8_t reqService, uint8_t reqParam) {
     uint8_t frame[128];
-    const size_t frameLen = packet_encode_response(reqService, reqParam, &wheel, ENC_KEY, frame);
+    const size_t frameLen = packet_encode_response(reqService, reqParam, &wheel, wheelCfg.key, frame);
     if (frameLen == 0) { Serial.println(F("[TX] ERROR: packet_encode_response failed")); return; }
     _transport_send(frame, frameLen);
 }
@@ -213,8 +211,14 @@ void setup() {
     Serial.begin(115200);
     delay(1500);
 
+    wheelcfg_load(&wheelCfg);
+    cliAct.key = wheelCfg.key;
+
     Serial.println(F("\n=== M25 Wheel RFCOMM Simulator ==="));
-    Serial.printf("Device: %s\n", DEVICE_NAME);
+    Serial.printf("Device: %s\n", wheelCfg.deviceName);
+    Serial.printf("Wheel side: %s (%s)\n",
+                  wheelcfg_side_name(wheelCfg.side),
+                  wheelCfg.sideFromNvs ? "NVS" : "build default");
     Serial.println();
 
     // Hardware
@@ -232,18 +236,19 @@ void setup() {
 
     // RFCOMM transport
 #if TRANSPORT_RFCOMM_ENABLED
-    rfcomm_init(DEVICE_NAME);
+    rfcomm_init(wheelCfg.deviceName);
 #endif
 
     // BLE transport
 #if TRANSPORT_BLE_ENABLED
-    ble_init(DEVICE_NAME,
-             BLE_SERVICE_UUID,
-             BLE_CHAR_UUID_TX,
-             BLE_CHAR_UUID_RX);
+    ble_init(wheelCfg.deviceName,
+             wheelCfg.bleServiceUuid,
+             wheelCfg.bleTxUuid,
+             wheelCfg.bleRxUuid);
 #endif
 
     Serial.println(F("Ready. Type 'help' for commands."));
+    wheelcfg_print(&wheelCfg);
     Serial.println();
 }
 

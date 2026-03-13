@@ -18,6 +18,7 @@
 
 #include <Arduino.h>
 #include "config.h"
+#include "nvs_config.h"
 #include "state.h"
 #include "led.h"
 #include "buzzer.h"
@@ -69,6 +70,7 @@ struct CliActions {
     void (*advertise)();       // (Re)start advertising
     bool (*connected)();       // Returns true if client is connected
     const uint8_t* key;        // Encryption key (for 'key' command)
+    WheelRuntimeConfig* wheelConfig; // Active runtime wheel configuration
 };
 
 // ---------------------------------------------------------------------------
@@ -79,6 +81,9 @@ static void _cli_print_help() {
     Serial.println(F("help                   Show this help"));
     Serial.println(F("status                 Show wheel state"));
     Serial.println(F("key                    Show encryption key"));
+    Serial.println(F("config [show]          Show active wheel-side config"));
+    Serial.println(F("config set left|right  Persist wheel side and reboot"));
+    Serial.println(F("config reset           Clear saved side and reboot"));
     Serial.println(F("hardware               Show pin assignments"));
     Serial.println(F("battery [0-100]        Get / set battery level"));
     Serial.println(F("speed <val>            Get / set simulated speed (raw units)"));
@@ -150,6 +155,61 @@ static void _cli_print_hardware() {
 }
 
 // ---------------------------------------------------------------------------
+// _cli_handle_config
+// ---------------------------------------------------------------------------
+static void _cli_handle_config(const String& arg, WheelRuntimeConfig* cfg) {
+    String sub = arg;
+    sub.trim();
+    sub.toLowerCase();
+
+    if (sub.length() == 0 || sub == "show") {
+        wheelcfg_print(cfg);
+        return;
+    }
+
+    if (sub == "reset") {
+        if (!wheelcfg_clear()) {
+            Serial.println(F("[Config] ERROR: failed to clear NVS"));
+            return;
+        }
+
+        Serial.println(F("[Config] Saved wheel side cleared; using build default after reboot."));
+        delay(300);
+        ESP.restart();
+        return;
+    }
+
+    if (sub.startsWith("set ")) {
+        String side = sub.substring(4);
+        side.trim();
+
+        uint8_t sideId;
+        if (side == "left") {
+            sideId = WHEEL_SIDE_LEFT;
+        } else if (side == "right") {
+            sideId = WHEEL_SIDE_RIGHT;
+        } else {
+            Serial.println(F("Usage: config set left|right"));
+            return;
+        }
+
+        if (!wheelcfg_save_side(sideId)) {
+            Serial.println(F("[Config] ERROR: failed to save wheel side"));
+            return;
+        }
+
+        if (cfg) wheelcfg_fill_runtime(cfg, sideId, true);
+        Serial.printf("[Config] Saved wheel side: %s. Rebooting to apply...\n",
+                      wheelcfg_side_name(sideId));
+        delay(300);
+        ESP.restart();
+        return;
+    }
+
+    Serial.println(F("Usage: config [show|set left|set right|reset]"));
+}
+
+// ---------------------------------------------------------------------------
 // cli_poll - read one Serial line (if available) and handle it.
 // ---------------------------------------------------------------------------
 inline void cli_poll(const CliActions* act, WheelState* s) {
@@ -177,6 +237,9 @@ inline void cli_poll(const CliActions* act, WheelState* s) {
 
     } else if (cmd == "key") {
         _cli_print_key(act->key);
+
+    } else if (cmd == "config") {
+        _cli_handle_config(arg, act->wheelConfig);
 
     } else if (cmd == "hardware") {
         _cli_print_hardware();

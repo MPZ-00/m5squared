@@ -34,11 +34,13 @@ This is a clean rewrite of `fake_m25_wheel` with the following goals:
 ## Quick start
 ### 1. Configure `config.h`
 ```cpp
-// Choose wheel side
+// Set the compiled fallback side used only when NVS is empty
 #define WHEEL_SIDE_LEFT   // or WHEEL_SIDE_RIGHT
 
-// Set your encryption key (from .env M25_LEFT_KEY / M25_RIGHT_KEY)
-#define ENCRYPTION_KEY { 0xAA, 0xBB, ... }
+// Set both wheel keys here, or place M25_LEFT_KEY / M25_RIGHT_KEY in a local
+// .env file next to platformio.ini and let load_env.py inject them.
+#define ENCRYPTION_KEY_LEFT  { 0xAA, 0xBB, ... }
+#define ENCRYPTION_KEY_RIGHT { 0xCC, 0xDD, ... }
 ```
 
 ### 2. Set upload port in `platformio.ini`
@@ -52,7 +54,16 @@ pio run -t upload
 pio device monitor
 ```
 
-### 4. Connect from Python
+### 4. Set wheel side once
+```
+pio device monitor
+config set left
+```
+
+Use `config set right` for the other wheel. The setting is stored in ESP32 NVS
+and survives reboot and re-upload until changed or cleared with `config reset`.
+
+### 5. Connect from Python
 ```python
 from m25_bluetooth import BluetoothConnection
 
@@ -98,6 +109,9 @@ conn.connect(channel=channel)
 | `help` | List all commands |
 | `status` | Show current wheel state |
 | `key` | Show encryption key |
+| `config [show]` | Show active wheel-side configuration |
+| `config set left\|right` | Persist wheel side and reboot |
+| `config reset` | Clear saved side and reboot |
 | `hardware` | Show pin assignments |
 | `battery [0-100]` | Get / set battery level |
 | `speed <val>` | Get / set raw speed |

@@ -1,28 +1,26 @@
 /**
  * config.h - Compile-time configuration for the M25 wheel simulator.
  *
- * This is the ONLY file that needs to change between LEFT / RIGHT wheel builds,
- * and between different hardware setups.  Every #define that affects behavior
- * lives here; nothing is scattered across source files.
+ * This file holds the compiled defaults for wheel identity, keys, and hardware
+ * setup. Wheel side can later be overridden persistently at runtime via the
+ * Serial CLI (`config set left|right`) without rebuilding.
  */
 
 #ifndef CONFIG_H
 #define CONFIG_H
 
 // =============================================================================
-// WHEEL IDENTITY
-// Uncomment exactly ONE of the two lines below.
+// WHEEL IDENTITY DEFAULT
+// Runtime side selection is handled by `config set left|right`.
+// Build-time default is intentionally fixed to LEFT
 // =============================================================================
-#define WHEEL_SIDE_LEFT
-// #define WHEEL_SIDE_RIGHT
+#define WHEEL_SIDE_LEFT   0
+#define WHEEL_SIDE_RIGHT  1
 
-#if defined(WHEEL_SIDE_LEFT)
-    #define DEVICE_NAME "M25_FAKE_LEFT"
-#elif defined(WHEEL_SIDE_RIGHT)
-    #define DEVICE_NAME "M25_FAKE_RIGHT"
-#else
-    #error "Define either WHEEL_SIDE_LEFT or WHEEL_SIDE_RIGHT"
-#endif
+#define WHEEL_SIDE_DEFAULT WHEEL_SIDE_LEFT
+
+#define DEVICE_NAME_LEFT   "M25_FAKE_LEFT"
+#define DEVICE_NAME_RIGHT  "M25_FAKE_RIGHT"
 
 // =============================================================================
 // TRANSPORT SELECTION
@@ -41,15 +39,32 @@
 
 // =============================================================================
 // ENCRYPTION KEY
-// Replace with your actual M25_LEFT_KEY / M25_RIGHT_KEY from .env.
+// Replace with your actual M25_LEFT_KEY / M25_RIGHT_KEY from a local .env or
+// hard-code them here. `load_env.py` injects these defines only from the local
+// sketch .env; if no .env exists, these compiled defaults are used.
 // Convert the 32-char hex string to 0x-prefixed bytes:
 //   "A1B2C3D4..." -> 0xA1, 0xB2, 0xC3, 0xD4, ...
 // =============================================================================
-#ifndef ENCRYPTION_KEY
-#define ENCRYPTION_KEY { \
+#ifndef ENCRYPTION_KEY_LEFT
+#define ENCRYPTION_KEY_LEFT { \
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00  \
 }
+#endif
+
+#ifndef ENCRYPTION_KEY_RIGHT
+#define ENCRYPTION_KEY_RIGHT { \
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00  \
+}
+#endif
+
+#ifndef ENCRYPTION_KEY
+    #if WHEEL_SIDE_DEFAULT == WHEEL_SIDE_LEFT
+        #define ENCRYPTION_KEY ENCRYPTION_KEY_LEFT
+    #else
+        #define ENCRYPTION_KEY ENCRYPTION_KEY_RIGHT
+    #endif
 #endif
 
 // =============================================================================
@@ -90,14 +105,24 @@
 #define STALE_TIMEOUT_MS    15000
 
 // BLE-specific UUIDs (only used when TRANSPORT_BLE_ENABLED)
-#if defined(WHEEL_SIDE_LEFT)
-    #define BLE_SERVICE_UUID  "00001101-0000-1000-8000-00805F9B34FB"
-    #define BLE_CHAR_UUID_TX  "00001101-0000-1000-8000-00805F9B34FB"
-    #define BLE_CHAR_UUID_RX  "00001102-0000-1000-8000-00805F9B34FB"
+#define BLE_SERVICE_UUID_LEFT   "00001101-0000-1000-8000-00805F9B34FB"
+#define BLE_CHAR_UUID_TX_LEFT   "00001101-0000-1000-8000-00805F9B34FB"
+#define BLE_CHAR_UUID_RX_LEFT   "00001102-0000-1000-8000-00805F9B34FB"
+
+#define BLE_SERVICE_UUID_RIGHT  "00001101-0000-1000-8000-00805F9B34FB"
+#define BLE_CHAR_UUID_TX_RIGHT  "00001103-0000-1000-8000-00805F9B34FB"
+#define BLE_CHAR_UUID_RX_RIGHT  "00001104-0000-1000-8000-00805F9B34FB"
+
+#if WHEEL_SIDE_DEFAULT == WHEEL_SIDE_LEFT
+    #define DEVICE_NAME       DEVICE_NAME_LEFT
+    #define BLE_SERVICE_UUID  BLE_SERVICE_UUID_LEFT
+    #define BLE_CHAR_UUID_TX  BLE_CHAR_UUID_TX_LEFT
+    #define BLE_CHAR_UUID_RX  BLE_CHAR_UUID_RX_LEFT
 #else
-    #define BLE_SERVICE_UUID  "00001101-0000-1000-8000-00805F9B34FB"
-    #define BLE_CHAR_UUID_TX  "00001103-0000-1000-8000-00805F9B34FB"
-    #define BLE_CHAR_UUID_RX  "00001104-0000-1000-8000-00805F9B34FB"
+    #define DEVICE_NAME       DEVICE_NAME_RIGHT
+    #define BLE_SERVICE_UUID  BLE_SERVICE_UUID_RIGHT
+    #define BLE_CHAR_UUID_TX  BLE_CHAR_UUID_TX_RIGHT
+    #define BLE_CHAR_UUID_RX  BLE_CHAR_UUID_RX_RIGHT
 #endif
 
 // =============================================================================
