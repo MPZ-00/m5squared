@@ -23,7 +23,9 @@
 
 #include <Arduino.h>
 #include <BluetoothSerial.h>
+#include <cstring>
 #include <esp_log.h>
+#include <esp_spp_api.h>
 #include "config.h"
 #include "protocol.h"
 
@@ -35,6 +37,8 @@ static bool            _rfConnected     = false;
 static bool            _rfWasConnected  = false;
 static bool            _rfServerScnKnown = false;
 static uint8_t         _rfServerScn      = 0;
+static bool            _rfChannelRebindAttempted = false;
+static char            _rfServerName[32] = "ESP32SPP";
 
 // Receive accumulation buffer
 static uint8_t  _rfRxBuf[256];
@@ -56,6 +60,30 @@ static void _rfcomm_spp_callback(esp_spp_cb_event_t event,
         _rfServerScnKnown = true;
         _rfServerScn      = param->start.scn;
         Serial.printf("[RFCOMM] Active SPP channel: %u\n", (unsigned)_rfServerScn);
+
+        if (_rfServerScn != RFCOMM_CHANNEL && !_rfChannelRebindAttempted) {
+            _rfChannelRebindAttempted = true;
+            Serial.printf("[RFCOMM] Rebinding SPP server from channel %u to %d\n",
+                          (unsigned)_rfServerScn, RFCOMM_CHANNEL);
+
+            const esp_err_t stopErr = esp_spp_stop_srv_scn(_rfServerScn);
+            if (stopErr != ESP_OK) {
+                Serial.printf("[RFCOMM] Failed to stop channel %u (err=%d)\n",
+                              (unsigned)_rfServerScn, (int)stopErr);
+                return;
+            }
+
+            const esp_err_t startErr = esp_spp_start_srv(
+                ESP_SPP_SEC_NONE,
+                ESP_SPP_ROLE_SLAVE,
+                (uint8_t)RFCOMM_CHANNEL,
+                _rfServerName
+            );
+            if (startErr != ESP_OK) {
+                Serial.printf("[RFCOMM] Failed to start channel %d (err=%d)\n",
+                              RFCOMM_CHANNEL, (int)startErr);
+            }
+        }
     } else {
         _rfServerScnKnown = false;
         _rfServerScn      = 0;
@@ -71,6 +99,14 @@ static void _rfcomm_spp_callback(esp_spp_cb_event_t event,
 inline bool rfcomm_init(const char* name) {
     _rfServerScnKnown = false;
     _rfServerScn      = 0;
+    _rfChannelRebindAttempted = false;
+
+    memset(_rfServerName, 0, sizeof(_rfServerName));
+    if (name != nullptr && *name != '\0') {
+        strncpy(_rfServerName, name, sizeof(_rfServerName) - 1);
+    } else {
+        strncpy(_rfServerName, "ESP32SPP", sizeof(_rfServerName) - 1);
+    }
 
     // Temporarily raise BT_SPP log level to DEBUG so the stack prints the
     // assigned SCN (server channel number) during begin().  Look for a line
