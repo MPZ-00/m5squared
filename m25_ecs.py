@@ -470,8 +470,9 @@ class ECSRemote:
             packet = builder.build_write_drive_mode(0x00)
             return self.write_value(conn, packet, "write_remote_mode")
 
-        # Compatibility: some variants accept remote-only, others expect cruise+remote.
-        candidate_modes = [DRIVE_MODE_BIT_REMOTE, DRIVE_MODE_BIT_REMOTE | DRIVE_MODE_BIT_CRUISE]
+        # Compatibility: many variants move more reliably when cruise+remote is armed
+        # first, while others accept remote-only. Try cruise+remote first, then fallback.
+        candidate_modes = [DRIVE_MODE_BIT_REMOTE | DRIVE_MODE_BIT_CRUISE, DRIVE_MODE_BIT_REMOTE]
         for mode in candidate_modes:
             packet = builder.build_write_drive_mode(mode)
             if self.write_value(conn, packet, f"write_remote_mode(0x{mode:02X})"):
