@@ -1295,50 +1295,94 @@ bool _connectWheel(int idx) {
         return false;
     }
 
+    // Probe known service+characteristic profiles in order.
+    // tx = notify characteristic, rx = write characteristic.
+    struct _UUIDProfile {
+        const char* name;
+        const char* service;
+        const char* tx;
+        const char* rx;
+    };
+    static const _UUIDProfile candidates[] = {
+        // Real M25 V2 wheels (ISSC Transparent UART style service)
+        { "M25V2", "49535343-fe7d-4ae5-8fa9-9fafd205e455", "49535343-1e4d-4bd9-ba61-23c647249616", "49535343-8841-43f4-a8d4-ecbe34729bb3" },
+        // Real M25 V1 wheels (single char handles write + notify)
+        { "M25V1", "c9e61e27-93c0-45c0-b5f9-702e971daa2e", "49535343-026e-3a9b-954c-97daef17e26e", "49535343-026e-3a9b-954c-97daef17e26e" },
+        // Fake wheels used in this repo
+        { "FAKE_LEFT", "00001101-0000-1000-8000-00805F9B34FB", "00001101-0000-1000-8000-00805F9B34FB", "00001102-0000-1000-8000-00805F9B34FB" },
+        { "FAKE_RIGHT", "00001101-0000-1000-8000-00805F9B34FB", "00001103-0000-1000-8000-00805F9B34FB", "00001104-0000-1000-8000-00805F9B34FB" },
+    };
+
     BLERemoteService* svc = nullptr;
-    for (int _gattRetry = 0; _gattRetry < BLE_SERVICE_DISCOVERY_RETRIES && !svc; _gattRetry++) {
-        svc = w.client->getService(BLEUUID(M25_SPP_SERVICE_UUID));
-        if (!svc && _gattRetry < (BLE_SERVICE_DISCOVERY_RETRIES - 1)) {
-            Serial.printf("[BLE] %s wheel: SPP service not ready, retrying (%d/%d)...\n",
+    BLERemoteCharacteristic* rxChar = nullptr;
+    BLERemoteCharacteristic* txChar = nullptr;
+
+    for (int _gattRetry = 0;
+         _gattRetry < BLE_SERVICE_DISCOVERY_RETRIES && (!svc || !rxChar);
+         _gattRetry++) {
+        for (const auto& c : candidates) {
+            svc = w.client->getService(BLEUUID(c.service));
+            if (!svc) {
+                continue;
+            }
+
+            rxChar = svc->getCharacteristic(BLEUUID(c.rx));
+            if (!rxChar) {
+                continue;
+            }
+
+            txChar = svc->getCharacteristic(BLEUUID(c.tx));
+            Serial.printf("[BLE] %s wheel: matched %s profile (service=%s, rx=%s)\n",
+                          wheelName, c.name, c.service, c.rx);
+            break;
+        }
+
+        if (!rxChar && _gattRetry < (BLE_SERVICE_DISCOVERY_RETRIES - 1)) {
+            Serial.printf("[BLE] %s wheel: known services not ready, retrying (%d/%d)...\n",
                           wheelName,
                           _gattRetry + 1,
                           BLE_SERVICE_DISCOVERY_RETRIES);
             delay(BLE_SERVICE_DISCOVERY_DELAY_MS);
         }
     }
-    if (!svc) {
-        Serial.printf("[BLE] %s wheel: SPP service not found after %d retries (connected=%d)\n",
-                      wheelName,
-                      BLE_SERVICE_DISCOVERY_RETRIES,
-                      w.client && w.client->isConnected());
-        w.client->disconnect();
-        w.consecutiveFails++;
-        return false;
-    }
 
-    // Probe all known TX/RX UUID pairs in order; use the first whose RX char exists.
-    // getCharacteristic() is a local map lookup after GATT discovery ─ no extra BLE traffic.
-    // To add support for a new fake-wheel UUID set, append a row to this table.
-    struct _UUIDs { const char* tx; const char* rx; };
-    static const _UUIDs candidates[] = {
-        // Real M25 wheels + fake-left (WHEEL_SIDE_LEFT in device_config.h)
-        { "00001101-0000-1000-8000-00805F9B34FB", "00001102-0000-1000-8000-00805F9B34FB" },
-        // Fake-right (WHEEL_SIDE_RIGHT in device_config.h)
-        { "00001103-0000-1000-8000-00805F9B34FB", "00001104-0000-1000-8000-00805F9B34FB" },
-    };
+    if (!rxChar) {
+        // Fallback: scan all discovered services for any write+notify chars.
+        // This keeps compatibility with unknown variants without hardcoded UUIDs.
+        std::map<std::string, BLERemoteService*>* allServices = w.client->getServices();
+        if (allServices) {
+            for (auto const& svcEntry : *allServices) {
+                BLERemoteService* s = svcEntry.second;
+                if (!s) continue;
 
-    BLERemoteCharacteristic* rxChar = nullptr;
-    BLERemoteCharacteristic* txChar = nullptr;
-    for (const auto& c : candidates) {
-        rxChar = svc->getCharacteristic(BLEUUID(c.rx));
-        if (rxChar) {
-            txChar = svc->getCharacteristic(BLEUUID(c.tx));
-            Serial.printf("[BLE] %s wheel: matched RX UUID %s\n", wheelName, c.rx);
-            break;
+                BLERemoteCharacteristic* anyNotify = nullptr;
+                BLERemoteCharacteristic* anyWrite = nullptr;
+                std::map<std::string, BLERemoteCharacteristic*>* chars = s->getCharacteristics();
+                if (!chars) continue;
+
+                for (auto const& chEntry : *chars) {
+                    BLERemoteCharacteristic* ch = chEntry.second;
+                    if (!ch) continue;
+                    if (!anyNotify && ch->canNotify()) anyNotify = ch;
+                    if (!anyWrite && (ch->canWrite() || ch->canWriteNoResponse())) anyWrite = ch;
+                    if (anyNotify && anyWrite) break;
+                }
+
+                if (anyWrite) {
+                    rxChar = anyWrite;
+                    txChar = anyNotify ? anyNotify : anyWrite;
+                    svc = s;
+                    Serial.printf("[BLE] %s wheel: fallback matched service %s\n",
+                                  wheelName,
+                                  svcEntry.first.c_str());
+                    break;
+                }
+            }
         }
     }
+
     if (!rxChar) {
-        Serial.printf("[BLE] %s wheel: no known RX characteristic found\n", wheelName);
+        Serial.printf("[BLE] %s wheel: no usable write/notify characteristics found\n", wheelName);
         w.client->disconnect();
         w.consecutiveFails++;
         return false;

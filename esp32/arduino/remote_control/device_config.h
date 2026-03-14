@@ -70,7 +70,8 @@
   #define WHEEL_MODE_NAME "Unknown"
 #endif
 
-#define M25_TRANSPORT_RFCOMM 1
+#define M25_TRANSPORT_RFCOMM 0
+#define M25_TRANSPORT_BLE 1
 
 // ---------------------------------------------------------------------------
 // Transport selection
