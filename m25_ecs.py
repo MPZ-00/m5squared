@@ -39,6 +39,7 @@ from m25_protocol_data import (
     PARAM_ID_READ_DRIVE_PROFILE, PARAM_ID_STATUS_DRIVE_PROFILE,
     PARAM_ID_READ_DRIVE_PROFILE_PARAMS, PARAM_ID_STATUS_DRIVE_PROFILE_PARAMS,
     PARAM_ID_READ_CRUISE_VALUES, PARAM_ID_CRUISE_VALUES,
+    PARAM_ID_READ_DUO_DRIVE_PARAMS, PARAM_ID_STATUS_DUO_DRIVE_PARAMS,
     # Parameter IDs - Version
     PARAM_ID_READ_SW_VERSION, PARAM_ID_STATUS_SW_VERSION,
     # Parameter IDs - Write commands
@@ -86,6 +87,10 @@ class ECSPacketBuilder(PacketBuilderBase):
     def build_read_cruise_values(self):
         """Build READ_CRUISE_VALUES packet (contains distance, speed, etc)"""
         return self.build_packet(SERVICE_ID_APP_MGMT, PARAM_ID_READ_CRUISE_VALUES)
+
+    def build_read_duo_drive_params(self):
+        """Build READ_DUO_DRIVE_PARAMS packet."""
+        return self.build_packet(SERVICE_ID_APP_MGMT, PARAM_ID_READ_DUO_DRIVE_PARAMS)
 
     def build_read_sw_version(self):
         """Build READ_SW_VERSION packet (firmware version)"""
@@ -306,6 +311,25 @@ class ResponseParser:
                 'major': major,
                 'minor': minor,
                 'patch': patch
+            }
+        return None
+
+    @staticmethod
+    def parse_duo_drive_params(payload):
+        """Parse STATUS_DUO_DRIVE_PARAMS response (3 bytes)."""
+        if len(payload) >= 3:
+            mounting_side = payload[0]
+            steering_dynamic = payload[2]
+            mounting_name = {
+                0: "Unknown",
+                1: "Right",
+                2: "Left",
+            }.get(mounting_side, f"Unknown({mounting_side})")
+            return {
+                'mounting_side': mounting_side,
+                'mounting_name': mounting_name,
+                'speed_sensibility': payload[1],
+                'steering_dynamic': steering_dynamic,
             }
         return None
 
@@ -614,6 +638,12 @@ class ECSRemote:
         status['cruise_values'] = cruise
         time.sleep(self.COMMAND_DELAY)
 
+        # DuoDrive params (possible remote-safety-related policy indicators)
+        duo = self.read_value(conn, builder.build_read_duo_drive_params,
+                      PARAM_ID_STATUS_DUO_DRIVE_PARAMS, ResponseParser.parse_duo_drive_params)
+        status['duo_drive'] = duo
+        time.sleep(self.COMMAND_DELAY)
+
         # Firmware version
         version = self.read_value(conn, builder.build_read_sw_version,
                                   PARAM_ID_STATUS_SW_VERSION, ResponseParser.parse_sw_version)
@@ -687,6 +717,13 @@ class ECSRemote:
             lines.append(f"  Distance:          {cruise['distance_km']:.2f} km")
         else:
             lines.append(f"  Distance:          --")
+
+        # DuoDrive params (not fully decoded, but useful for diagnosis)
+        duo = status.get('duo_drive')
+        if duo:
+            lines.append(
+                f"  DuoDrive:          side={duo['mounting_name']}, sens={duo['speed_sensibility']}, dynamic={duo['steering_dynamic']}"
+            )
 
         # Firmware version
         version = status.get('sw_version')

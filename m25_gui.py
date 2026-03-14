@@ -75,6 +75,7 @@ except ImportError:
     ble_scan_devices = cast(Any, None)
     HAS_BLE = False
 
+from m25_protocol_data import PARAM_ID_STATUS_DUO_DRIVE_PARAMS
 from m25_transport import (
     M25_VERSION_AUTO,
     M25_VERSION_V1,
@@ -2223,10 +2224,22 @@ class M25GUI:
                         ResponseParser.parse_drive_profile
                     )
                     profile_info = profile['name'] if profile else "??"
+
+                    duo = self.ecs_remote.read_value(
+                        self.left_conn,
+                        builder.build_read_duo_drive_params,
+                        PARAM_ID_STATUS_DUO_DRIVE_PARAMS,
+                        ResponseParser.parse_duo_drive_params
+                    )
+                    duo_info = (
+                        f"side={duo['mounting_name']}, sens={duo['speed_sensibility']}, dynamic={duo['steering_dynamic']}"
+                        if duo else "??"
+                    )
                     
                     ui_log("muted", f"Assist Level: {assist_info}")
                     ui_log("muted", f"Hill Hold: {hill_hold}")
                     ui_log("muted", f"Drive Profile: {profile_info}")
+                    ui_log("muted", f"DuoDrive: {duo_info}")
                     ui_status("success", "Status read complete")
                     
                 except Exception as e:
@@ -2427,6 +2440,16 @@ class M25GUI:
                     )
                     if cruise:
                         ui_log("muted", f"Distance: {cruise['distance_km']:.1f} km")
+
+                    # DuoDrive parameters can carry policy knobs on some firmware builds.
+                    duo = self.ecs_remote.read_value(
+                        conn, builder.build_read_duo_drive_params, 0xF2, ResponseParser.parse_duo_drive_params
+                    )
+                    if duo:
+                        ui_log(
+                            "muted",
+                            f"DuoDrive: side={duo['mounting_name']}, sens={duo['speed_sensibility']}, dynamic={duo['steering_dynamic']}"
+                        )
                     
                     # Drive Parameters for Level 1
                     params = self.ecs_remote.read_profile_params(conn, builder, 0)
