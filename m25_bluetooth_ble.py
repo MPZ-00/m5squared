@@ -22,12 +22,14 @@ import asyncio
 import sys
 import json
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Any, Optional, List, Tuple
 
 try:
     from bleak import BleakScanner, BleakClient
     HAS_BLEAK = True
 except ImportError:
+    BleakScanner = None
+    BleakClient = None
     HAS_BLEAK = False
     print("ERROR: bleak not installed. Install with: pip install bleak", file=sys.stderr)
 
@@ -43,14 +45,107 @@ except ImportError:
 # M25 device name prefixes
 M25_DEVICE_PREFIXES = ["emotion", "M25", "e-motion", "Alber", "WHEEL"]
 
+# Known BLE profiles seen on M25 wheels and local simulators.
+KNOWN_M25_BLE_PROFILES = [
+    {
+        "name": "M25V2",
+        "service": "49535343-fe7d-4ae5-8fa9-9fafd205e455",
+        "tx": "49535343-8841-43f4-a8d4-ecbe34729bb3",
+        "rx": "49535343-1e4d-4bd9-ba61-23c647249616",
+    },
+    {
+        "name": "M25V1",
+        "service": "c9e61e27-93c0-45c0-b5f9-702e971daa2e",
+        "tx": "49535343-026e-3a9b-954c-97daef17e26e",
+        "rx": "49535343-026e-3a9b-954c-97daef17e26e",
+    },
+    {
+        "name": "Fake Left",
+        "service": "00001101-0000-1000-8000-00805f9b34fb",
+        "tx": "00001101-0000-1000-8000-00805f9b34fb",
+        "rx": "00001102-0000-1000-8000-00805f9b34fb",
+    },
+    {
+        "name": "Fake Right",
+        "service": "00001101-0000-1000-8000-00805f9b34fb",
+        "tx": "00001103-0000-1000-8000-00805f9b34fb",
+        "rx": "00001104-0000-1000-8000-00805f9b34fb",
+    },
+    {
+        "name": "Nordic UART",
+        "service": "6e400001-b5a3-f393-e0a9-e50e24dcca9e",
+        "tx": "6e400002-b5a3-f393-e0a9-e50e24dcca9e",
+        "rx": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+    },
+]
+
 # State file for storing connection info
 STATE_FILE = Path.home() / ".m5squared" / "ble_state.json"
+
+
+def load_state() -> dict:
+    """Load persisted BLE connection state."""
+    if STATE_FILE.exists():
+        try:
+            return json.loads(STATE_FILE.read_text())
+        except (OSError, json.JSONDecodeError):
+            pass
+    return {}
+
+
+def save_state(state: dict) -> None:
+    """Save BLE connection state (compat with m25_bluetooth.py)."""
+    try:
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        STATE_FILE.write_text(json.dumps(state, indent=2))
+    except Exception as e:
+        print(f"Warning: Could not save state: {e}", file=sys.stderr)
+
+
+def clear_state() -> None:
+    """Clear BLE connection state (compat with m25_bluetooth.py)."""
+    try:
+        STATE_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+async def _find_services_async(address: str, timeout: int = 5) -> List[Tuple[int, str]]:
+    """Discover BLE services and return tuples compatible with find_services()."""
+    if not HAS_BLEAK or BleakClient is None:
+        return []
+
+    client = BleakClient(address, timeout=timeout)
+    try:
+        await client.connect()
+        if not client.is_connected:
+            return []
+
+        services = []
+        for service in client.services:
+            # Keep tuple shape compatible with RFCOMM helper: (channel, name)
+            # BLE has no RFCOMM channel, so use -1.
+            services.append((-1, str(service.uuid)))
+        return services
+    except Exception:
+        return []
+    finally:
+        try:
+            if client.is_connected:
+                await client.disconnect()
+        except Exception:
+            pass
+
+
+def find_services(address: str, timeout: int = 5) -> List[Tuple[int, str]]:
+    """Compatibility helper similar to m25_bluetooth.find_services()."""
+    return asyncio.run(_find_services_async(address, timeout))
 
 
 class M25BluetoothBLE:
     """Cross-platform BLE handler for M25 devices using Bleak"""
     
-    def __init__(self, address: str = None, key: bytes = None, name: str = "wheel", debug: bool = False):
+    def __init__(self, address: str = "", key: bytes = b"", name: str = "wheel", debug: bool = False):
         """
         Initialize BLE connection
         
@@ -65,7 +160,7 @@ class M25BluetoothBLE:
         self.name = name
         self.debug = debug
         
-        self.client: Optional[BleakClient] = None
+        self.client: Optional[Any] = None
         self.connected = False
         
         # Encryption (only if key provided)
@@ -93,6 +188,8 @@ class M25BluetoothBLE:
         """
         if not HAS_BLEAK:
             return []
+        if BleakScanner is None:
+            return []
             
         print(f"Scanning for Bluetooth devices ({duration} seconds)...")
         print("Make sure your M25 wheels are powered on.\n")
@@ -113,7 +210,7 @@ class M25BluetoothBLE:
         
         return results
     
-    async def connect(self, address: str = None, timeout: int = 10) -> bool:
+    async def connect(self, address: str = "", timeout: int = 10) -> bool:
         """
         Connect to an M25 device
         
@@ -125,6 +222,8 @@ class M25BluetoothBLE:
             True if connected successfully
         """
         if not HAS_BLEAK:
+            return False
+        if BleakClient is None:
             return False
         
         # Use provided address or instance address
@@ -338,7 +437,7 @@ class M25BluetoothBLE:
                 print(f"[{self.name}] Failed to stop notifications: {e}", file=sys.stderr)
             return False
     
-    async def wait_notification(self, timeout: float = None) -> Optional[bytes]:
+    async def wait_notification(self, timeout: float = 0.0) -> Optional[bytes]:
         """
         Wait for notification data from queue (non-polling)
         
@@ -346,7 +445,7 @@ class M25BluetoothBLE:
         This is power-efficient as the device only wakes to send data.
         
         Args:
-            timeout: Wait timeout in seconds (None = wait forever)
+            timeout: Wait timeout in seconds (0.0 = wait forever)
         
         Returns:
             Received bytes (decrypted if key provided) or None on timeout
@@ -405,7 +504,7 @@ class M25BluetoothBLE:
     
     def is_connected(self) -> bool:
         """Check if currently connected"""
-        return self.connected and self.client and self.client.is_connected
+        return bool(self.connected and self.client and self.client.is_connected)
     
     # Alias for compatibility
     async def connect_async(self, timeout: int = 10) -> bool:
@@ -417,34 +516,27 @@ class M25BluetoothBLE:
         await self.disconnect()
     
     async def _discover_characteristics(self):
-        """Discover TX/RX characteristics for Nordic UART service"""
+        """Discover TX/RX characteristics for known M25 BLE services"""
         if not self.client or not self.client.is_connected:
             return
-        
-        # Nordic UART UUIDs
-        NUS_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
-        NUS_TX_CHAR = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"  # Write (client -> device)
-        NUS_RX_CHAR = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"  # Notify (device -> client)
-        
+
         services = self.client.services
-        
-        # Try Nordic UART first
-        for service in services:
-            if service.uuid.lower() == NUS_SERVICE:
-                for char in service.characteristics:
-                    if char.uuid.lower() == NUS_TX_CHAR:
-                        self._tx_char = char.uuid
-                        if self.debug:
-                            print(f"[{self.name}] TX: {char.uuid}")
-                    elif char.uuid.lower() == NUS_RX_CHAR:
-                        self._rx_char = char.uuid
-                        if self.debug:
-                            print(f"[{self.name}] RX: {char.uuid}")
+
+        matched_profile = _match_known_profile(services)
+        if matched_profile:
+            self._tx_char = matched_profile["tx"]
+            self._rx_char = matched_profile["rx"]
+            if self.debug:
+                print(
+                    f"[{self.name}] Matched {matched_profile['name']} "
+                    f"(service={matched_profile['service']})"
+                )
+            return
         
         # Fallback: find any write/notify characteristics
         if not self._tx_char or not self._rx_char:
             if self.debug:
-                print(f"[{self.name}] Nordic UART not found, searching for write/notify characteristics...")
+                print(f"[{self.name}] Known profiles not found, searching for write/notify characteristics...")
             
             for service in services:
                 for char in service.characteristics:
@@ -463,6 +555,52 @@ class M25BluetoothBLE:
             print(f"[{self.name}] WARNING: No RX characteristic found", file=sys.stderr)
 
 
+def _match_known_profile(services) -> Optional[dict]:
+    """Return the first known BLE profile that matches discovered services."""
+    for profile in KNOWN_M25_BLE_PROFILES:
+        service_uuid = profile["service"].lower()
+        tx_uuid = profile["tx"].lower()
+        rx_uuid = profile["rx"].lower()
+
+        for service in services:
+            if service.uuid.lower() != service_uuid:
+                continue
+
+            available = {char.uuid.lower() for char in service.characteristics}
+            if tx_uuid in available and rx_uuid in available:
+                return {
+                    "name": profile["name"],
+                    "service": service.uuid,
+                    "tx": next(char.uuid for char in service.characteristics if char.uuid.lower() == tx_uuid),
+                    "rx": next(char.uuid for char in service.characteristics if char.uuid.lower() == rx_uuid),
+                }
+    return None
+
+
+async def detect_m25_ble_profile(address: str, timeout: int = 5) -> Optional[str]:
+    """Connect briefly and detect whether a wheel exposes a known BLE profile."""
+    if not HAS_BLEAK:
+        return None
+    if BleakClient is None:
+        return None
+
+    client = BleakClient(address, timeout=timeout)
+    try:
+        await client.connect()
+        if not client.is_connected:
+            return None
+        matched_profile = _match_known_profile(client.services)
+        return matched_profile["name"] if matched_profile else None
+    except Exception:
+        return None
+    finally:
+        try:
+            if client.is_connected:
+                await client.disconnect()
+        except Exception:
+            pass
+
+
 # Synchronous wrappers for backward compatibility
 def scan_devices(duration: int = 10, filter_m25: bool = False) -> List[Tuple[str, str]]:
     """Synchronous wrapper for scan"""
@@ -470,7 +608,7 @@ def scan_devices(duration: int = 10, filter_m25: bool = False) -> List[Tuple[str
     return asyncio.run(bt.scan(duration, filter_m25))
 
 
-def connect_device(address: str, key: bytes = None, timeout: int = 10) -> M25BluetoothBLE:
+def connect_device(address: str, key: bytes = b"", timeout: int = 10) -> Optional[M25BluetoothBLE]:
     """Synchronous wrapper for connect"""
     bt = M25BluetoothBLE(address=address, key=key)
     success = asyncio.run(bt.connect(timeout=timeout))
@@ -533,7 +671,7 @@ Examples:
             print(f"\nTo connect: python m25_bluetooth_windows.py connect <address>")
     
     elif args.command == "connect":
-        bt = connect_device(args.address, args.timeout)
+        bt = connect_device(args.address, timeout=args.timeout)
         if bt:
             print("Connection successful!")
             print("Use m25_ecs.py to interact with the device")
@@ -545,7 +683,7 @@ Examples:
         asyncio.run(bt.disconnect())
     
     elif args.command == "status":
-        state = M25BluetoothBLE.load_state()
+        state = load_state()
         if state:
             print(f"Status: Connected to {state.get('address', 'Unknown')}")
         else:

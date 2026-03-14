@@ -17,10 +17,12 @@ Features:
 
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
+import argparse
 import os
 import sys
 import threading
 import asyncio
+import time
 from pathlib import Path
 from datetime import datetime
 
@@ -43,89 +45,99 @@ except ImportError:
     print("Warning: Core architecture not available")
 
 try:
-    from m25_spp import BluetoothConnection
     from m25_ecs import ECSPacketBuilder, ECSRemote, ResponseParser
     from m25_utils import parse_key
-    HAS_BLUETOOTH = True
-    IS_WINDOWS = False
+    HAS_M25_PROTOCOL = True
+except ImportError as e:
+    HAS_M25_PROTOCOL = False
+    print(f"Warning: M25 protocol modules not available: {e}")
+
+try:
+    from m25_spp import BluetoothConnection as RFCOMMBluetoothConnection
+    HAS_RFCOMM = True
 except ImportError:
-    # Windows fallback - use async Bluetooth
-    try:
-        from m25_bluetooth_windows import M25WindowsBluetooth
-        from m25_crypto import M25Encryptor, M25Decryptor
-        from m25_ecs import ECSPacketBuilder, ECSRemote, ResponseParser
-        from m25_utils import parse_key
-        HAS_BLUETOOTH = True
-        IS_WINDOWS = True
-        
-        class BluetoothConnectionAdapter:
-            """Adapter to make M25WindowsBluetooth compatible with BluetoothConnection API"""
-            def __init__(self, address, key, name="wheel", debug=False, loop=None):
-                self.address = address
-                self.key = key
-                self.name = name
-                self.debug = debug
-                self.bt = M25WindowsBluetooth()
-                self.encryptor = M25Encryptor(key)
-                self.decryptor = M25Decryptor(key)
-                self.loop = loop
-                self.connected = False
-            
-            def connect(self, channel=6):
-                """Connect to device"""
-                if self.loop:
-                    import time
-                    success = self.loop.run_until_complete(self.bt.connect(self.address))
-                    if success:
-                        self.connected = True
-                        time.sleep(0.1)  # Brief settling time
-                    return success
-                return False
-            
-            def disconnect(self):
-                """Disconnect from device"""
-                if self.loop and self.connected:
-                    self.loop.run_until_complete(self.bt.disconnect())
-                    self.connected = False
-            
-            def transact(self, spp_data, timeout=1.0):
-                """Send packet and receive decrypted response (sync interface)"""
-                if not self.loop or not self.connected:
-                    return None
-                
-                import time
-                try:
-                    encrypted = self.encryptor.encrypt_packet(spp_data)
-                    if self.debug:
-                        print(f"  TX [{self.name}]: {encrypted.hex()}", file=sys.stderr)
-                    
-                    ok = self.loop.run_until_complete(self.bt.send_packet(encrypted))
-                    if not ok:
-                        return None
-                    
-                    time.sleep(0.2)  # Wait for response
-                    
-                    response = self.loop.run_until_complete(self.bt.receive_packet(timeout=int(timeout)))
-                    if response:
-                        decrypted = self.decryptor.decrypt_packet(response)
-                        if self.debug:
-                            print(f"  RX [{self.name}]: {response.hex()}", file=sys.stderr)
-                            if decrypted:
-                                print(f"      SPP: {decrypted.hex()}", file=sys.stderr)
-                        return decrypted
-                except Exception as e:
-                    if self.debug:
-                        print(f"  transact error: {e}", file=sys.stderr)
-                    return None
+    RFCOMMBluetoothConnection = None
+    HAS_RFCOMM = False
+
+try:
+    from m25_bluetooth_ble import M25BluetoothBLE, detect_m25_ble_profile, scan_devices as ble_scan_devices
+    HAS_BLE = True
+except ImportError:
+    M25BluetoothBLE = None
+    detect_m25_ble_profile = None
+    ble_scan_devices = None
+    HAS_BLE = False
+
+from m25_transport import (
+    M25_VERSION_AUTO,
+    M25_VERSION_V1,
+    M25_VERSION_V2,
+    TRANSPORT_AUTO,
+    TRANSPORT_BLE,
+    TRANSPORT_RFCOMM,
+    describe_m25_version,
+    normalize_m25_version,
+    preferred_transport_for_version,
+)
+
+HAS_BLUETOOTH = HAS_M25_PROTOCOL and (HAS_BLE or HAS_RFCOMM)
+IS_WINDOWS = sys.platform.startswith("win")
+
+
+class BLEConnectionAdapter:
+    """Sync adapter for the async BLE transport used by ECSRemote."""
+
+    def __init__(self, address, key, name="wheel", debug=False, loop=None):
+        if not HAS_BLE:
+            raise RuntimeError("BLE transport not available")
+        self.address = address
+        self.key = key
+        self.name = name
+        self.debug = debug
+        self.loop = loop
+        self.bt = M25BluetoothBLE(address=address, key=key, name=name, debug=debug)
+        self.connected = False
+        self.notifications_started = False
+
+    def connect(self, channel=6):
+        """Connect to device and enable notifications."""
+        del channel
+        if not self.loop:
+            return False
+        success = self.loop.run_until_complete(self.bt.connect(timeout=10))
+        if not success:
+            return False
+
+        self.notifications_started = self.loop.run_until_complete(self.bt.start_notifications())
+        if not self.notifications_started:
+            self.loop.run_until_complete(self.bt.disconnect())
+            return False
+
+        self.connected = True
+        time.sleep(0.1)
+        return True
+
+    def disconnect(self):
+        """Disconnect from device."""
+        if self.loop and self.connected:
+            self.loop.run_until_complete(self.bt.disconnect())
+        self.connected = False
+        self.notifications_started = False
+
+    def transact(self, spp_data, timeout=1.0):
+        """Send packet and receive decrypted response (sync interface)."""
+        if not self.loop or not self.connected:
+            return None
+
+        try:
+            ok = self.loop.run_until_complete(self.bt.send_packet(spp_data))
+            if not ok:
                 return None
-        
-        # Replace BluetoothConnection with adapter for Windows
-        BluetoothConnection = BluetoothConnectionAdapter
-        
-    except ImportError as e:
-        HAS_BLUETOOTH = False
-        IS_WINDOWS = False
-        print(f"Warning: M25 modules not available: {e}")
+            return self.loop.run_until_complete(self.bt.wait_notification(timeout=timeout))
+        except Exception as e:
+            if self.debug:
+                print(f"  transact error [{self.name}]: {e}", file=sys.stderr)
+            return None
 
 
 # Custom Entry widget with placeholder support
@@ -231,7 +243,7 @@ class M25GUI:
 
     LEVELS = ("muted", "info", "success", "warning", "error")
 
-    def __init__(self, root):
+    def __init__(self, root, default_m25_version=M25_VERSION_AUTO):
         self.root = root
         self.root.title("m5squared - Wheelchair Controller")
         
@@ -255,6 +267,8 @@ class M25GUI:
         self.ecs_remote = None
         self.demo_mode = False
         self.event_loop = None  # For Windows async Bluetooth
+        self.default_m25_version = normalize_m25_version(default_m25_version or os.getenv("M25_VERSION"))
+        self.connected_transport_summary = "Not connected"
         
         # Core architecture components
         self.use_core_architecture = False
@@ -346,6 +360,17 @@ class M25GUI:
         self.filter_m25 = tk.BooleanVar(value=True)
         self.filter_check = tk.Checkbutton(self.scan_frame, text="Filter M25 only", variable=self.filter_m25)
         self.filter_check.pack(side=tk.LEFT, padx=(0, 10))
+
+        self.m25_version_var = tk.StringVar(value=self.default_m25_version)
+        self.m25_version_menu = tk.OptionMenu(
+            self.scan_frame,
+            self.m25_version_var,
+            M25_VERSION_AUTO,
+            M25_VERSION_V1,
+            M25_VERSION_V2,
+        )
+        self.m25_version_menu.config(width=10)
+        self.m25_version_menu.pack(side=tk.LEFT, padx=(0, 10))
 
         self.scan_status_lbl = tk.Label(self.scan_frame, text="")
         self.scan_status_lbl.pack(side=tk.LEFT)
@@ -756,6 +781,7 @@ class M25GUI:
         self._theme_widget(self.scan_frame, "frame")
         self._theme_widget(self.scan_btn, "button")
         self._theme_widget(self.filter_check, "checkbox")
+        self._theme_widget(self.m25_version_menu, "optionmenu")
         self._theme_widget(self.scan_status_lbl, "label")
         
         # Device selection
@@ -983,7 +1009,8 @@ class M25GUI:
     def update_system_info(self):
         """Update system information labels"""
         # Bluetooth mode
-        bt_text = f"Bluetooth: {self.bluetooth_mode}"
+        selected_version = describe_m25_version(self.get_selected_m25_version())
+        bt_text = f"Bluetooth: {self.bluetooth_mode} | {selected_version}"
         if hasattr(self, 'info_bluetooth_lbl'):
             self.info_bluetooth_lbl.config(text=bt_text)
         
@@ -1009,22 +1036,62 @@ class M25GUI:
     
     def detect_bluetooth_mode(self):
         """Detect which Bluetooth implementation is being used"""
-        try:
-            # Try importing from core.transport to get BLUETOOTH_TYPE
-            from core.transport.bluetooth import BLUETOOTH_TYPE
-            self.bluetooth_mode = BLUETOOTH_TYPE
-        except ImportError:
-            # Fallback: check which module can be imported
-            try:
-                import m25_bluetooth_ble
-                self.bluetooth_mode = "BLE"
-            except ImportError:
-                try:
-                    import m25_spp
-                    self.bluetooth_mode = "RFCOMM"
-                except ImportError:
-                    self.bluetooth_mode = "Unknown"
+        modes = []
+        if HAS_BLE:
+            modes.append("BLE")
+        if HAS_RFCOMM:
+            modes.append("RFCOMM")
+        self.bluetooth_mode = "/".join(modes) if modes else "Unknown"
         self.update_system_info()
+
+    def get_selected_m25_version(self):
+        """Return the selected M25 generation mode."""
+        return normalize_m25_version(self.m25_version_var.get())
+
+    def _ensure_event_loop(self):
+        """Create a private event loop for BLE tasks when needed."""
+        if not self.event_loop or self.event_loop.is_closed():
+            self.event_loop = asyncio.new_event_loop()
+        return self.event_loop
+
+    def _detect_transport_for_wheel(self, mac, selected_version, loop):
+        """Choose BLE or RFCOMM for one wheel based on explicit mode or BLE probing."""
+        preferred = preferred_transport_for_version(selected_version)
+        if preferred == TRANSPORT_BLE:
+            if not HAS_BLE:
+                raise RuntimeError("BLE transport requested, but bleak is not available")
+            return TRANSPORT_BLE, "explicit M25V2 selection"
+
+        if preferred == TRANSPORT_RFCOMM:
+            if IS_WINDOWS:
+                raise RuntimeError("M25V1 RFCOMM mode is not supported on Windows in this app")
+            if not HAS_RFCOMM:
+                raise RuntimeError("RFCOMM transport requested, but PyBluez/socket support is not available")
+            return TRANSPORT_RFCOMM, "explicit M25V1 selection"
+
+        if IS_WINDOWS:
+            if not HAS_BLE:
+                raise RuntimeError("BLE transport is required on Windows but not available")
+            return TRANSPORT_BLE, "auto: Windows BLE only"
+
+        if HAS_BLE and detect_m25_ble_profile:
+            profile = loop.run_until_complete(detect_m25_ble_profile(mac, timeout=5))
+            if profile == "M25V2" or (profile and profile.startswith("Fake")):
+                return TRANSPORT_BLE, f"auto detected {profile}"
+            if profile == "M25V1":
+                return TRANSPORT_RFCOMM, "auto detected M25V1"
+
+        if HAS_RFCOMM:
+            return TRANSPORT_RFCOMM, "auto fallback to RFCOMM"
+        if HAS_BLE:
+            return TRANSPORT_BLE, "auto fallback to BLE"
+        raise RuntimeError("No usable Bluetooth transport available")
+
+    def _make_connection(self, transport_kind, address, key_bytes, name, loop):
+        """Create a wheel connection for the requested transport."""
+        if transport_kind == TRANSPORT_BLE:
+            return BLEConnectionAdapter(address, key_bytes, name=name, debug=False, loop=loop)
+        return RFCOMMBluetoothConnection(address, key_bytes, name=name, debug=False)
     
     def detect_input_device(self):
         """Detect connected input devices (gamepad/joystick)"""
@@ -1496,10 +1563,10 @@ class M25GUI:
         
         self.log("muted", f"Left:  {left_mac}")
         self.log("muted", f"Right: {right_mac}")
+        self.log("muted", f"Mode:  {describe_m25_version(self.get_selected_m25_version())}")
         self.status_message("info", "Connecting..." if not self.demo_mode else "Connecting (Demo Mode)...")
 
         def connect_thread():
-            import time
             try:
                 if self.demo_mode:
                     # Simulate connection in demo mode
@@ -1513,24 +1580,19 @@ class M25GUI:
                     except Exception as e:
                         self.root.after(0, self.connection_error, f"Invalid encryption key: {e}")
                         return
-                    
-                    # Create event loop for Windows async Bluetooth
-                    if IS_WINDOWS:
-                        if not self.event_loop or self.event_loop.is_closed():
-                            self.event_loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(self.event_loop)
-                        loop = self.event_loop
-                    else:
-                        loop = None
-                    
-                    # Create Bluetooth connections
-                    self.left_conn = BluetoothConnection(left_mac, left_key_bytes, name="left", debug=False)
-                    self.right_conn = BluetoothConnection(right_mac, right_key_bytes, name="right", debug=False)
-                    
-                    # Pass event loop to Windows adapter
-                    if IS_WINDOWS:
-                        self.left_conn.loop = loop
-                        self.right_conn.loop = loop
+
+                    selected_version = self.get_selected_m25_version()
+                    loop = self._ensure_event_loop() if HAS_BLE else None
+
+                    left_transport, left_reason = self._detect_transport_for_wheel(left_mac, selected_version, loop)
+                    right_transport, right_reason = self._detect_transport_for_wheel(right_mac, selected_version, loop)
+
+                    self.log("info", f"Left wheel transport: {left_transport} ({left_reason})")
+                    self.log("info", f"Right wheel transport: {right_transport} ({right_reason})")
+
+                    self.left_conn = self._make_connection(left_transport, left_mac, left_key_bytes, "left", loop)
+                    self.right_conn = self._make_connection(right_transport, right_mac, right_key_bytes, "right", loop)
+                    self.connected_transport_summary = f"L={left_transport}, R={right_transport}"
                     
                     # Connect to wheels
                     if not self.left_conn.connect():
@@ -1566,7 +1628,7 @@ class M25GUI:
                 self.log("success", "Connected in DEMO MODE - using simulated hardware")
                 self.status_message("warning", "Connected (Demo Mode)")
             else:
-                self.log("success", "Connected successfully.")
+                self.log("success", f"Connected successfully ({self.connected_transport_summary}).")
                 self.status_message("success", "Connected")
             self.connect_btn.config(text="Disconnect")
             self.enable_controls(True)
@@ -2166,8 +2228,10 @@ class M25GUI:
             self.status_message("error", "Bluetooth support not available")
             return
 
+        selected_version = self.get_selected_m25_version()
+
         # Show Windows limitation warning
-        if IS_WINDOWS:
+        if IS_WINDOWS and selected_version != M25_VERSION_V1:
             result = messagebox.showinfo(
                 "Windows BLE Scanning",
                 "IMPORTANT: On Windows, only devices that are already paired in \n"
@@ -2183,8 +2247,8 @@ class M25GUI:
 
         filter_enabled = self.filter_m25.get()
         scan_type = "M25 wheels" if filter_enabled else "all Bluetooth devices"
-        self.log("info", f"Scanning for {scan_type}...")
-        if IS_WINDOWS:
+        self.log("info", f"Scanning for {scan_type} using {describe_m25_version(selected_version)}...")
+        if IS_WINDOWS and selected_version != M25_VERSION_V1:
             self.log("muted", "Note: Only paired devices will appear (Windows limitation)")
         self.scan_status_lbl.config(text="Scanning...")
         self.scan_btn.config(state="disabled")
@@ -2192,18 +2256,30 @@ class M25GUI:
 
         def scan_thread():
             try:
-                if IS_WINDOWS:
-                    # Use Windows Bluetooth scanner
-                    from m25_bluetooth_windows import M25WindowsBluetooth
-                    bt = M25WindowsBluetooth()
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    devices = loop.run_until_complete(bt.scan(duration=10, filter_m25=filter_enabled))
-                    loop.close()
+                devices = []
+                seen = set()
+
+                def add_devices(found):
+                    for addr, name in found:
+                        if addr not in seen:
+                            seen.add(addr)
+                            devices.append((addr, name))
+
+                if selected_version == M25_VERSION_V2:
+                    if not HAS_BLE or not ble_scan_devices:
+                        raise RuntimeError("BLE scanning not available")
+                    add_devices(ble_scan_devices(duration=10, filter_m25=filter_enabled))
+                elif selected_version == M25_VERSION_V1:
+                    if IS_WINDOWS:
+                        raise RuntimeError("M25V1 RFCOMM scanning is not supported on Windows in this app")
+                    from m25_bluetooth import scan_devices as rfcomm_scan_devices
+                    add_devices(rfcomm_scan_devices(duration=10, filter_m25=filter_enabled))
                 else:
-                    # Use Linux PyBluez scanner
-                    from m25_bluetooth import scan_devices
-                    devices = scan_devices(duration=10, filter_m25=filter_enabled)
+                    if HAS_BLE and ble_scan_devices:
+                        add_devices(ble_scan_devices(duration=5, filter_m25=filter_enabled))
+                    if not IS_WINDOWS and HAS_RFCOMM:
+                        from m25_bluetooth import scan_devices as rfcomm_scan_devices
+                        add_devices(rfcomm_scan_devices(duration=5, filter_m25=filter_enabled))
                 
                 self.root.after(0, self.scan_complete, devices)
             except Exception as e:
@@ -2280,7 +2356,7 @@ class M25GUI:
             self.status_message("info", "Right wheel selected")
 
 
-def main():
+def main(default_m25_version=M25_VERSION_AUTO):
     """Launch the GUI application"""
 
     missing = []
@@ -2301,8 +2377,17 @@ def main():
             print(f"  - {mod}")
         sys.exit(1)
 
+    cli_parser = argparse.ArgumentParser(add_help=False)
+    cli_parser.add_argument(
+        "--m25-version",
+        default=default_m25_version,
+        choices=[M25_VERSION_AUTO, M25_VERSION_V1, M25_VERSION_V2],
+        help="Select wheel generation: auto, v1 (RFCOMM), or v2 (BLE)",
+    )
+    args, _ = cli_parser.parse_known_args()
+
     root = tk.Tk()
-    app = M25GUI(root)
+    app = M25GUI(root, default_m25_version=args.m25_version)
     root.mainloop()
 
 

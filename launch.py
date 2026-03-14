@@ -4,6 +4,7 @@ m5squared Launcher - Easy start for wheelchair control
 
 Usage:
     python launch.py              # Start GUI
+    python launch.py --m25-version v2   # Start GUI for BLE-only M25V2 wheels
     python launch.py --gamepad    # Start with gamepad control
     python launch.py --mock       # Start with mock transport (testing)
     python launch.py --demo       # Run core demo
@@ -25,11 +26,11 @@ def setup_logging(level: str = "INFO") -> None:
     )
 
 
-def launch_gui() -> None:
+def launch_gui(m25_version: str = "auto") -> None:
     """Launch the GUI application"""
     print("Starting m5squared GUI...")
     from m25_gui import main
-    main()
+    main(default_m25_version=m25_version)
 
 
 def launch_gamepad(use_mock: bool = False) -> None:
@@ -134,11 +135,18 @@ def main():
         epilog="""
 Examples:
   python launch.py              Start GUI
+    python launch.py --m25-version v2     Start GUI in BLE-only M25V2 mode
   python launch.py --gamepad --mock    Test gamepad with mock transport
   python launch.py --demo       Run core demo
         """
     )
     
+    parser.add_argument(
+        "--m25-version",
+        default="auto",
+        choices=["auto", "v1", "v2"],
+        help="Select wheel generation: auto, v1 (RFCOMM), or v2 (BLE)"
+    )
     parser.add_argument(
         "--gamepad",
         action="store_true",
@@ -173,7 +181,7 @@ Examples:
         launch_gamepad(use_mock=args.mock)
     else:
         # Default to GUI
-        launch_gui()
+        launch_gui(m25_version=args.m25_version)
 
 
 if __name__ == "__main__":
