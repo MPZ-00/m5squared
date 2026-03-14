@@ -75,7 +75,7 @@ except ImportError:
     ble_scan_devices = cast(Any, None)
     HAS_BLE = False
 
-from m25_protocol_data import PARAM_ID_STATUS_DUO_DRIVE_PARAMS
+from m25_protocol_data import PARAM_ID_STATUS_DRIVE_MODE, PARAM_ID_STATUS_DUO_DRIVE_PARAMS
 from m25_transport import (
     M25_VERSION_AUTO,
     M25_VERSION_V1,
@@ -1383,6 +1383,25 @@ class M25GUI:
         right_ok = self.ecs_remote.write_remote_mode(self.right_conn, builder, enabled)
         return left_ok, right_ok
 
+    def _read_drive_mode_both(self, builder):
+        """Read current drive-mode flags from both wheels for diagnostics."""
+        if not self.ecs_remote or not self.left_conn or not self.right_conn:
+            return None, None
+
+        left_mode = self.ecs_remote.read_value(
+            self.left_conn,
+            builder.build_read_drive_mode,
+            PARAM_ID_STATUS_DRIVE_MODE,
+            ResponseParser.parse_drive_mode,
+        )
+        right_mode = self.ecs_remote.read_value(
+            self.right_conn,
+            builder.build_read_drive_mode,
+            PARAM_ID_STATUS_DRIVE_MODE,
+            ResponseParser.parse_drive_mode,
+        )
+        return left_mode, right_mode
+
     def _pulse_remote_speed(self, builder, left_speed: int, right_speed: int, duration_s: float, interval_s: float | None = None):
         """Send remote speed repeatedly for a duration.
 
@@ -1448,6 +1467,11 @@ class M25GUI:
                     ui_log("error", f"Failed to enter remote mode: Left={remote_left_ok}, Right={remote_right_ok}")
                     ui_status("error", "Drive test failed: remote mode not enabled")
                     return
+
+                left_mode, right_mode = self._read_drive_mode_both(builder)
+                ui_log("muted", f"Drive mode flags after enable: left={left_mode}, right={right_mode}")
+                if left_mode and right_mode and (not left_mode.get('remote') or not right_mode.get('remote')):
+                    ui_log("warning", "Remote bit not active on both wheels after enable - firmware safety policy may be blocking movement")
                 self._prime_remote_motion(builder)
                 
                 # Test sequence in chair coordinates (left/right logical wheel speeds).
@@ -1538,6 +1562,11 @@ class M25GUI:
                     ui_log("error", f"Failed to enter remote mode: Left={remote_left_ok}, Right={remote_right_ok}")
                     ui_status("error", "Test failed: remote mode not enabled")
                     return
+
+                left_mode, right_mode = self._read_drive_mode_both(builder)
+                ui_log("muted", f"Drive mode flags after enable: left={left_mode}, right={right_mode}")
+                if left_mode and right_mode and (not left_mode.get('remote') or not right_mode.get('remote')):
+                    ui_log("warning", "Remote bit not active on both wheels after enable - firmware safety policy may be blocking movement")
                 self._prime_remote_motion(builder)
 
                 ui_test_status(f"{direction}...")
@@ -1596,6 +1625,11 @@ class M25GUI:
                 if not (remote_left_ok and remote_right_ok):
                     ui_log("error", f"Failed to enter remote mode: Left={remote_left_ok}, Right={remote_right_ok}")
                     return
+
+                left_mode, right_mode = self._read_drive_mode_both(builder)
+                ui_log("muted", f"Drive mode flags after enable: left={left_mode}, right={right_mode}")
+                if left_mode and right_mode and (not left_mode.get('remote') or not right_mode.get('remote')):
+                    ui_log("warning", "Remote bit not active on both wheels after enable - firmware safety policy may be blocking movement")
                 self._prime_remote_motion(builder)
 
                 ui_test_status(f"Quick {label}...")
