@@ -1289,7 +1289,7 @@ class M25GUI:
                 test_speed = 30  # Low speed for safety (out of ~100)
                 test_duration = 1.0  # 1 second per movement
                 
-                # Test sequence: Forward, Backward, Left Turn, Right Turn
+                # Test sequence in chair coordinates (left/right logical wheel speeds).
                 test_sequence = [
                     ("Forward", test_speed, test_speed),
                     ("Stop", 0, 0),
@@ -1307,13 +1307,8 @@ class M25GUI:
                     ui_test_status(f"Step {i+1}/{len(test_sequence)}: {label}")
                     ui_log("info", f"  -> {label} (L:{left_speed}, R:{right_speed})")
                     
-                    # Build speed packets
-                    left_packet = builder.build_write_remote_speed(left_speed)
-                    right_packet = builder.build_write_remote_speed(right_speed)
-                    
-                    # Send to both wheels
-                    left_ok = self.ecs_remote.write_value(self.left_conn, left_packet, "write_remote_speed")
-                    right_ok = self.ecs_remote.write_value(self.right_conn, right_packet, "write_remote_speed")
+                    # Send mapped wheel commands (left wheel sign inversion).
+                    left_ok, right_ok = self._write_remote_speed_both(builder, left_speed, right_speed)
                     
                     if not (left_ok and right_ok):
                         ui_log("warning", f"  Warning: Partial command failure: Left={left_ok}, Right={right_ok}")
@@ -1327,9 +1322,7 @@ class M25GUI:
                 
                 # Final stop
                 ui_log("info", "  -> Final stop")
-                stop_packet = builder.build_write_remote_speed(0)
-                self.ecs_remote.write_value(self.left_conn, stop_packet, "write_remote_speed")
-                self.ecs_remote.write_value(self.right_conn, stop_packet, "write_remote_speed")
+                self._write_remote_speed_both(builder, 0, 0)
                 
                 ui_test_status("Drive test completed")
                 ui_log("success", "Drive test completed successfully")
@@ -1343,11 +1336,7 @@ class M25GUI:
                 # Emergency stop on error
                 try:
                     builder = ECSPacketBuilder()
-                    stop_packet = builder.build_write_remote_speed(0)
-                    if self.left_conn:
-                        self.ecs_remote.write_value(self.left_conn, stop_packet, "write_remote_speed")
-                    if self.right_conn:
-                        self.ecs_remote.write_value(self.right_conn, stop_packet, "write_remote_speed")
+                    self._write_remote_speed_both(builder, 0, 0)
                 except:
                     pass
         
@@ -1387,15 +1376,11 @@ class M25GUI:
                 ui_test_status(f"{direction}...")
                 ui_log("info", f"  -> {direction} (speed: {speed})")
 
-                pkt = builder.build_write_remote_speed(speed)
-                self.ecs_remote.write_value(self.left_conn, pkt, "write_remote_speed")
-                self.ecs_remote.write_value(self.right_conn, pkt, "write_remote_speed")
+                self._write_remote_speed_both(builder, speed, speed)
 
                 time.sleep(test_duration)
 
-                stop_pkt = builder.build_write_remote_speed(0)
-                self.ecs_remote.write_value(self.left_conn, stop_pkt, "write_remote_speed")
-                self.ecs_remote.write_value(self.right_conn, stop_pkt, "write_remote_speed")
+                self._write_remote_speed_both(builder, 0, 0)
 
                 ui_test_status(f"{direction} test done")
                 ui_log("success", f"{direction} test completed")
@@ -1407,11 +1392,7 @@ class M25GUI:
                 ui_test_status("Test failed")
                 try:
                     builder = ECSPacketBuilder()
-                    stop_pkt = builder.build_write_remote_speed(0)
-                    if self.left_conn:
-                        self.ecs_remote.write_value(self.left_conn, stop_pkt, "write_remote_speed")
-                    if self.right_conn:
-                        self.ecs_remote.write_value(self.right_conn, stop_pkt, "write_remote_speed")
+                    self._write_remote_speed_both(builder, 0, 0)
                 except:
                     pass
 
@@ -1442,13 +1423,9 @@ class M25GUI:
                 ui_test_status(f"Quick {label}...")
                 ui_log("info", f"  -> Quick {label}")
 
-                pkt = builder.build_write_remote_speed(speed)
-                self.ecs_remote.write_value(self.left_conn, pkt, "write_remote_speed")
-                self.ecs_remote.write_value(self.right_conn, pkt, "write_remote_speed")
+                self._write_remote_speed_both(builder, speed, speed)
                 time.sleep(0.5)
-                stop_pkt = builder.build_write_remote_speed(0)
-                self.ecs_remote.write_value(self.left_conn, stop_pkt, "write_remote_speed")
-                self.ecs_remote.write_value(self.right_conn, stop_pkt, "write_remote_speed")
+                self._write_remote_speed_both(builder, 0, 0)
 
                 ui_test_status(f"Quick {label} done")
 
@@ -1457,15 +1434,26 @@ class M25GUI:
                 ui_test_status("Movement failed")
                 try:
                     builder = ECSPacketBuilder()
-                    stop_pkt = builder.build_write_remote_speed(0)
-                    if self.left_conn:
-                        self.ecs_remote.write_value(self.left_conn, stop_pkt, "write_remote_speed")
-                    if self.right_conn:
-                        self.ecs_remote.write_value(self.right_conn, stop_pkt, "write_remote_speed")
+                    self._write_remote_speed_both(builder, 0, 0)
                 except:
                     pass
 
         threading.Thread(target=move_thread, daemon=True).start()
+
+    def _write_remote_speed_both(self, builder, left_speed, right_speed):
+        """Send logical chair speeds to both wheels.
+
+        Left wheel must be sign-inverted relative to chair coordinates.
+        """
+        if not self.ecs_remote or not self.left_conn or not self.right_conn:
+            return False, False
+
+        left_packet = builder.build_write_remote_speed(-left_speed)
+        right_packet = builder.build_write_remote_speed(right_speed)
+
+        left_ok = self.ecs_remote.write_value(self.left_conn, left_packet, "write_remote_speed")
+        right_ok = self.ecs_remote.write_value(self.right_conn, right_packet, "write_remote_speed")
+        return left_ok, right_ok
 
     def enable_controls(self, enabled=True):
         """Enable or disable control buttons"""
