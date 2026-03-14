@@ -341,6 +341,11 @@ class M25GUI:
     REMOTE_ARM_SETTLE_S = 0.08
     REMOTE_PRIME_DURATION_S = 0.12
 
+    # Turn-in-place tuning for scripted drive test.
+    # Some wheel setups need higher differential than half-speed to overcome deadband.
+    TURN_SPEED_FACTOR = 1.0
+    TURN_SPEED_MIN = 35
+
     def __init__(self, root, default_m25_version=M25_VERSION_AUTO):
         self.root = root
         self.root.title("m5squared - Wheelchair Controller")
@@ -1468,6 +1473,7 @@ class M25GUI:
                 builder = ECSPacketBuilder()
                 test_speed = max(self.MOTION_SPEED_MIN, min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())))
                 test_duration = max(self.DRIVE_STEP_DURATION_MIN, min(self.DRIVE_STEP_DURATION_MAX, float(self.drive_step_duration_var.get())))
+                turn_speed = max(self.TURN_SPEED_MIN, int(test_speed * self.TURN_SPEED_FACTOR))
 
                 remote_left_ok, remote_right_ok = self._set_remote_mode_both(builder, True)
                 if not (remote_left_ok and remote_right_ok):
@@ -1487,13 +1493,16 @@ class M25GUI:
                     ("Stop", 0, 0),
                     ("Backward", -test_speed, -test_speed),
                     ("Stop", 0, 0),
-                    ("Left Turn", -test_speed//2, test_speed//2),
+                    ("Left Turn", -turn_speed, turn_speed),
                     ("Stop", 0, 0),
-                    ("Right Turn", test_speed//2, -test_speed//2),
+                    ("Right Turn", turn_speed, -turn_speed),
                     ("Stop", 0, 0),
                 ]
                 
-                ui_log("info", f"Drive test: {len([s for s in test_sequence if s[0] != 'Stop'])} movements at speed {test_speed}, step {test_duration:.1f}s")
+                ui_log(
+                    "info",
+                    f"Drive test: {len([s for s in test_sequence if s[0] != 'Stop'])} movements at speed {test_speed}, turn {turn_speed}, step {test_duration:.1f}s"
+                )
                 
                 for i, (label, left_speed, right_speed) in enumerate(test_sequence):
                     ui_test_status(f"Step {i+1}/{len(test_sequence)}: {label}")
