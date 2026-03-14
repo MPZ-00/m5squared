@@ -170,6 +170,7 @@ class M25BluetoothBLE:
         # BLE characteristics
         self._tx_char = None
         self._rx_char = None
+        self._tx_requires_response = False
         
         # Notification callback (for power-efficient data reception)
         self._notification_callback = None
@@ -316,10 +317,18 @@ class M25BluetoothBLE:
             # Encrypt if encryptor is available
             send_data = self.encryptor.encrypt(data) if self.encryptor else data
             
-            await self.client.write_gatt_char(self._tx_char, send_data, response=False)
+            await self.client.write_gatt_char(
+                self._tx_char,
+                send_data,
+                response=self._tx_requires_response,
+            )
             
             if self.debug:
-                print(f"[{self.name}] Sent {len(send_data)} bytes (encrypted={self.encryptor is not None})")
+                mode = "write-with-response" if self._tx_requires_response else "write-without-response"
+                print(
+                    f"[{self.name}] Sent {len(send_data)} bytes "
+                    f"(encrypted={self.encryptor is not None}, mode={mode})"
+                )
             
             return True
             
@@ -343,10 +352,15 @@ class M25BluetoothBLE:
             return False
         
         try:
-            await self.client.write_gatt_char(self._tx_char, encrypted_data, response=False)
+            await self.client.write_gatt_char(
+                self._tx_char,
+                encrypted_data,
+                response=self._tx_requires_response,
+            )
             
             if self.debug:
-                print(f"[{self.name}] Sent {len(encrypted_data)} bytes (pre-encrypted)")
+                mode = "write-with-response" if self._tx_requires_response else "write-without-response"
+                print(f"[{self.name}] Sent {len(encrypted_data)} bytes (pre-encrypted, mode={mode})")
             
             return True
             
@@ -526,10 +540,12 @@ class M25BluetoothBLE:
         if matched_profile:
             self._tx_char = matched_profile["tx"]
             self._rx_char = matched_profile["rx"]
+            self._tx_requires_response = _requires_write_response(services, self._tx_char)
             if self.debug:
+                mode = "write-with-response" if self._tx_requires_response else "write-without-response"
                 print(
                     f"[{self.name}] Matched {matched_profile['name']} "
-                    f"(service={matched_profile['service']})"
+                    f"(service={matched_profile['service']}, mode={mode})"
                 )
             return
         
@@ -542,8 +558,10 @@ class M25BluetoothBLE:
                 for char in service.characteristics:
                     if not self._tx_char and ("write" in char.properties or "write-without-response" in char.properties):
                         self._tx_char = char.uuid
+                        self._tx_requires_response = _char_requires_write_response(char)
                         if self.debug:
-                            print(f"[{self.name}] TX (fallback): {char.uuid}")
+                            mode = "write-with-response" if self._tx_requires_response else "write-without-response"
+                            print(f"[{self.name}] TX (fallback): {char.uuid} ({mode})")
                     if not self._rx_char and ("notify" in char.properties or "read" in char.properties):
                         self._rx_char = char.uuid
                         if self.debug:
@@ -575,6 +593,24 @@ def _match_known_profile(services) -> Optional[dict]:
                     "rx": next(char.uuid for char in service.characteristics if char.uuid.lower() == rx_uuid),
                 }
     return None
+
+
+def _char_requires_write_response(char) -> bool:
+    """Return True when a characteristic supports only write-with-response."""
+    props = {p.lower() for p in getattr(char, "properties", [])}
+    can_write = "write" in props
+    can_write_no_rsp = "write-without-response" in props
+    return can_write and not can_write_no_rsp
+
+
+def _requires_write_response(services, tx_uuid: str) -> bool:
+    """Find tx char in discovered services and derive correct write mode."""
+    target = tx_uuid.lower()
+    for service in services:
+        for char in service.characteristics:
+            if char.uuid.lower() == target:
+                return _char_requires_write_response(char)
+    return False
 
 
 async def detect_m25_ble_profile(address: str, timeout: int = 5) -> Optional[str]:

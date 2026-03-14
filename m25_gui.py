@@ -98,19 +98,36 @@ class BLEConnectionAdapter:
         self.bt = M25BluetoothBLE(address=address, key=key, name=name, debug=debug)
         self.connected = False
         self.notifications_started = False
+        self._loop_lock = threading.RLock()
+
+    def _run(self, coro):
+        """Run one coroutine on the shared loop, serialized across threads."""
+        if not self.loop:
+            return None
+        with self._loop_lock:
+            return self.loop.run_until_complete(coro)
+
+    def _drain_notifications(self):
+        """Drop stale notifications so next transact() reads the current ACK/response."""
+        if not self.connected:
+            return
+        for _ in range(8):
+            data = self._run(self.bt.wait_notification(timeout=0.01))
+            if data is None:
+                break
 
     def connect(self, channel=6):
         """Connect to device and enable notifications."""
         del channel
         if not self.loop:
             return False
-        success = self.loop.run_until_complete(self.bt.connect(timeout=10))
+        success = self._run(self.bt.connect(timeout=10))
         if not success:
             return False
 
-        self.notifications_started = self.loop.run_until_complete(self.bt.start_notifications())
+        self.notifications_started = self._run(self.bt.start_notifications())
         if not self.notifications_started:
-            self.loop.run_until_complete(self.bt.disconnect())
+            self._run(self.bt.disconnect())
             return False
 
         self.connected = True
@@ -120,7 +137,7 @@ class BLEConnectionAdapter:
     def disconnect(self):
         """Disconnect from device."""
         if self.loop and self.connected:
-            self.loop.run_until_complete(self.bt.disconnect())
+            self._run(self.bt.disconnect())
         self.connected = False
         self.notifications_started = False
 
@@ -130,10 +147,11 @@ class BLEConnectionAdapter:
             return None
 
         try:
-            ok = self.loop.run_until_complete(self.bt.send_packet(spp_data))
+            self._drain_notifications()
+            ok = self._run(self.bt.send_packet(spp_data))
             if not ok:
                 return None
-            return self.loop.run_until_complete(self.bt.wait_notification(timeout=timeout))
+            return self._run(self.bt.wait_notification(timeout=max(1.5, timeout)))
         except Exception as e:
             if self.debug:
                 print(f"  transact error [{self.name}]: {e}", file=sys.stderr)
