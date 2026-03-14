@@ -428,6 +428,52 @@ class ECSRemote:
             print(f"  {command_name}: {last_error}", file=sys.stderr)
         return False
 
+    def write_remote_mode(self, conn, builder, enabled):
+        """Set remote control drive mode on a wheel.
+
+        Args:
+            enabled: True enables remote mode, False switches back to normal mode.
+
+        Returns:
+            True if wheel acknowledged the command.
+        """
+        self.init_connection(conn, builder)
+        time.sleep(self.COMMAND_DELAY)
+        mode = DRIVE_MODE_BIT_REMOTE if enabled else 0x00
+        packet = builder.build_write_drive_mode(mode)
+        return self.write_value(conn, packet, "write_remote_mode")
+
+    def write_remote_speed(self, conn, builder, speed):
+        """Send one remote speed command.
+
+        Remote speed writes on BLE can be stream-like and not always ACK each packet.
+        Treat missing response as success as long as the packet was sent.
+        """
+        packet = builder.build_write_remote_speed(speed)
+
+        # RFCOMM connection exposes send_packet() for fire-and-forget writes.
+        send_packet = getattr(conn, "send_packet", None)
+        if callable(send_packet):
+            try:
+                send_packet(packet)
+                return True
+            except Exception as e:
+                if self.verbose:
+                    print(f"  write_remote_speed: send_packet failed ({e})", file=sys.stderr)
+                return False
+
+        # Generic fallback (BLE adapter): short transact, non-ACK is acceptable.
+        response = conn.transact(packet, timeout=0.15)
+        if response is None:
+            return True
+
+        header = ResponseParser.parse_header(response)
+        if header and ResponseParser.is_nack(header):
+            if self.verbose:
+                print(f"  write_remote_speed: NACK 0x{header['param_id']:02X}", file=sys.stderr)
+            return False
+        return True
+
     def write_assist_level(self, conn, builder, level):
         """Set assist level on a wheel
 

@@ -1257,6 +1257,37 @@ class M25GUI:
         # Clamp to valid range (2.0 to 8.5 km/h)
         new_value = max(2.0, min(8.5, new_value))
         speed_var.set(new_value)
+
+    def _set_remote_mode_both(self, builder, enabled: bool):
+        """Enable/disable remote mode on both wheels."""
+        if not self.ecs_remote or not self.left_conn or not self.right_conn:
+            return False, False
+
+        left_ok = self.ecs_remote.write_remote_mode(self.left_conn, builder, enabled)
+        right_ok = self.ecs_remote.write_remote_mode(self.right_conn, builder, enabled)
+        return left_ok, right_ok
+
+    def _pulse_remote_speed(self, builder, left_speed: int, right_speed: int, duration_s: float, interval_s: float = 0.1):
+        """Send remote speed repeatedly for a duration.
+
+        Wheels expect periodic speed updates while in remote mode.
+        """
+        if duration_s <= 0:
+            return self._write_remote_speed_both(builder, left_speed, right_speed)
+
+        end_time = time.monotonic() + duration_s
+        left_all_ok = True
+        right_all_ok = True
+
+        while True:
+            left_ok, right_ok = self._write_remote_speed_both(builder, left_speed, right_speed)
+            left_all_ok = left_all_ok and left_ok
+            right_all_ok = right_all_ok and right_ok
+            if time.monotonic() >= end_time:
+                break
+            time.sleep(interval_s)
+
+        return left_all_ok, right_all_ok
     
     def run_drive_test(self):
         """Run a quick drive test sequence"""
@@ -1288,6 +1319,12 @@ class M25GUI:
                 builder = ECSPacketBuilder()
                 test_speed = 30  # Low speed for safety (out of ~100)
                 test_duration = 1.0  # 1 second per movement
+
+                remote_left_ok, remote_right_ok = self._set_remote_mode_both(builder, True)
+                if not (remote_left_ok and remote_right_ok):
+                    ui_log("error", f"Failed to enter remote mode: Left={remote_left_ok}, Right={remote_right_ok}")
+                    ui_status("error", "Drive test failed: remote mode not enabled")
+                    return
                 
                 # Test sequence in chair coordinates (left/right logical wheel speeds).
                 test_sequence = [
@@ -1306,23 +1343,17 @@ class M25GUI:
                 for i, (label, left_speed, right_speed) in enumerate(test_sequence):
                     ui_test_status(f"Step {i+1}/{len(test_sequence)}: {label}")
                     ui_log("info", f"  -> {label} (L:{left_speed}, R:{right_speed})")
-                    
-                    # Send mapped wheel commands (left wheel sign inversion).
-                    left_ok, right_ok = self._write_remote_speed_both(builder, left_speed, right_speed)
+
+                    # Stream speed commands during each movement window.
+                    duration = 0.3 if label == "Stop" else test_duration
+                    left_ok, right_ok = self._pulse_remote_speed(builder, left_speed, right_speed, duration)
                     
                     if not (left_ok and right_ok):
                         ui_log("warning", f"  Warning: Partial command failure: Left={left_ok}, Right={right_ok}")
                     
-                    # Wait for movement or stop duration
-                    import time
-                    if label == "Stop":
-                        time.sleep(0.3)  # Short pause between movements
-                    else:
-                        time.sleep(test_duration)
-                
                 # Final stop
                 ui_log("info", "  -> Final stop")
-                self._write_remote_speed_both(builder, 0, 0)
+                self._pulse_remote_speed(builder, 0, 0, 0.2)
                 
                 ui_test_status("Drive test completed")
                 ui_log("success", "Drive test completed successfully")
@@ -1336,8 +1367,14 @@ class M25GUI:
                 # Emergency stop on error
                 try:
                     builder = ECSPacketBuilder()
-                    self._write_remote_speed_both(builder, 0, 0)
+                    self._pulse_remote_speed(builder, 0, 0, 0.2)
                 except:
+                    pass
+            finally:
+                try:
+                    builder = ECSPacketBuilder()
+                    self._set_remote_mode_both(builder, False)
+                except Exception:
                     pass
         
         threading.Thread(target=test_thread, daemon=True).start()
@@ -1367,20 +1404,22 @@ class M25GUI:
                     ui_status("error", "Test failed: Not connected")
                     return
 
-                import time
                 builder = ECSPacketBuilder()
                 test_speed = 30
                 test_duration = 1.5
                 speed = test_speed if direction == "Forward" else -test_speed
 
+                remote_left_ok, remote_right_ok = self._set_remote_mode_both(builder, True)
+                if not (remote_left_ok and remote_right_ok):
+                    ui_log("error", f"Failed to enter remote mode: Left={remote_left_ok}, Right={remote_right_ok}")
+                    ui_status("error", "Test failed: remote mode not enabled")
+                    return
+
                 ui_test_status(f"{direction}...")
                 ui_log("info", f"  -> {direction} (speed: {speed})")
 
-                self._write_remote_speed_both(builder, speed, speed)
-
-                time.sleep(test_duration)
-
-                self._write_remote_speed_both(builder, 0, 0)
+                self._pulse_remote_speed(builder, speed, speed, test_duration)
+                self._pulse_remote_speed(builder, 0, 0, 0.2)
 
                 ui_test_status(f"{direction} test done")
                 ui_log("success", f"{direction} test completed")
@@ -1392,8 +1431,14 @@ class M25GUI:
                 ui_test_status("Test failed")
                 try:
                     builder = ECSPacketBuilder()
-                    self._write_remote_speed_both(builder, 0, 0)
+                    self._pulse_remote_speed(builder, 0, 0, 0.2)
                 except:
+                    pass
+            finally:
+                try:
+                    builder = ECSPacketBuilder()
+                    self._set_remote_mode_both(builder, False)
+                except Exception:
                     pass
 
         threading.Thread(target=test_thread, daemon=True).start()
@@ -1415,17 +1460,20 @@ class M25GUI:
                     ui_log("error", "Not connected")
                     return
 
-                import time
                 builder = ECSPacketBuilder()
                 speed = 30 if direction == "forward" else -30
                 label = "Forward" if direction == "forward" else "Backward"
 
+                remote_left_ok, remote_right_ok = self._set_remote_mode_both(builder, True)
+                if not (remote_left_ok and remote_right_ok):
+                    ui_log("error", f"Failed to enter remote mode: Left={remote_left_ok}, Right={remote_right_ok}")
+                    return
+
                 ui_test_status(f"Quick {label}...")
                 ui_log("info", f"  -> Quick {label}")
 
-                self._write_remote_speed_both(builder, speed, speed)
-                time.sleep(0.5)
-                self._write_remote_speed_both(builder, 0, 0)
+                self._pulse_remote_speed(builder, speed, speed, 0.5)
+                self._pulse_remote_speed(builder, 0, 0, 0.2)
 
                 ui_test_status(f"Quick {label} done")
 
@@ -1434,8 +1482,14 @@ class M25GUI:
                 ui_test_status("Movement failed")
                 try:
                     builder = ECSPacketBuilder()
-                    self._write_remote_speed_both(builder, 0, 0)
+                    self._pulse_remote_speed(builder, 0, 0, 0.2)
                 except:
+                    pass
+            finally:
+                try:
+                    builder = ECSPacketBuilder()
+                    self._set_remote_mode_both(builder, False)
+                except Exception:
                     pass
 
         threading.Thread(target=move_thread, daemon=True).start()
@@ -1448,11 +1502,8 @@ class M25GUI:
         if not self.ecs_remote or not self.left_conn or not self.right_conn:
             return False, False
 
-        left_packet = builder.build_write_remote_speed(-left_speed)
-        right_packet = builder.build_write_remote_speed(right_speed)
-
-        left_ok = self.ecs_remote.write_value(self.left_conn, left_packet, "write_remote_speed")
-        right_ok = self.ecs_remote.write_value(self.right_conn, right_packet, "write_remote_speed")
+        left_ok = self.ecs_remote.write_remote_speed(self.left_conn, builder, -left_speed)
+        right_ok = self.ecs_remote.write_remote_speed(self.right_conn, builder, right_speed)
         return left_ok, right_ok
 
     def enable_controls(self, enabled=True):
