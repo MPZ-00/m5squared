@@ -307,6 +307,29 @@ class M25GUI:
 
     LEVELS = ("muted", "info", "success", "warning", "error")
 
+    # Motion tuning defaults and limits (single location for quick adjustments).
+    MOTION_SPEED_MIN = 10
+    MOTION_SPEED_MAX = 160
+    MOTION_SPEED_STEP = 5
+    MOTION_SPEED_DEFAULT = 30
+
+    DRIVE_STEP_DURATION_MIN = 0.3
+    DRIVE_STEP_DURATION_MAX = 10.0
+    DRIVE_STEP_DURATION_DEFAULT = 1.0
+
+    SINGLE_DURATION_MIN = 0.2
+    SINGLE_DURATION_MAX = 10.0
+    SINGLE_DURATION_DEFAULT = 1.5
+
+    QUICK_DURATION_MIN = 0.1
+    QUICK_DURATION_MAX = 10.0
+    QUICK_DURATION_DEFAULT = 0.5
+
+    REMOTE_PULSE_INTERVAL_S = 0.1
+    REMOTE_STOP_DURATION_S = 0.2
+    REMOTE_ARM_SETTLE_S = 0.08
+    REMOTE_PRIME_DURATION_S = 0.12
+
     def __init__(self, root, default_m25_version=M25_VERSION_AUTO):
         self.root = root
         self.root.title("m5squared - Wheelchair Controller")
@@ -673,12 +696,12 @@ class M25GUI:
         self.motion_speed_label = tk.Label(self.motion_tuning_frame, text="Speed:")
         self.motion_speed_label.pack(side=tk.LEFT, padx=(0, 4))
 
-        self.motion_speed_var = tk.IntVar(value=30)
+        self.motion_speed_var = tk.IntVar(value=self.MOTION_SPEED_DEFAULT)
         self.motion_speed_scale = tk.Scale(
             self.motion_tuning_frame,
-            from_=10,
-            to=160,
-            resolution=5,
+            from_=self.MOTION_SPEED_MIN,
+            to=self.MOTION_SPEED_MAX,
+            resolution=self.MOTION_SPEED_STEP,
             orient=tk.HORIZONTAL,
             length=120,
             variable=self.motion_speed_var,
@@ -689,11 +712,11 @@ class M25GUI:
         self.drive_step_duration_label = tk.Label(self.motion_tuning_frame, text="Step (s):")
         self.drive_step_duration_label.pack(side=tk.LEFT, padx=(0, 4))
 
-        self.drive_step_duration_var = tk.DoubleVar(value=1.0)
+        self.drive_step_duration_var = tk.DoubleVar(value=self.DRIVE_STEP_DURATION_DEFAULT)
         self.drive_step_duration_scale = tk.Scale(
             self.motion_tuning_frame,
-            from_=0.3,
-            to=10.0,
+            from_=self.DRIVE_STEP_DURATION_MIN,
+            to=self.DRIVE_STEP_DURATION_MAX,
             resolution=0.1,
             orient=tk.HORIZONTAL,
             length=120,
@@ -717,11 +740,11 @@ class M25GUI:
         self.single_duration_label = tk.Label(self.single_dir_frame, text="Time (s):")
         self.single_duration_label.pack(side=tk.LEFT, padx=(4, 4))
 
-        self.single_duration_var = tk.DoubleVar(value=1.5)
+        self.single_duration_var = tk.DoubleVar(value=self.SINGLE_DURATION_DEFAULT)
         self.single_duration_scale = tk.Scale(
             self.single_dir_frame,
-            from_=0.2,
-            to=10.0,
+            from_=self.SINGLE_DURATION_MIN,
+            to=self.SINGLE_DURATION_MAX,
             resolution=0.1,
             orient=tk.HORIZONTAL,
             length=120,
@@ -743,11 +766,11 @@ class M25GUI:
         self.quick_duration_label = tk.Label(self.quick_move_frame, text="Time (s):")
         self.quick_duration_label.pack(side=tk.LEFT, padx=(0, 4))
 
-        self.quick_duration_var = tk.DoubleVar(value=0.5)
+        self.quick_duration_var = tk.DoubleVar(value=self.QUICK_DURATION_DEFAULT)
         self.quick_duration_scale = tk.Scale(
             self.quick_move_frame,
-            from_=0.1,
-            to=10.0,
+            from_=self.QUICK_DURATION_MIN,
+            to=self.QUICK_DURATION_MAX,
             resolution=0.1,
             orient=tk.HORIZONTAL,
             length=120,
@@ -1357,11 +1380,13 @@ class M25GUI:
         right_ok = self.ecs_remote.write_remote_mode(self.right_conn, builder, enabled)
         return left_ok, right_ok
 
-    def _pulse_remote_speed(self, builder, left_speed: int, right_speed: int, duration_s: float, interval_s: float = 0.1):
+    def _pulse_remote_speed(self, builder, left_speed: int, right_speed: int, duration_s: float, interval_s: float | None = None):
         """Send remote speed repeatedly for a duration.
 
         Wheels expect periodic speed updates while in remote mode.
         """
+        if interval_s is None:
+            interval_s = self.REMOTE_PULSE_INTERVAL_S
         if duration_s <= 0:
             return self._write_remote_speed_both(builder, left_speed, right_speed)
 
@@ -1378,6 +1403,11 @@ class M25GUI:
             time.sleep(interval_s)
 
         return left_all_ok, right_all_ok
+
+    def _prime_remote_motion(self, builder) -> None:
+        """Give the wheel firmware a brief settle/prime phase after remote-mode enable."""
+        time.sleep(self.REMOTE_ARM_SETTLE_S)
+        self._pulse_remote_speed(builder, 0, 0, self.REMOTE_PRIME_DURATION_S)
     
     def run_drive_test(self):
         """Run a quick drive test sequence"""
@@ -1407,14 +1437,15 @@ class M25GUI:
                     return
                 
                 builder = ECSPacketBuilder()
-                test_speed = max(10, min(160, int(self.motion_speed_var.get())))
-                test_duration = max(0.3, min(10.0, float(self.drive_step_duration_var.get())))
+                test_speed = max(self.MOTION_SPEED_MIN, min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())))
+                test_duration = max(self.DRIVE_STEP_DURATION_MIN, min(self.DRIVE_STEP_DURATION_MAX, float(self.drive_step_duration_var.get())))
 
                 remote_left_ok, remote_right_ok = self._set_remote_mode_both(builder, True)
                 if not (remote_left_ok and remote_right_ok):
                     ui_log("error", f"Failed to enter remote mode: Left={remote_left_ok}, Right={remote_right_ok}")
                     ui_status("error", "Drive test failed: remote mode not enabled")
                     return
+                self._prime_remote_motion(builder)
                 
                 # Test sequence in chair coordinates (left/right logical wheel speeds).
                 test_sequence = [
@@ -1435,7 +1466,7 @@ class M25GUI:
                     ui_log("info", f"  -> {label} (L:{left_speed}, R:{right_speed})")
 
                     # Stream speed commands during each movement window.
-                    duration = 0.3 if label == "Stop" else test_duration
+                    duration = self.DRIVE_STEP_DURATION_MIN if label == "Stop" else test_duration
                     left_ok, right_ok = self._pulse_remote_speed(builder, left_speed, right_speed, duration)
                     
                     if not (left_ok and right_ok):
@@ -1443,7 +1474,7 @@ class M25GUI:
                     
                 # Final stop
                 ui_log("info", "  -> Final stop")
-                self._pulse_remote_speed(builder, 0, 0, 0.2)
+                self._pulse_remote_speed(builder, 0, 0, self.REMOTE_STOP_DURATION_S)
                 
                 ui_test_status("Drive test completed")
                 ui_log("success", "Drive test completed successfully")
@@ -1457,7 +1488,7 @@ class M25GUI:
                 # Emergency stop on error
                 try:
                     builder = ECSPacketBuilder()
-                    self._pulse_remote_speed(builder, 0, 0, 0.2)
+                    self._pulse_remote_speed(builder, 0, 0, self.REMOTE_STOP_DURATION_S)
                 except:
                     pass
             finally:
@@ -1472,7 +1503,7 @@ class M25GUI:
     def run_single_direction_test(self):
         """Run a single direction test (user-chosen: Forward or Backward)"""
         direction = self.single_dir_var.get()
-        test_duration = max(0.1, min(10.0, float(self.single_duration_var.get())))
+        test_duration = max(self.SINGLE_DURATION_MIN, min(self.SINGLE_DURATION_MAX, float(self.single_duration_var.get())))
         self.log("info", f"Single direction test: {direction}")
         self.status_message("info", f"Running {direction} test ({test_duration:.1f}s)...")
 
@@ -1496,7 +1527,7 @@ class M25GUI:
                     return
 
                 builder = ECSPacketBuilder()
-                test_speed = max(10, min(160, int(self.motion_speed_var.get())))
+                test_speed = max(self.MOTION_SPEED_MIN, min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())))
                 speed = test_speed if direction == "Forward" else -test_speed
 
                 remote_left_ok, remote_right_ok = self._set_remote_mode_both(builder, True)
@@ -1504,12 +1535,13 @@ class M25GUI:
                     ui_log("error", f"Failed to enter remote mode: Left={remote_left_ok}, Right={remote_right_ok}")
                     ui_status("error", "Test failed: remote mode not enabled")
                     return
+                self._prime_remote_motion(builder)
 
                 ui_test_status(f"{direction}...")
                 ui_log("info", f"  -> {direction} (speed: {speed}, {test_duration:.1f}s)")
 
                 self._pulse_remote_speed(builder, speed, speed, test_duration)
-                self._pulse_remote_speed(builder, 0, 0, 0.2)
+                self._pulse_remote_speed(builder, 0, 0, self.REMOTE_STOP_DURATION_S)
 
                 ui_test_status(f"{direction} test done")
                 ui_log("success", f"{direction} test completed")
@@ -1521,7 +1553,7 @@ class M25GUI:
                 ui_test_status("Test failed")
                 try:
                     builder = ECSPacketBuilder()
-                    self._pulse_remote_speed(builder, 0, 0, 0.2)
+                    self._pulse_remote_speed(builder, 0, 0, self.REMOTE_STOP_DURATION_S)
                 except:
                     pass
             finally:
@@ -1539,7 +1571,7 @@ class M25GUI:
             self.log("warning", f"Demo mode: quick {direction} simulated")
             return
 
-        quick_duration = max(0.1, min(10.0, float(self.quick_duration_var.get())))
+        quick_duration = max(self.QUICK_DURATION_MIN, min(self.QUICK_DURATION_MAX, float(self.quick_duration_var.get())))
 
         def move_thread():
             def ui_log(level_msg, msg):
@@ -1553,7 +1585,7 @@ class M25GUI:
                     return
 
                 builder = ECSPacketBuilder()
-                speed_mag = max(10, min(160, int(self.motion_speed_var.get())))
+                speed_mag = max(self.MOTION_SPEED_MIN, min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())))
                 speed = speed_mag if direction == "forward" else -speed_mag
                 label = "Forward" if direction == "forward" else "Backward"
 
@@ -1561,12 +1593,13 @@ class M25GUI:
                 if not (remote_left_ok and remote_right_ok):
                     ui_log("error", f"Failed to enter remote mode: Left={remote_left_ok}, Right={remote_right_ok}")
                     return
+                self._prime_remote_motion(builder)
 
                 ui_test_status(f"Quick {label}...")
                 ui_log("info", f"  -> Quick {label} ({quick_duration:.1f}s)")
 
                 self._pulse_remote_speed(builder, speed, speed, quick_duration)
-                self._pulse_remote_speed(builder, 0, 0, 0.2)
+                self._pulse_remote_speed(builder, 0, 0, self.REMOTE_STOP_DURATION_S)
 
                 ui_test_status(f"Quick {label} done")
 
@@ -1575,7 +1608,7 @@ class M25GUI:
                 ui_test_status("Movement failed")
                 try:
                     builder = ECSPacketBuilder()
-                    self._pulse_remote_speed(builder, 0, 0, 0.2)
+                    self._pulse_remote_speed(builder, 0, 0, self.REMOTE_STOP_DURATION_S)
                 except:
                     pass
             finally:
