@@ -345,10 +345,15 @@ class M25GUI:
     # Some wheel setups need higher differential than half-speed to overcome deadband.
     TURN_SPEED_FACTOR = 1.0
     TURN_SPEED_MIN = 55
+    TURN_DURATION_FACTOR = 1.8
+    TURN_DURATION_FACTOR_MIN = 1.0
+    TURN_DURATION_FACTOR_MAX = 4.0
+    TURN_DURATION_FACTOR_STEP = 0.1
 
-    def __init__(self, root, default_m25_version=M25_VERSION_AUTO):
+    def __init__(self, root, default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=False):
         self.root = root
         self.root.title("m5squared - Wheelchair Controller")
+        self.skip_disconnect_confirmation = bool(skip_disconnect_confirmation)
         
         # Set window size to use max screen height
         screen_width = root.winfo_screenwidth()
@@ -741,6 +746,22 @@ class M25GUI:
         )
         self.drive_step_duration_scale.pack(side=tk.LEFT, padx=(0, 5))
 
+        self.turn_duration_label = tk.Label(self.motion_tuning_frame, text="Turn x:")
+        self.turn_duration_label.pack(side=tk.LEFT, padx=(0, 4))
+
+        self.turn_duration_factor_var = tk.DoubleVar(value=self.TURN_DURATION_FACTOR)
+        self.turn_duration_scale = tk.Scale(
+            self.motion_tuning_frame,
+            from_=self.TURN_DURATION_FACTOR_MIN,
+            to=self.TURN_DURATION_FACTOR_MAX,
+            resolution=self.TURN_DURATION_FACTOR_STEP,
+            orient=tk.HORIZONTAL,
+            length=110,
+            variable=self.turn_duration_factor_var,
+            showvalue=True,
+        )
+        self.turn_duration_scale.pack(side=tk.LEFT, padx=(0, 5))
+
         # Row 3: single direction - label right, controls left
         self.single_dir_label = tk.Label(self.drive_test_frame, text="Single direction:", anchor=tk.E)
         self.single_dir_label.grid(row=3, column=0, sticky=tk.E, padx=(0, 8), pady=3)
@@ -1058,6 +1079,8 @@ class M25GUI:
             self._theme_widget(self.motion_speed_scale, "scale")
             self._theme_widget(self.drive_step_duration_label, "label")
             self._theme_widget(self.drive_step_duration_scale, "scale")
+            self._theme_widget(self.turn_duration_label, "label")
+            self._theme_widget(self.turn_duration_scale, "scale")
             self._theme_widget(self.single_dir_frame, "frame")
             self._theme_widget(self.single_dir_label, "label")
             self._theme_widget(self.single_dir_menu, "optionmenu")
@@ -1474,6 +1497,10 @@ class M25GUI:
                 test_speed = max(self.MOTION_SPEED_MIN, min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())))
                 test_duration = max(self.DRIVE_STEP_DURATION_MIN, min(self.DRIVE_STEP_DURATION_MAX, float(self.drive_step_duration_var.get())))
                 turn_speed = max(self.TURN_SPEED_MIN, int(test_speed * self.TURN_SPEED_FACTOR))
+                turn_duration_factor = max(
+                    self.TURN_DURATION_FACTOR_MIN,
+                    min(self.TURN_DURATION_FACTOR_MAX, float(self.turn_duration_factor_var.get())),
+                )
 
                 remote_left_ok, remote_right_ok = self._set_remote_mode_both(builder, True)
                 if not (remote_left_ok and remote_right_ok):
@@ -1501,7 +1528,7 @@ class M25GUI:
                 
                 ui_log(
                     "info",
-                    f"Drive test: {len([s for s in test_sequence if s[0] != 'Stop'])} movements at speed {test_speed}, turn {turn_speed}, step {test_duration:.1f}s"
+                    f"Drive test: {len([s for s in test_sequence if s[0] != 'Stop'])} movements at speed {test_speed}, turn {turn_speed}, step {test_duration:.1f}s, turn x{turn_duration_factor:.1f}"
                 )
                 
                 for i, (label, left_speed, right_speed) in enumerate(test_sequence):
@@ -1509,7 +1536,12 @@ class M25GUI:
                     ui_log("info", f"  -> {label} (L:{left_speed}, R:{right_speed})")
 
                     # Stream speed commands during each movement window.
-                    duration = self.DRIVE_STEP_DURATION_MIN if label == "Stop" else test_duration
+                    if label == "Stop":
+                        duration = self.DRIVE_STEP_DURATION_MIN
+                    elif "Turn" in label:
+                        duration = test_duration * turn_duration_factor
+                    else:
+                        duration = test_duration
                     left_ok, right_ok = self._pulse_remote_speed(builder, left_speed, right_speed, duration)
                     
                     if not (left_ok and right_ok):
@@ -1764,14 +1796,15 @@ class M25GUI:
     
     def disconnect(self):
         """Disconnect from M25 wheels"""
-        # Confirm disconnection
-        confirm = messagebox.askyesno(
-            "Confirm Disconnect",
-            "Are you sure you want to disconnect from the wheels?"
-        )
-        
-        if not confirm:
-            return
+        if not self.skip_disconnect_confirmation:
+            # Confirm disconnection
+            confirm = messagebox.askyesno(
+                "Confirm Disconnect",
+                "Are you sure you want to disconnect from the wheels?"
+            )
+
+            if not confirm:
+                return
         
         self.log("info", "Disconnecting from wheels...")
         self.status_message("info", "Disconnecting...")
@@ -2665,7 +2698,7 @@ class M25GUI:
             self.status_message("info", "Right wheel selected")
 
 
-def main(default_m25_version=M25_VERSION_AUTO):
+def main(default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=False):
     """Launch the GUI application"""
 
     missing = []
@@ -2693,10 +2726,19 @@ def main(default_m25_version=M25_VERSION_AUTO):
         choices=[M25_VERSION_AUTO, M25_VERSION_V1, M25_VERSION_V2],
         help="Select wheel generation: auto, v1 (RFCOMM), or v2 (BLE)",
     )
+    cli_parser.add_argument(
+        "--skip-disconnect-confirmation",
+        action="store_true",
+        help="Disconnect immediately without confirmation dialog",
+    )
     args, _ = cli_parser.parse_known_args()
 
     root = tk.Tk()
-    app = M25GUI(root, default_m25_version=args.m25_version)
+    app = M25GUI(
+        root,
+        default_m25_version=args.m25_version,
+        skip_disconnect_confirmation=(args.skip_disconnect_confirmation or skip_disconnect_confirmation),
+    )
     root.mainloop()
 
 

@@ -26,11 +26,14 @@ def setup_logging(level: str = "INFO") -> None:
     )
 
 
-def launch_gui(m25_version: str = "auto") -> None:
+def launch_gui(m25_version: str = "auto", skip_disconnect_confirmation: bool = False) -> None:
     """Launch the GUI application"""
     print("Starting m5squared GUI...")
     from m25_gui import main
-    main(default_m25_version=m25_version)
+    main(
+        default_m25_version=m25_version,
+        skip_disconnect_confirmation=skip_disconnect_confirmation,
+    )
 
 
 def launch_gamepad(use_mock: bool = False) -> None:
@@ -93,8 +96,8 @@ def launch_gamepad(use_mock: bool = False) -> None:
             # Connect (using mock addresses for now)
             print("Connecting to vehicles...")
             supervisor.request_connect(
-                left_addr="MOCK:LEFT" if use_mock else None,
-                right_addr="MOCK:RIGHT" if use_mock else None,
+                left_addr="MOCK:LEFT" if use_mock else "MOCK:LEFT",  # Placeholder for real address
+                right_addr="MOCK:RIGHT" if use_mock else "MOCK:RIGHT",  # Placeholder for real address
                 left_key=b"mock_key_left_16",
                 right_key=b"mock_key_rght_16"
             )
@@ -168,6 +171,11 @@ Examples:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Set logging level"
     )
+    parser.add_argument(
+        "--skip-disconnect-confirmation",
+        action="store_true",
+        help="Disconnect immediately without confirmation dialog (GUI mode)",
+    )
     
     args = parser.parse_args()
     
@@ -181,7 +189,10 @@ Examples:
         launch_gamepad(use_mock=args.mock)
     else:
         # Default to GUI
-        launch_gui(m25_version=args.m25_version)
+        launch_gui(
+            m25_version=args.m25_version,
+            skip_disconnect_confirmation=args.skip_disconnect_confirmation,
+        )
 
 
 if __name__ == "__main__":
