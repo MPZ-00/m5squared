@@ -675,6 +675,22 @@ class M25GUI:
         self.single_dir_menu.config(width=10)
         self.single_dir_menu.pack(side=tk.LEFT, padx=(0, 5))
 
+        self.single_duration_label = tk.Label(self.single_dir_frame, text="Time (s):")
+        self.single_duration_label.pack(side=tk.LEFT, padx=(4, 4))
+
+        self.single_duration_var = tk.DoubleVar(value=1.5)
+        self.single_duration_scale = tk.Scale(
+            self.single_dir_frame,
+            from_=0.2,
+            to=5.0,
+            resolution=0.1,
+            orient=tk.HORIZONTAL,
+            length=120,
+            variable=self.single_duration_var,
+            showvalue=True,
+        )
+        self.single_duration_scale.pack(side=tk.LEFT, padx=(0, 5))
+
         self.single_dir_btn = tk.Button(self.single_dir_frame, text="Run", command=self.run_single_direction_test, state="disabled", cursor="hand2", width=8)
         self.single_dir_btn.pack(side=tk.LEFT)
 
@@ -684,6 +700,22 @@ class M25GUI:
 
         self.quick_move_frame = tk.Frame(self.drive_test_frame)
         self.quick_move_frame.grid(row=3, column=1, sticky=tk.W, pady=3)
+
+        self.quick_duration_label = tk.Label(self.quick_move_frame, text="Time (s):")
+        self.quick_duration_label.pack(side=tk.LEFT, padx=(0, 4))
+
+        self.quick_duration_var = tk.DoubleVar(value=0.5)
+        self.quick_duration_scale = tk.Scale(
+            self.quick_move_frame,
+            from_=0.1,
+            to=5.0,
+            resolution=0.1,
+            orient=tk.HORIZONTAL,
+            length=120,
+            variable=self.quick_duration_var,
+            showvalue=True,
+        )
+        self.quick_duration_scale.pack(side=tk.LEFT, padx=(0, 8))
 
         self.quick_fwd_btn = tk.Button(self.quick_move_frame, text="Forward", command=lambda: self.run_short_movement("forward"), state="disabled", cursor="hand2", width=10)
         self.quick_fwd_btn.pack(side=tk.LEFT, padx=(0, 5))
@@ -811,6 +843,15 @@ class M25GUI:
         
         elif widget_type == "labelframe":
             config = {"bg": theme["bg"], "fg": theme["fg"]}
+
+        elif widget_type == "scale":
+            config = {
+                "bg": theme["bg"],
+                "fg": theme["fg"],
+                "highlightbackground": theme["bg"],
+                "activebackground": theme["select_bg"],
+                "troughcolor": theme["entry_bg"],
+            }
         
         # Override with any custom kwargs
         config.update(kwargs)
@@ -936,9 +977,13 @@ class M25GUI:
             self._theme_widget(self.single_dir_frame, "frame")
             self._theme_widget(self.single_dir_label, "label")
             self._theme_widget(self.single_dir_menu, "optionmenu")
+            self._theme_widget(self.single_duration_label, "label")
+            self._theme_widget(self.single_duration_scale, "scale")
             self._theme_widget(self.single_dir_btn, "button")
             self._theme_widget(self.quick_move_frame, "frame")
             self._theme_widget(self.quick_label, "label")
+            self._theme_widget(self.quick_duration_label, "label")
+            self._theme_widget(self.quick_duration_scale, "scale")
             self._theme_widget(self.quick_fwd_btn, "button")
             self._theme_widget(self.quick_bwd_btn, "button")
             self._theme_widget(self.drive_test_status, "label")
@@ -1382,8 +1427,9 @@ class M25GUI:
     def run_single_direction_test(self):
         """Run a single direction test (user-chosen: Forward or Backward)"""
         direction = self.single_dir_var.get()
+        test_duration = max(0.1, min(10.0, float(self.single_duration_var.get())))
         self.log("info", f"Single direction test: {direction}")
-        self.status_message("info", f"Running {direction} test...")
+        self.status_message("info", f"Running {direction} test ({test_duration:.1f}s)...")
 
         if self.demo_mode:
             self.log("warning", f"Demo mode: {direction} test simulated")
@@ -1406,7 +1452,6 @@ class M25GUI:
 
                 builder = ECSPacketBuilder()
                 test_speed = 30
-                test_duration = 1.5
                 speed = test_speed if direction == "Forward" else -test_speed
 
                 remote_left_ok, remote_right_ok = self._set_remote_mode_both(builder, True)
@@ -1416,7 +1461,7 @@ class M25GUI:
                     return
 
                 ui_test_status(f"{direction}...")
-                ui_log("info", f"  -> {direction} (speed: {speed})")
+                ui_log("info", f"  -> {direction} (speed: {speed}, {test_duration:.1f}s)")
 
                 self._pulse_remote_speed(builder, speed, speed, test_duration)
                 self._pulse_remote_speed(builder, 0, 0, 0.2)
@@ -1444,10 +1489,12 @@ class M25GUI:
         threading.Thread(target=test_thread, daemon=True).start()
 
     def run_short_movement(self, direction: str):
-        """Send a short 0.5s burst in the given direction (forward or backward)"""
+        """Send a short burst in the given direction (forward or backward)."""
         if self.demo_mode:
             self.log("warning", f"Demo mode: quick {direction} simulated")
             return
+
+        quick_duration = max(0.1, min(10.0, float(self.quick_duration_var.get())))
 
         def move_thread():
             def ui_log(level_msg, msg):
@@ -1470,9 +1517,9 @@ class M25GUI:
                     return
 
                 ui_test_status(f"Quick {label}...")
-                ui_log("info", f"  -> Quick {label}")
+                ui_log("info", f"  -> Quick {label} ({quick_duration:.1f}s)")
 
-                self._pulse_remote_speed(builder, speed, speed, 0.5)
+                self._pulse_remote_speed(builder, speed, speed, quick_duration)
                 self._pulse_remote_speed(builder, 0, 0, 0.2)
 
                 ui_test_status(f"Quick {label} done")

@@ -105,10 +105,13 @@ class ECSPacketBuilder(PacketBuilderBase):
         """Build WRITE_DRIVE_MODE packet (auto hold / hill hold)
 
         Args:
-            mode: True/1 = enable, False/0 = disable
+            mode: Drive mode bitmask. Accepts bool for backward compatibility.
         """
+        mode_value = int(mode)
+        if mode_value < 0 or mode_value > 0xFF:
+            raise ValueError(f"Drive mode {mode_value} out of range (0-255)")
         return self.build_packet(SERVICE_ID_APP_MGMT, PARAM_ID_WRITE_DRIVE_MODE,
-                                 bytes([1 if mode else 0]))
+                                 bytes([mode_value]))
 
     def build_write_drive_profile(self, profile_id):
         """Build WRITE_DRIVE_PROFILE packet (select profile)
@@ -439,9 +442,17 @@ class ECSRemote:
         """
         self.init_connection(conn, builder)
         time.sleep(self.COMMAND_DELAY)
-        mode = DRIVE_MODE_BIT_REMOTE if enabled else 0x00
-        packet = builder.build_write_drive_mode(mode)
-        return self.write_value(conn, packet, "write_remote_mode")
+        if not enabled:
+            packet = builder.build_write_drive_mode(0x00)
+            return self.write_value(conn, packet, "write_remote_mode")
+
+        # Compatibility: some variants accept remote-only, others expect cruise+remote.
+        candidate_modes = [DRIVE_MODE_BIT_REMOTE, DRIVE_MODE_BIT_REMOTE | DRIVE_MODE_BIT_CRUISE]
+        for mode in candidate_modes:
+            packet = builder.build_write_drive_mode(mode)
+            if self.write_value(conn, packet, f"write_remote_mode(0x{mode:02X})"):
+                return True
+        return False
 
     def write_remote_speed(self, conn, builder, speed):
         """Send one remote speed command.
