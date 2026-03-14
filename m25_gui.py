@@ -663,12 +663,51 @@ class M25GUI:
         self.drive_test_btn = tk.Button(self.drive_test_frame, text="Run Drive Test", command=self.run_drive_test, state="disabled", cursor="hand2")
         self.drive_test_btn.grid(row=1, column=0, columnspan=2, pady=5)
 
-        # Row 2: single direction - label right, controls left
+        # Row 2: shared motion tuning controls
+        self.motion_tuning_label = tk.Label(self.drive_test_frame, text="Motion tuning:", anchor=tk.E)
+        self.motion_tuning_label.grid(row=2, column=0, sticky=tk.E, padx=(0, 8), pady=3)
+
+        self.motion_tuning_frame = tk.Frame(self.drive_test_frame)
+        self.motion_tuning_frame.grid(row=2, column=1, sticky=tk.W, pady=3)
+
+        self.motion_speed_label = tk.Label(self.motion_tuning_frame, text="Speed:")
+        self.motion_speed_label.pack(side=tk.LEFT, padx=(0, 4))
+
+        self.motion_speed_var = tk.IntVar(value=30)
+        self.motion_speed_scale = tk.Scale(
+            self.motion_tuning_frame,
+            from_=10,
+            to=160,
+            resolution=5,
+            orient=tk.HORIZONTAL,
+            length=120,
+            variable=self.motion_speed_var,
+            showvalue=True,
+        )
+        self.motion_speed_scale.pack(side=tk.LEFT, padx=(0, 8))
+
+        self.drive_step_duration_label = tk.Label(self.motion_tuning_frame, text="Step (s):")
+        self.drive_step_duration_label.pack(side=tk.LEFT, padx=(0, 4))
+
+        self.drive_step_duration_var = tk.DoubleVar(value=1.0)
+        self.drive_step_duration_scale = tk.Scale(
+            self.motion_tuning_frame,
+            from_=0.3,
+            to=10.0,
+            resolution=0.1,
+            orient=tk.HORIZONTAL,
+            length=120,
+            variable=self.drive_step_duration_var,
+            showvalue=True,
+        )
+        self.drive_step_duration_scale.pack(side=tk.LEFT, padx=(0, 5))
+
+        # Row 3: single direction - label right, controls left
         self.single_dir_label = tk.Label(self.drive_test_frame, text="Single direction:", anchor=tk.E)
-        self.single_dir_label.grid(row=2, column=0, sticky=tk.E, padx=(0, 8), pady=3)
+        self.single_dir_label.grid(row=3, column=0, sticky=tk.E, padx=(0, 8), pady=3)
 
         self.single_dir_frame = tk.Frame(self.drive_test_frame)
-        self.single_dir_frame.grid(row=2, column=1, sticky=tk.W, pady=3)
+        self.single_dir_frame.grid(row=3, column=1, sticky=tk.W, pady=3)
 
         self.single_dir_var = tk.StringVar(value="Forward")
         self.single_dir_menu = tk.OptionMenu(self.single_dir_frame, self.single_dir_var, "Forward", "Backward")
@@ -682,7 +721,7 @@ class M25GUI:
         self.single_duration_scale = tk.Scale(
             self.single_dir_frame,
             from_=0.2,
-            to=5.0,
+            to=10.0,
             resolution=0.1,
             orient=tk.HORIZONTAL,
             length=120,
@@ -694,12 +733,12 @@ class M25GUI:
         self.single_dir_btn = tk.Button(self.single_dir_frame, text="Run", command=self.run_single_direction_test, state="disabled", cursor="hand2", width=8)
         self.single_dir_btn.pack(side=tk.LEFT)
 
-        # Row 3: quick buttons - label right, buttons left
+        # Row 4: quick buttons - label right, buttons left
         self.quick_label = tk.Label(self.drive_test_frame, text="Quick:", anchor=tk.E)
-        self.quick_label.grid(row=3, column=0, sticky=tk.E, padx=(0, 8), pady=3)
+        self.quick_label.grid(row=4, column=0, sticky=tk.E, padx=(0, 8), pady=3)
 
         self.quick_move_frame = tk.Frame(self.drive_test_frame)
-        self.quick_move_frame.grid(row=3, column=1, sticky=tk.W, pady=3)
+        self.quick_move_frame.grid(row=4, column=1, sticky=tk.W, pady=3)
 
         self.quick_duration_label = tk.Label(self.quick_move_frame, text="Time (s):")
         self.quick_duration_label.pack(side=tk.LEFT, padx=(0, 4))
@@ -708,7 +747,7 @@ class M25GUI:
         self.quick_duration_scale = tk.Scale(
             self.quick_move_frame,
             from_=0.1,
-            to=5.0,
+            to=10.0,
             resolution=0.1,
             orient=tk.HORIZONTAL,
             length=120,
@@ -723,9 +762,9 @@ class M25GUI:
         self.quick_bwd_btn = tk.Button(self.quick_move_frame, text="Backward", command=lambda: self.run_short_movement("backward"), state="disabled", cursor="hand2", width=10)
         self.quick_bwd_btn.pack(side=tk.LEFT)
 
-        # Row 4: status label centered
+        # Row 5: status label centered
         self.drive_test_status = tk.Label(self.drive_test_frame, text="")
-        self.drive_test_status.grid(row=4, column=0, columnspan=2, pady=(3, 0))
+        self.drive_test_status.grid(row=5, column=0, columnspan=2, pady=(3, 0))
 
         # Output Section
         self.output_frame = tk.LabelFrame(self.main_frame, text="Output", padx=10, pady=10, font=("", 9, "bold"))
@@ -974,6 +1013,12 @@ class M25GUI:
             self._theme_widget(self.drive_test_frame, "labelframe")
             self._theme_widget(self.drive_test_label, "label")
             self._theme_widget(self.drive_test_btn, "button")
+            self._theme_widget(self.motion_tuning_frame, "frame")
+            self._theme_widget(self.motion_tuning_label, "label")
+            self._theme_widget(self.motion_speed_label, "label")
+            self._theme_widget(self.motion_speed_scale, "scale")
+            self._theme_widget(self.drive_step_duration_label, "label")
+            self._theme_widget(self.drive_step_duration_scale, "scale")
             self._theme_widget(self.single_dir_frame, "frame")
             self._theme_widget(self.single_dir_label, "label")
             self._theme_widget(self.single_dir_menu, "optionmenu")
@@ -1362,8 +1407,8 @@ class M25GUI:
                     return
                 
                 builder = ECSPacketBuilder()
-                test_speed = 30  # Low speed for safety (out of ~100)
-                test_duration = 1.0  # 1 second per movement
+                test_speed = max(10, min(160, int(self.motion_speed_var.get())))
+                test_duration = max(0.3, min(10.0, float(self.drive_step_duration_var.get())))
 
                 remote_left_ok, remote_right_ok = self._set_remote_mode_both(builder, True)
                 if not (remote_left_ok and remote_right_ok):
@@ -1383,7 +1428,7 @@ class M25GUI:
                     ("Stop", 0, 0),
                 ]
                 
-                ui_log("info", f"Drive test: {len([s for s in test_sequence if s[0] != 'Stop'])} movements at speed {test_speed}")
+                ui_log("info", f"Drive test: {len([s for s in test_sequence if s[0] != 'Stop'])} movements at speed {test_speed}, step {test_duration:.1f}s")
                 
                 for i, (label, left_speed, right_speed) in enumerate(test_sequence):
                     ui_test_status(f"Step {i+1}/{len(test_sequence)}: {label}")
@@ -1451,7 +1496,7 @@ class M25GUI:
                     return
 
                 builder = ECSPacketBuilder()
-                test_speed = 30
+                test_speed = max(10, min(160, int(self.motion_speed_var.get())))
                 speed = test_speed if direction == "Forward" else -test_speed
 
                 remote_left_ok, remote_right_ok = self._set_remote_mode_both(builder, True)
@@ -1508,7 +1553,8 @@ class M25GUI:
                     return
 
                 builder = ECSPacketBuilder()
-                speed = 30 if direction == "forward" else -30
+                speed_mag = max(10, min(160, int(self.motion_speed_var.get())))
+                speed = speed_mag if direction == "forward" else -speed_mag
                 label = "Forward" if direction == "forward" else "Backward"
 
                 remote_left_ok, remote_right_ok = self._set_remote_mode_both(builder, True)
