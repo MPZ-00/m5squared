@@ -75,7 +75,15 @@ except ImportError:
     ble_scan_devices = cast(Any, None)
     HAS_BLE = False
 
-from m25_protocol_data import PARAM_ID_STATUS_DRIVE_MODE, PARAM_ID_STATUS_DUO_DRIVE_PARAMS
+from m25_protocol_data import (
+    PARAM_ID_STATUS_SOC,
+    PARAM_ID_STATUS_ASSIST_LEVEL,
+    PARAM_ID_STATUS_DRIVE_MODE,
+    PARAM_ID_STATUS_DRIVE_PROFILE,
+    PARAM_ID_STATUS_SW_VERSION,
+    PARAM_ID_CRUISE_VALUES,
+    PARAM_ID_STATUS_DUO_DRIVE_PARAMS,
+)
 from m25_transport import (
     M25_VERSION_AUTO,
     M25_VERSION_V1,
@@ -1404,7 +1412,6 @@ class M25GUI:
 
     def _pulse_remote_speed(self, builder, left_speed: int, right_speed: int, duration_s: float, interval_s: float | None = None):
         """Send remote speed repeatedly for a duration.
-
         Wheels expect periodic speed updates while in remote mode.
         """
         if interval_s is None:
@@ -2182,7 +2189,7 @@ class M25GUI:
                     left_soc = self.ecs_remote.read_value(
                         self.left_conn,
                         builder.build_read_soc,
-                        0x21,  # PARAM_ID_STATUS_SOC
+                        PARAM_ID_STATUS_SOC,
                         ResponseParser.parse_soc
                     )
                     left_battery = f"{left_soc}%" if left_soc is not None else "??%"
@@ -2191,7 +2198,7 @@ class M25GUI:
                     right_soc = self.ecs_remote.read_value(
                         self.right_conn,
                         builder.build_read_soc,
-                        0x21,  # PARAM_ID_STATUS_SOC
+                        PARAM_ID_STATUS_SOC,
                         ResponseParser.parse_soc
                     )
                     right_battery = f"{right_soc}%" if right_soc is not None else "??%"
@@ -2236,7 +2243,7 @@ class M25GUI:
                     assist = self.ecs_remote.read_value(
                         self.left_conn,
                         builder.build_read_assist_level,
-                        0x22,  # PARAM_ID_STATUS_ASSIST_LEVEL
+                        PARAM_ID_STATUS_ASSIST_LEVEL,
                         ResponseParser.parse_assist_level
                     )
                     assist_info = f"{assist['value']} ({assist['name']})" if assist else "??"
@@ -2245,7 +2252,7 @@ class M25GUI:
                     mode = self.ecs_remote.read_value(
                         self.left_conn,
                         builder.build_read_drive_mode,
-                        0x23,  # PARAM_ID_STATUS_DRIVE_MODE
+                        PARAM_ID_STATUS_DRIVE_MODE,
                         ResponseParser.parse_drive_mode
                     )
                     hill_hold = "ON" if (mode and mode['auto_hold']) else ("OFF" if mode else "??")
@@ -2254,7 +2261,7 @@ class M25GUI:
                     profile = self.ecs_remote.read_value(
                         self.left_conn,
                         builder.build_read_drive_profile,
-                        0x24,  # PARAM_ID_STATUS_DRIVE_PROFILE
+                        PARAM_ID_STATUS_DRIVE_PROFILE,
                         ResponseParser.parse_drive_profile
                     )
                     profile_info = profile['name'] if profile else "??"
@@ -2311,7 +2318,7 @@ class M25GUI:
                     left_ver = self.ecs_remote.read_value(
                         self.left_conn,
                         builder.build_read_sw_version,
-                        0x2E,  # PARAM_ID_STATUS_SW_VERSION
+                        PARAM_ID_STATUS_SW_VERSION,
                         ResponseParser.parse_sw_version
                     )
                     if left_ver:
@@ -2323,7 +2330,7 @@ class M25GUI:
                     right_ver = self.ecs_remote.read_value(
                         self.right_conn,
                         builder.build_read_sw_version,
-                        0x2E,  # PARAM_ID_STATUS_SW_VERSION
+                        PARAM_ID_STATUS_SW_VERSION,
                         ResponseParser.parse_sw_version
                     )
                     if right_ver:
@@ -2369,7 +2376,7 @@ class M25GUI:
                     profile = self.ecs_remote.read_value(
                         self.left_conn,
                         builder.build_read_drive_profile,
-                        0x24,  # PARAM_ID_STATUS_DRIVE_PROFILE
+                        PARAM_ID_STATUS_DRIVE_PROFILE,
                         ResponseParser.parse_drive_profile
                     )
                     
@@ -2434,28 +2441,28 @@ class M25GUI:
                     
                     # Version
                     version = self.ecs_remote.read_value(
-                        conn, builder.build_read_sw_version, 0x2E, ResponseParser.parse_sw_version
+                        conn, builder.build_read_sw_version, PARAM_ID_STATUS_SW_VERSION, ResponseParser.parse_sw_version
                     )
                     if version:
                         ui_log("muted", f"Firmware: {version['version_str']}")
                     
                     # Battery
                     soc = self.ecs_remote.read_value(
-                        conn, builder.build_read_soc, 0x21, ResponseParser.parse_soc
+                        conn, builder.build_read_soc, PARAM_ID_STATUS_SOC, ResponseParser.parse_soc
                     )
                     if soc is not None:
                         ui_log("muted", f"Battery: {soc}%")
                     
                     # Assist Level
                     level = self.ecs_remote.read_value(
-                        conn, builder.build_read_assist_level, 0x22, ResponseParser.parse_assist_level
+                        conn, builder.build_read_assist_level, PARAM_ID_STATUS_ASSIST_LEVEL, ResponseParser.parse_assist_level
                     )
                     if level:
                         ui_log("muted", f"Assist Level: {level['value']} ({level['name']})")
                     
                     # Drive Mode (for Hill Hold)
                     mode = self.ecs_remote.read_value(
-                        conn, builder.build_read_drive_mode, 0x23, ResponseParser.parse_drive_mode
+                        conn, builder.build_read_drive_mode, PARAM_ID_STATUS_DRIVE_MODE, ResponseParser.parse_drive_mode
                     )
                     if mode:
                         hill_hold = "ON" if mode['auto_hold'] else "OFF"
@@ -2463,21 +2470,21 @@ class M25GUI:
                     
                     # Drive Profile
                     profile = self.ecs_remote.read_value(
-                        conn, builder.build_read_drive_profile, 0x24, ResponseParser.parse_drive_profile
+                        conn, builder.build_read_drive_profile, PARAM_ID_STATUS_DRIVE_PROFILE, ResponseParser.parse_drive_profile
                     )
                     if profile:
                         ui_log("muted", f"Drive Profile: {profile['name']}")
                     
                     # Cruise Values (distance)
                     cruise = self.ecs_remote.read_value(
-                        conn, builder.build_read_cruise_values, 0x2D, ResponseParser.parse_cruise_values
+                        conn, builder.build_read_cruise_values, PARAM_ID_CRUISE_VALUES, ResponseParser.parse_cruise_values
                     )
                     if cruise:
                         ui_log("muted", f"Distance: {cruise['distance_km']:.1f} km")
 
                     # DuoDrive parameters can carry policy knobs on some firmware builds.
                     duo = self.ecs_remote.read_value(
-                        conn, builder.build_read_duo_drive_params, 0xF2, ResponseParser.parse_duo_drive_params
+                        conn, builder.build_read_duo_drive_params, PARAM_ID_STATUS_DUO_DRIVE_PARAMS, ResponseParser.parse_duo_drive_params
                     )
                     if duo:
                         ui_log(
