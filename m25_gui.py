@@ -344,7 +344,7 @@ class M25GUI:
     # Turn-in-place tuning for scripted drive test.
     # Some wheel setups need higher differential than half-speed to overcome deadband.
     TURN_SPEED_FACTOR = 1.0
-    TURN_SPEED_MIN = 35
+    TURN_SPEED_MIN = 55
 
     def __init__(self, root, default_m25_version=M25_VERSION_AUTO):
         self.root = root
