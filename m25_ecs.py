@@ -101,14 +101,14 @@ class ECSPacketBuilder(PacketBuilderBase):
         return self.build_packet(SERVICE_ID_APP_MGMT, PARAM_ID_WRITE_ASSIST_LEVEL,
                                  bytes([level]))
 
-    def build_write_drive_mode(self, auto_hold):
+    def build_write_drive_mode(self, mode):
         """Build WRITE_DRIVE_MODE packet (auto hold / hill hold)
 
         Args:
-            auto_hold: True/1 = enable, False/0 = disable
+            mode: True/1 = enable, False/0 = disable
         """
         return self.build_packet(SERVICE_ID_APP_MGMT, PARAM_ID_WRITE_DRIVE_MODE,
-                                 bytes([1 if auto_hold else 0]))
+                                 bytes([1 if mode else 0]))
 
     def build_write_drive_profile(self, profile_id):
         """Build WRITE_DRIVE_PROFILE packet (select profile)
@@ -275,10 +275,11 @@ class ResponseParser:
 
     @staticmethod
     def parse_sw_version(payload):
-        """Parse STATUS_SW_VERSION response (4 bytes)
+        """Parse SW_VERSION response payload.
 
-        Format: dev_state(char), major, minor, patch
-        Example: 0x56030500 = "V03.005.000"
+        Supported formats:
+        - 4 bytes: dev_state(char), major, minor, patch
+        - 3 bytes: major, minor, patch (no dev_state)
         """
         if len(payload) >= 4:
             dev_state = chr(payload[0]) if 0x20 <= payload[0] <= 0x7E else '?'
@@ -286,6 +287,17 @@ class ResponseParser:
             minor = payload[2]
             patch = payload[3]
             version_str = f"{dev_state}{major:02d}.{minor:03d}.{patch:03d}"
+            return {
+                'version_str': version_str,
+                'major': major,
+                'minor': minor,
+                'patch': patch
+            }
+        if len(payload) >= 3:
+            major = payload[0]
+            minor = payload[1]
+            patch = payload[2]
+            version_str = f"V{major:02d}.{minor:03d}.{patch:03d}"
             return {
                 'version_str': version_str,
                 'major': major,
@@ -326,6 +338,8 @@ class ECSRemote:
 
         for attempt in range(self.retries + 1):
             packet = build_method()
+            requested_service_id = packet[POS_SERVICE_ID] if len(packet) > POS_SERVICE_ID else None
+            requested_param_id = packet[POS_PARAM_ID] if len(packet) > POS_PARAM_ID else None
             response = conn.transact(packet)
 
             if response is None:
@@ -343,11 +357,37 @@ class ECSRemote:
                 last_error = f"NACK 0x{header['param_id']:02X}"
                 break  # Don't retry NACKs
 
-            if header['param_id'] != expected_param_id:
-                last_error = f"unexpected param_id 0x{header['param_id']:02X}"
+            # M25 variants differ in read response format:
+            # - Some return STATUS_* param IDs (expected_param_id)
+            # - Some echo the READ_* param ID back
+            # - Some return ACK with payload containing the value
+            param_id = header['param_id']
+            payload = header['payload']
+
+            if param_id == expected_param_id or (requested_param_id is not None and param_id == requested_param_id):
+                parsed = parse_method(payload)
+                if parsed is not None:
+                    return parsed
+                last_error = "parser returned no data"
                 continue
 
-            return parse_method(header['payload'])
+            if ResponseParser.is_ack(header) and payload:
+                parsed = parse_method(payload)
+                if parsed is not None:
+                    return parsed
+                last_error = "ACK payload parse failed"
+                continue
+
+            # Extra compatibility path for variants that reply on the same service
+            # with non-standard param IDs but a parseable payload.
+            if requested_service_id is not None and header.get('service_id') == requested_service_id and payload:
+                parsed = parse_method(payload)
+                if parsed is not None:
+                    return parsed
+                last_error = "same-service payload parse failed"
+                continue
+
+            last_error = f"unexpected param_id 0x{param_id:02X}"
 
         if self.verbose and last_error:
             print(f"  {build_method.__name__}: {last_error}", file=sys.stderr)
@@ -504,7 +544,8 @@ class ECSRemote:
         time.sleep(self.COMMAND_DELAY)
 
         # Drive profile parameters for current assist level
-        current_level = status['assist_level']['value'] if status.get('assist_level') else 0
+        assist_status = status.get('assist_level')
+        current_level = assist_status['value'] if isinstance(assist_status, dict) and 'value' in assist_status else 0
         params = self.read_value(conn, lambda: builder.build_read_drive_profile_params(current_level),
                                  PARAM_ID_STATUS_DRIVE_PROFILE_PARAMS, ResponseParser.parse_drive_profile_params)
         status['profile_params'] = params
