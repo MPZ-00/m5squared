@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pyright: reportArgumentType=false
 """
 M25 GUI - Cross-platform graphical interface for wheelchair.py
 
@@ -25,11 +26,13 @@ import asyncio
 import time
 from pathlib import Path
 from datetime import datetime
+from typing import Any, cast
 
 try:
     from dotenv import load_dotenv
     HAS_DOTENV = True
 except ImportError:
+    load_dotenv = None
     HAS_DOTENV = False
     print("Warning: python-dotenv not installed. Install with: pip install python-dotenv")
 
@@ -49,6 +52,10 @@ try:
     from m25_utils import parse_key
     HAS_M25_PROTOCOL = True
 except ImportError as e:
+    ECSPacketBuilder = cast(Any, None)
+    ECSRemote = cast(Any, None)
+    ResponseParser = cast(Any, None)
+    parse_key = cast(Any, None)
     HAS_M25_PROTOCOL = False
     print(f"Warning: M25 protocol modules not available: {e}")
 
@@ -56,16 +63,16 @@ try:
     from m25_spp import BluetoothConnection as RFCOMMBluetoothConnection
     HAS_RFCOMM = True
 except ImportError:
-    RFCOMMBluetoothConnection = None
+    RFCOMMBluetoothConnection = cast(Any, None)
     HAS_RFCOMM = False
 
 try:
     from m25_bluetooth_ble import M25BluetoothBLE, detect_m25_ble_profile, scan_devices as ble_scan_devices
     HAS_BLE = True
 except ImportError:
-    M25BluetoothBLE = None
-    detect_m25_ble_profile = None
-    ble_scan_devices = None
+    M25BluetoothBLE = cast(Any, None)
+    detect_m25_ble_profile = cast(Any, None)
+    ble_scan_devices = cast(Any, None)
     HAS_BLE = False
 
 from m25_transport import (
@@ -90,6 +97,8 @@ class BLEConnectionAdapter:
     def __init__(self, address, key, name="wheel", debug=False, loop=None):
         if not HAS_BLE:
             raise RuntimeError("BLE transport not available")
+        if M25BluetoothBLE is None:
+            raise RuntimeError("BLE adapter unavailable")
         self.address = address
         self.key = key
         self.name = name
@@ -282,7 +291,7 @@ class M25GUI:
         self.scanned_devices = []
         self.left_conn = None
         self.right_conn = None
-        self.ecs_remote = None
+        self.ecs_remote: Any = None
         self.demo_mode = False
         self.event_loop = None  # For Windows async Bluetooth
         self.default_m25_version = normalize_m25_version(default_m25_version or os.getenv("M25_VERSION"))
@@ -323,7 +332,7 @@ class M25GUI:
 
     def load_env(self):
         """Load .env file if available"""
-        if HAS_DOTENV:
+        if HAS_DOTENV and load_dotenv is not None:
             env_path = Path(".env")
             if env_path.exists():
                 load_dotenv(env_path)
@@ -1109,6 +1118,8 @@ class M25GUI:
         """Create a wheel connection for the requested transport."""
         if transport_kind == TRANSPORT_BLE:
             return BLEConnectionAdapter(address, key_bytes, name=name, debug=False, loop=loop)
+        if RFCOMMBluetoothConnection is None:
+            raise RuntimeError("RFCOMM transport unavailable")
         return RFCOMMBluetoothConnection(address, key_bytes, name=name, debug=False)
     
     def detect_input_device(self):
@@ -1189,7 +1200,10 @@ class M25GUI:
 
     def toggle_mpp_mode(self):
         """Toggle M++ mode (8 km/h support)"""
-        if self.enable_mpp.get():
+        enable_mpp = getattr(self, "enable_mpp", None)
+        if enable_mpp is None:
+            return
+        if enable_mpp.get():
             self.log("info", "M++ mode enabled: Speeds up to 8.5 km/h available")
             # Adjust current values if they would exceed new limit
             if self.max_speed_level1.get() > 6.0:
