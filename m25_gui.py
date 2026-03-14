@@ -169,7 +169,9 @@ class BLEConnectionAdapter:
             if not ok:
                 return None
 
-            deadline = time.monotonic() + max(1.5, timeout)
+            # Honor caller-provided timeout so motion pulse loops can run at high cadence.
+            # Keep a small floor to avoid zero/negative waits.
+            deadline = time.monotonic() + max(0.05, timeout)
             fallback_response = None
 
             while time.monotonic() < deadline:
@@ -321,7 +323,7 @@ class M25GUI:
     SINGLE_DURATION_MAX = 10.0
     SINGLE_DURATION_DEFAULT = 1.5
 
-    QUICK_DURATION_MIN = 0.1
+    QUICK_DURATION_MIN = 2
     QUICK_DURATION_MAX = 10.0
     QUICK_DURATION_DEFAULT = 0.5
 
