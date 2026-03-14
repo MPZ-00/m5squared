@@ -125,6 +125,13 @@ class BLEConnectionAdapter:
             if data is None:
                 break
 
+    @staticmethod
+    def _telegram_id(packet):
+        """Extract telegram ID from decrypted SPP packet."""
+        if not packet or len(packet) < 2:
+            return None
+        return packet[1]
+
     def connect(self, channel=6):
         """Connect to device and enable notifications."""
         del channel
@@ -156,11 +163,41 @@ class BLEConnectionAdapter:
             return None
 
         try:
+            request_tid = self._telegram_id(spp_data)
             self._drain_notifications()
             ok = self._run(self.bt.send_packet(spp_data))
             if not ok:
                 return None
-            return self._run(self.bt.wait_notification(timeout=max(1.5, timeout)))
+
+            deadline = time.monotonic() + max(1.5, timeout)
+            fallback_response = None
+
+            while time.monotonic() < deadline:
+                remaining = deadline - time.monotonic()
+                wait_slice = min(0.4, max(0.01, remaining))
+                response = self._run(self.bt.wait_notification(timeout=wait_slice))
+                if response is None:
+                    continue
+
+                # Keep first response as fallback for wheels that do not echo telegram IDs.
+                if fallback_response is None:
+                    fallback_response = response
+
+                if request_tid is None:
+                    return response
+
+                response_tid = self._telegram_id(response)
+                if response_tid == request_tid:
+                    return response
+
+                if self.debug:
+                    print(
+                        f"  [{self.name}] Ignoring out-of-order response "
+                        f"tid=0x{response_tid:02X} expected=0x{request_tid:02X}",
+                        file=sys.stderr,
+                    )
+
+            return fallback_response
         except Exception as e:
             if self.debug:
                 print(f"  transact error [{self.name}]: {e}", file=sys.stderr)
