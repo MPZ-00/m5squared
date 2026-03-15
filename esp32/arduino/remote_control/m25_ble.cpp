@@ -505,14 +505,77 @@ static void _rfcommSppCb(esp_spp_cb_event_t event, esp_spp_cb_param_t* param) {
 // ---------------------------------------------------------------------------
 
 bool _wheelActive(int idx) {
-#if   WHEEL_MODE == WHEEL_MODE_DUAL
-    return true;
-#elif WHEEL_MODE == WHEEL_MODE_LEFT_ONLY
-    return idx == WHEEL_LEFT;
-#elif WHEEL_MODE == WHEEL_MODE_RIGHT_ONLY
-    return idx == WHEEL_RIGHT;
+    switch (WHEEL_MODE) {
+        case WHEEL_MODE_DUAL:
+            return true;
+        case WHEEL_MODE_LEFT_ONLY:
+            return idx == WHEEL_LEFT;
+        case WHEEL_MODE_RIGHT_ONLY:
+            return idx == WHEEL_RIGHT;
+        default:
+            return true;
+    }
+}
+
+static bool _transportLinkReadyForSend(const WheelConnState_t& w) {
+#if M25_TRANSPORT_BLE
+    // Avoid BLEClient::isConnected() here; see _sendCommand() deadlock note.
+    return w.connected && w.rxChar != nullptr;
+#elif M25_TRANSPORT_RFCOMM
+    return w.connected && w.sppHandle != 0;
 #else
-    return true;
+    return false;
+#endif
+}
+
+static bool _transportHasOpenLink(const WheelConnState_t& w) {
+#if M25_TRANSPORT_BLE
+    return w.client && w.client->isConnected();
+#elif M25_TRANSPORT_RFCOMM
+    return w.sppHandle != 0;
+#else
+    return false;
+#endif
+}
+
+static void _transportDisconnectLink(WheelConnState_t& w) {
+#if M25_TRANSPORT_BLE
+    if (w.client && w.client->isConnected()) {
+        w.client->disconnect();
+    }
+#elif M25_TRANSPORT_RFCOMM
+    if (w.sppHandle) {
+        esp_spp_disconnect(w.sppHandle);
+    }
+#else
+    (void)w;
+#endif
+}
+
+static void _transportClearLinkState(WheelConnState_t& w, int idx) {
+#if M25_TRANSPORT_BLE
+    (void)idx;
+    w.rxChar = nullptr;
+    w.txChar = nullptr;
+    w.rxWriteWithResponse = false;
+#elif M25_TRANSPORT_RFCOMM
+    w.sppHandle = 0;
+    if (idx >= 0 && idx < WHEEL_COUNT) {
+        _rfRxLen[idx] = 0;
+    }
+#else
+    (void)w;
+    (void)idx;
+#endif
+}
+
+static bool _transportIsProtocolConnected(const WheelConnState_t& w) {
+#if M25_TRANSPORT_BLE
+    return w.connected && w.protocolReady && w.client != nullptr && w.client->isConnected();
+#elif M25_TRANSPORT_RFCOMM
+    return w.connected && w.protocolReady && w.sppHandle != 0;
+#else
+    return false;
 #endif
 }
 
@@ -908,15 +971,7 @@ bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
                   const uint8_t* payload, uint8_t payloadLen) {
     WheelConnState_t &w = _wheels[idx];
     _txStatsCountAttempt(paramId, payload, payloadLen);
-#if M25_TRANSPORT_BLE
-    // Quick pre-checks before taking the mutex to avoid unnecessary contention.
-    // Use w.connected flag here (not isConnected()) ─ isConnected() acquires a
-    // Bluedroid-internal lock and can block when the stack is in error recovery.
-    if (!w.connected || w.rxChar == nullptr) return false;
-#endif
-#if M25_TRANSPORT_RFCOMM
-    if (!w.connected || w.sppHandle == 0) return false;
-#endif
+    if (!_transportLinkReadyForSend(w)) return false;
 
     // Serialize all GATT writes across tasks (motor task Core 0, telemetry Core 1).
     if (_bleTxMutex && xSemaphoreTake(_bleTxMutex, pdMS_TO_TICKS(200)) != pdTRUE) {
@@ -929,14 +984,7 @@ bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
     // isConnected() blocks indefinitely, holding our mutex and deadlocking every
     // other caller.  The disconnect callback sets w.connected = false reliably.
     bool ok = false;
-    if (w.connected
-#if M25_TRANSPORT_BLE
-        && w.rxChar
-#endif
-#if M25_TRANSPORT_RFCOMM
-        && w.sppHandle != 0
-#endif
-        ) {
+    if (_transportLinkReadyForSend(w)) {
         uint8_t buf[128];
         uint8_t spp[32];
         uint8_t sppLen = 0;
@@ -1886,19 +1934,8 @@ void bleResetWheel(int idx) {
     // Nulling w.client would force BLEDevice::createClient() on every retry,
     // which leaks GATT client slots from the ESP32 BLE stack and eventually
     // corrupts its internal state, causing persistent encryption failures.
-    if (
-#if M25_TRANSPORT_BLE
-        w.client && w.client->isConnected()
-#else
-        w.sppHandle != 0
-#endif
-    ) {
-#if M25_TRANSPORT_BLE
-        w.client->disconnect();
-#endif
-#if M25_TRANSPORT_RFCOMM
-        esp_spp_disconnect(w.sppHandle);
-#endif
+    if (_transportHasOpenLink(w)) {
+        _transportDisconnectLink(w);
     }
 
     // Clear all protocol state; preserve mac, name, key, and client object
@@ -1906,15 +1943,7 @@ void bleResetWheel(int idx) {
     w.protocolReady    = false;
     w.telegramId       = M25_TELEGRAM_ID_START;
     w.driveModeBits    = 0;
-#if M25_TRANSPORT_BLE
-    w.rxChar               = nullptr;
-    w.txChar               = nullptr;
-    w.rxWriteWithResponse  = false;
-#endif
-#if M25_TRANSPORT_RFCOMM
-    w.sppHandle            = 0;
-    _rfRxLen[idx]          = 0;
-#endif
+    _transportClearLinkState(w, idx);
     w.receivedFirstAck     = false;
     w.consecutiveFails = 0;
     w.lastNotifyMs     = 0;
@@ -2003,13 +2032,8 @@ void bleDisconnect() {
             uint8_t norm = M25_DRIVE_MODE_NORMAL;
             _sendCommand(i, M25_SRV_APP_MGMT, M25_PARAM_WRITE_DRIVE_MODE, &norm, 1);
         }
-        #if M25_TRANSPORT_BLE
-        if (w.client && w.client->isConnected()) w.client->disconnect();
-        #endif
-        #if M25_TRANSPORT_RFCOMM
-            if (w.sppHandle) esp_spp_disconnect(w.sppHandle);
-            w.sppHandle = 0;
-        #endif
+        _transportDisconnectLink(w);
+        _transportClearLinkState(w, i);
         w.connected     = false;
         w.protocolReady = false;
         w.driveModeBits = 0;
@@ -2020,13 +2044,7 @@ void bleDisconnect() {
 
 bool bleIsConnected(int wheelIdx) {
     WheelConnState_t &w = _wheels[wheelIdx];
-#if M25_TRANSPORT_BLE
-    return w.connected && w.protocolReady
-        && w.client != nullptr && w.client->isConnected();
-#endif
-#if M25_TRANSPORT_RFCOMM
-    return w.connected && w.protocolReady && w.sppHandle != 0;
-#endif
+    return _transportIsProtocolConnected(w);
 }
 
 bool bleAllConnected() {
@@ -2414,29 +2432,16 @@ void bleSetMac(int idx, const char* mac) {
     }
     
     // Safely check and disconnect existing client
-#if M25_TRANSPORT_BLE
     if (debugFlags & DBG_BLE) {
-        Serial.printf("[BLE] Checking client pointer: %p\n", (void*)w.client);
+        Serial.println("[BLE] Checking existing transport link state...");
     }
-    if (w.client != nullptr) {
+    if (_transportHasOpenLink(w)) {
         if (debugFlags & DBG_BLE) {
-            Serial.println("[BLE] Client exists, checking connection...");
+            Serial.println("[BLE] Disconnecting existing link...");
         }
-        if (w.client->isConnected()) {
-            if (debugFlags & DBG_BLE) {
-                Serial.println("[BLE] Disconnecting...");
-            }
-            w.client->disconnect();
-        }
+        _transportDisconnectLink(w);
     }
-#endif
-#if M25_TRANSPORT_RFCOMM
-    if (w.sppHandle) {
-        if (debugFlags & DBG_BLE) Serial.println("[RFCOMM] Disconnecting existing SPP handle...");
-        esp_spp_disconnect(w.sppHandle);
-        w.sppHandle = 0;
-    }
-#endif
+    _transportClearLinkState(w, idx);
     if (debugFlags & DBG_BLE) {
         Serial.println("[BLE] Updating wheel state...");
     }
