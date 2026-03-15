@@ -74,22 +74,10 @@ inline MotorCommand calculateMotorCommand(float x_norm, float y_norm,
 
     const AssistConfig &cfg = assistConfigs[assistLevel];
 
-    // Choose forward or reverse Vmax based on Y direction
-    float vmax;
-    if (y_norm >= 0.0f) {
-        vmax = (float)cfg.vmaxForward;
-    } else {
-        vmax = -(float)cfg.vmaxReverse;   // negative for reverse
-    }
-
     // Signed base speed for both wheels
     float baseSigned = y_norm * ((y_norm >= 0.0f)
                                  ? (float)cfg.vmaxForward
                                  : (float)cfg.vmaxReverse);
-    // For reverse: y_norm is negative, vmaxReverse is positive -> result negative
-    if (y_norm < 0.0f) {
-        baseSigned = y_norm * (float)cfg.vmaxReverse;
-    }
 
     // Differential mixing: the inner wheel of the turn is slowed down.
     //   x > 0 (right turn): right wheel is inner -> right_factor < 1

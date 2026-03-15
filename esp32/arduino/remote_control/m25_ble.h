@@ -439,6 +439,13 @@ void bleResetNotifyTimers();
 bool bleSendStop();
 bool bleSendMotorCommand(float leftPercent, float rightPercent);
 
+// Motor debug-log filtering for STOP spam control.
+// When enabled, STOP logs are emitted every Nth STOP per wheel while DBG_MOTOR is on.
+void bleSetMotorStopLogEnabled(bool enable);
+bool bleGetMotorStopLogEnabled();
+void bleSetMotorStopLogEvery(uint16_t every);
+uint16_t bleGetMotorStopLogEvery();
+
 // Hill hold control
 bool bleSendHillHold(bool enable);
 
@@ -451,6 +458,10 @@ void bleTick();
 // Auto-reconnect control
 void bleSetAutoReconnect(bool enable);
 bool bleGetAutoReconnect();
+
+// TX statistics (actual command attempts/success/failure) for diagnostics.
+void blePrintTxStats();
+void bleResetTxStats();
 
 // Runtime MAC address / key override
 void bleSetMac(int idx, const char* mac);

@@ -37,6 +37,29 @@ static bool _bleAutoReconnectFlag = true;
 // Every _sendCommand() caller must hold this before touching the BLE stack.
 static SemaphoreHandle_t _bleTxMutex = nullptr;
 
+// Motor STOP debug log filter (used only when DBG_MOTOR is enabled).
+static volatile bool _motorStopLogEnabled = true;
+static volatile uint16_t _motorStopLogEvery = 20;
+
+// TX statistics for diagnosing what we actually send to the wheels.
+struct TxStats {
+    uint32_t totalAttempts;
+    uint32_t totalSuccess;
+    uint32_t totalFail;
+    uint32_t remoteSpeed;
+    uint32_t remoteSpeedStop;
+    uint32_t remoteSpeedMotion;
+    uint32_t driveMode;
+    uint32_t assistLevel;
+    uint32_t readSoc;
+    uint32_t readFw;
+    uint32_t readCruise;
+    uint32_t other;
+};
+
+static TxStats _txStats = {};
+static portMUX_TYPE _txStatsMux = portMUX_INITIALIZER_UNLOCKED;
+
 // ---------------------------------------------------------------------------
 // BLE traffic recorder state
 // ---------------------------------------------------------------------------
@@ -733,9 +756,54 @@ static void _clearTxFailureState(WheelConnState_t& w) {
     w.lastTxFailMs = 0;
 }
 
+static void _txStatsCountAttempt(uint8_t paramId, const uint8_t* payload, uint8_t payloadLen) {
+    portENTER_CRITICAL(&_txStatsMux);
+    _txStats.totalAttempts++;
+    switch (paramId) {
+        case M25_PARAM_WRITE_REMOTE_SPEED:
+            _txStats.remoteSpeed++;
+            if (payload && payloadLen >= 2 && payload[0] == 0 && payload[1] == 0) {
+                _txStats.remoteSpeedStop++;
+            } else {
+                _txStats.remoteSpeedMotion++;
+            }
+            break;
+        case M25_PARAM_WRITE_DRIVE_MODE:
+            _txStats.driveMode++;
+            break;
+        case M25_PARAM_WRITE_ASSIST_LEVEL:
+            _txStats.assistLevel++;
+            break;
+        case M25_PARAM_READ_SOC:
+            _txStats.readSoc++;
+            break;
+        case M25_PARAM_READ_SW_VERSION:
+            _txStats.readFw++;
+            break;
+        case M25_PARAM_READ_CRUISE_VALUES:
+            _txStats.readCruise++;
+            break;
+        default:
+            _txStats.other++;
+            break;
+    }
+    portEXIT_CRITICAL(&_txStatsMux);
+}
+
+static void _txStatsCountResult(bool ok) {
+    portENTER_CRITICAL(&_txStatsMux);
+    if (ok) {
+        _txStats.totalSuccess++;
+    } else {
+        _txStats.totalFail++;
+    }
+    portEXIT_CRITICAL(&_txStatsMux);
+}
+
 bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
                   const uint8_t* payload, uint8_t payloadLen) {
     WheelConnState_t &w = _wheels[idx];
+    _txStatsCountAttempt(paramId, payload, payloadLen);
 #if M25_TRANSPORT_BLE
     // Quick pre-checks before taking the mutex to avoid unnecessary contention.
     // Use w.connected flag here (not isConnected()) ─ isConnected() acquires a
@@ -803,6 +871,7 @@ bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
     }
 
     if (_bleTxMutex) xSemaphoreGive(_bleTxMutex);
+    _txStatsCountResult(ok);
     return ok;
 }
 
@@ -1832,6 +1901,7 @@ static volatile bool  _motorWriteOk = true;   // cleared by task on write failur
 static void _bleMotorTask(void* /*pv*/) {
     _MotorCmd cmd;
     uint32_t motorFailStreak = 0;  // consecutive failed write cycles (any wheel)
+    uint32_t stopLogCounter[WHEEL_COUNT] = {0, 0};
     for (;;) {
         if (xQueueReceive(_motorQueue, &cmd, portMAX_DELAY) != pdTRUE) continue;
 
@@ -1844,7 +1914,17 @@ static void _bleMotorTask(void* /*pv*/) {
                 if (!bleIsConnected(i)) {
                     Serial.printf("[Motor] -> %s (not connected)\n", wn);
                 } else if (cmd.isStop) {
-                    Serial.printf("[Motor] -> %s STOP\n", wn);
+                    if (_motorStopLogEnabled) {
+                        stopLogCounter[i]++;
+                        uint16_t every = _motorStopLogEvery;
+                        if (every == 0) every = 1;
+                        if ((stopLogCounter[i] % every) == 0) {
+                            Serial.printf("[Motor] -> %s STOP (%lu)%s\n",
+                                          wn,
+                                          (unsigned long)stopLogCounter[i],
+                                          (every > 1) ? " [throttled]" : "");
+                        }
+                    }
                 } else {
                     float pct = (i == WHEEL_LEFT) ? -cmd.left : cmd.right;
                     Serial.printf("[Motor] -> %s %.0f%%\n", wn, (double)pct);
@@ -2035,6 +2115,53 @@ void bleSetAutoReconnect(bool enable) {
 
 bool bleGetAutoReconnect() {
     return _bleAutoReconnect;
+}
+
+void bleSetMotorStopLogEnabled(bool enable) {
+    _motorStopLogEnabled = enable;
+}
+
+bool bleGetMotorStopLogEnabled() {
+    return _motorStopLogEnabled;
+}
+
+void bleSetMotorStopLogEvery(uint16_t every) {
+    _motorStopLogEvery = (every == 0) ? 1 : every;
+}
+
+uint16_t bleGetMotorStopLogEvery() {
+    return _motorStopLogEvery;
+}
+
+void blePrintTxStats() {
+    TxStats s;
+    portENTER_CRITICAL(&_txStatsMux);
+    s = _txStats;
+    portEXIT_CRITICAL(&_txStatsMux);
+
+    Serial.println("[TX] --- Command TX Stats ---");
+    Serial.printf("[TX] total attempts=%lu  success=%lu  fail=%lu\n",
+                  (unsigned long)s.totalAttempts,
+                  (unsigned long)s.totalSuccess,
+                  (unsigned long)s.totalFail);
+    Serial.printf("[TX] WRITE_REMOTE_SPEED=%lu  stop=%lu  motion=%lu\n",
+                  (unsigned long)s.remoteSpeed,
+                  (unsigned long)s.remoteSpeedStop,
+                  (unsigned long)s.remoteSpeedMotion);
+    Serial.printf("[TX] WRITE_DRIVE_MODE=%lu  WRITE_ASSIST_LEVEL=%lu\n",
+                  (unsigned long)s.driveMode,
+                  (unsigned long)s.assistLevel);
+    Serial.printf("[TX] READ_SOC=%lu  READ_SW_VERSION=%lu  READ_CRUISE_VALUES=%lu  other=%lu\n",
+                  (unsigned long)s.readSoc,
+                  (unsigned long)s.readFw,
+                  (unsigned long)s.readCruise,
+                  (unsigned long)s.other);
+}
+
+void bleResetTxStats() {
+    portENTER_CRITICAL(&_txStatsMux);
+    memset(&_txStats, 0, sizeof(_txStats));
+    portEXIT_CRITICAL(&_txStatsMux);
 }
 
 void bleSetMac(int idx, const char* mac) {

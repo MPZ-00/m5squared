@@ -156,6 +156,10 @@ static void _scPrintHelp() {
     Serial.println(F("  debug                     Show all debug flags (with usage)"));
     Serial.println(F("  debug <flag>              Toggle flag (js|motor|heartbeat|ble|buttons|state|telemetry|proto|auth)"));
     Serial.println(F("  debug all / off           Enable/disable all debug output"));
+    Serial.println(F("  txstats [reset]           Show/reset BLE TX command counters"));
+    Serial.println(F("  log stop <on|off>         Enable/disable STOP lines in motor debug"));
+    Serial.println(F("  log stop every <N>        Print every Nth STOP line (when enabled)"));
+    Serial.println(F("  log show                  Show current log-filter settings"));
     Serial.println(F("  js                        One-shot joystick snapshot"));
     Serial.println(F("  buttons                   Debug button hardware & state"));
     Serial.println(F("  ble                       Quick BLE connection status"));
@@ -521,6 +525,48 @@ static void _scDispatch(const char* cmd, const SerialContext &ctx) {
         return;
     }
 
+    // txstats [reset]
+    if (strcmp(cmd, "txstats") == 0) {
+        blePrintTxStats();
+        return;
+    }
+    if (strcmp(cmd, "txstats reset") == 0) {
+        bleResetTxStats();
+        Serial.println(F("[TX] Counters reset"));
+        return;
+    }
+
+    // log show | log stop <on|off> | log stop every <N>
+    if (strcmp(cmd, "log show") == 0) {
+        Serial.printf("[Log] stop=%s every=%u\n",
+                      bleGetMotorStopLogEnabled() ? "ON" : "off",
+                      (unsigned)bleGetMotorStopLogEvery());
+        return;
+    }
+    if (strncmp(cmd, "log stop ", 9) == 0) {
+        const char* arg = cmd + 9;
+        if (strcmp(arg, "on") == 0) {
+            bleSetMotorStopLogEnabled(true);
+            Serial.printf("[Log] STOP lines enabled (every=%u)\n",
+                          (unsigned)bleGetMotorStopLogEvery());
+            return;
+        }
+        if (strcmp(arg, "off") == 0) {
+            bleSetMotorStopLogEnabled(false);
+            Serial.println(F("[Log] STOP lines disabled"));
+            return;
+        }
+        if (strncmp(arg, "every ", 6) == 0) {
+            int n = atoi(arg + 6);
+            if (n <= 0) n = 1;
+            bleSetMotorStopLogEvery((uint16_t)n);
+            Serial.printf("[Log] STOP throttle -> every %u line(s)\n", (unsigned)bleGetMotorStopLogEvery());
+            return;
+        }
+        Serial.println(F("[CMD] log stop: use 'on', 'off', or 'every <N>'"));
+        return;
+    }
+
     // js (one-shot snapshot)
     if (strcmp(cmd, "js") == 0) {
         _scPrintJs();
@@ -676,14 +722,26 @@ static void _scDispatch(const char* cmd, const SerialContext &ctx) {
             Serial.println(F("[Telemetry] No wheels connected"));
             return;
         }
-        // Fire async BLE requests - responses arrive via notify callbacks
-        bool sentSoc = bleRequestSOC();
-        bool sentFw  = bleRequestFirmwareVersion();
-        bool sentOdo = bleRequestCruiseValues();
-        Serial.printf("[Telemetry] Requests sent  SOC=%s  FW=%s  Odometer=%s\n",
-                      sentSoc ? "ok" : "fail",
-                      sentFw  ? "ok" : "fail",
-                      sentOdo ? "ok" : "fail");
+        bool requestAllowed = true;
+        if (ctx.supervisor) {
+            SupervisorState supState = ctx.supervisor->getState();
+            if (supState == SUPERVISOR_ARMED || supState == SUPERVISOR_DRIVING) {
+                requestAllowed = false;
+                Serial.printf("[Telemetry] Live request blocked in %s state (to avoid BLE write contention)\n",
+                              supervisorStateToString(supState));
+            }
+        }
+
+        if (requestAllowed) {
+            // Fire async BLE requests - responses arrive via notify callbacks.
+            bool sentSoc = bleRequestSOC();
+            bool sentFw  = bleRequestFirmwareVersion();
+            bool sentOdo = bleRequestCruiseValues();
+            Serial.printf("[Telemetry] Requests sent  SOC=%s  FW=%s  Odometer=%s\n",
+                          sentSoc ? "ok" : "fail",
+                          sentFw  ? "ok" : "fail",
+                          sentOdo ? "ok" : "fail");
+        }
         // Print whatever is currently in the cache
         Serial.println(F("[Telemetry] --- Cached values (from last poll) ---"));
         for (int _ti = 0; _ti < WHEEL_COUNT; _ti++) {
@@ -708,7 +766,11 @@ static void _scDispatch(const char* cmd, const SerialContext &ctx) {
             else              Serial.printf("dist=--");
             Serial.println();
         }
-        Serial.println(F("[Telemetry] Fresh values arrive via BLE notify - run 'telemetry' again or enable 'debug telemetry'"));
+        if (requestAllowed) {
+            Serial.println(F("[Telemetry] Fresh values arrive via BLE notify - run 'telemetry' again or enable 'debug telemetry'"));
+        } else {
+            Serial.println(F("[Telemetry] Cached-only output in ARMED/DRIVING. Use telemetry in PAIRED for live requests."));
+        }
         return;
     }
 
