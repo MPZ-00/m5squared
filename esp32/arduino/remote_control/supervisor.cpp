@@ -22,6 +22,7 @@ Supervisor::Supervisor(Mapper& mapper, const SupervisorConfig& config)
     , _state(SUPERVISOR_DISCONNECTED)
     , _stopRequested(false)
     , _deadzoneStopLatched(false)
+    , _driveSessionActive(false)
     , _lastUpdateMs(0)
     , _lastInputTimeMs(0)
     , _lastLinkTimeMs(0)
@@ -197,6 +198,8 @@ void Supervisor::requestArm() {
 void Supervisor::requestDisarm() {
     if (_state == SUPERVISOR_ARMED || _state == SUPERVISOR_DRIVING) {
         sendStop();
+        _driveSessionActive  = false;
+        _lastTelemetryPollMs = millis(); // defer first post-disarm poll by one interval
         transitionTo(SUPERVISOR_PAIRED);
         if (debugFlags & DBG_STATE) {
             Serial.println("[Supervisor] Disarmed -> PAIRED");
@@ -595,6 +598,8 @@ void Supervisor::handleStopRequest() {
 // Telemetry Polling
 // ---------------------------------------------------------------------------
 void Supervisor::pollTelemetry() {
+    // No telemetry while armed or driving — only WRITE commands should go to wheels
+    if (_driveSessionActive) return;
     uint32_t now = millis();
     if (now - _lastTelemetryPollMs < _config.telemetryPollIntervalMs) return;
     _lastTelemetryPollMs = now;
@@ -749,6 +754,8 @@ void Supervisor::transitionTo(SupervisorState newState) {
     // Reset mapper state on certain transitions
     if (newState == SUPERVISOR_DISCONNECTED || newState == SUPERVISOR_FAILSAFE) {
         _mapper.reset();
+        _driveSessionActive  = false;       // drive session over on full disconnect/failsafe
+        _lastTelemetryPollMs = millis();    // defer next telemetry poll by one interval
     }
 
     // On entry to PAIRED: auto-arm once if configured (fires exactly once per
@@ -770,6 +777,7 @@ void Supervisor::transitionTo(SupervisorState newState) {
         _idleHoldStartMs     = 0;
         _armedEntryMs        = millis();
         _deadzoneStopLatched = false;
+        _driveSessionActive  = true;        // suppress telemetry until explicit disarm
     }
 
     // On entry to DRIVING: reset per-wheel notify timestamps so the stale-notify

@@ -162,6 +162,7 @@ private:
     SupervisorState _state;
     bool           _stopRequested;
     bool           _deadzoneStopLatched; // true after sending one-shot STOP for current deadzone period
+    bool           _driveSessionActive;  // true from ARMED entry until explicit disarm / disconnect
     
     // ---------------------------------------------------------------------------
     // Timing
