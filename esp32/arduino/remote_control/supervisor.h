@@ -161,6 +161,7 @@ private:
     // ---------------------------------------------------------------------------
     SupervisorState _state;
     bool           _stopRequested;
+    bool           _deadzoneStopLatched; // true after sending one-shot STOP for current deadzone period
     
     // ---------------------------------------------------------------------------
     // Timing

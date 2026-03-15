@@ -363,7 +363,9 @@ bool _m25Decrypt(const uint8_t* key, const uint8_t* frame, size_t frameLen,
 // SPP packet building and sending
 size_t _buildAndEncrypt(int idx, uint8_t serviceId, uint8_t paramId,
                         const uint8_t* payload, uint8_t payloadLen,
-                        uint8_t* out);
+                        uint8_t* out,
+                        uint8_t* sppOut = nullptr,
+                        uint8_t* sppLenOut = nullptr);
 bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
                   const uint8_t* payload = nullptr, uint8_t payloadLen = 0);
 

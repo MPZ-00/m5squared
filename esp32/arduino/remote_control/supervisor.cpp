@@ -21,6 +21,7 @@ Supervisor::Supervisor(Mapper& mapper, const SupervisorConfig& config)
     , _config(config)
     , _state(SUPERVISOR_DISCONNECTED)
     , _stopRequested(false)
+    , _deadzoneStopLatched(false)
     , _lastUpdateMs(0)
     , _lastInputTimeMs(0)
     , _lastLinkTimeMs(0)
@@ -212,6 +213,7 @@ void Supervisor::processInput(const ControlState& control) {
     // Different behavior depending on state
     if (_state == SUPERVISOR_ARMED) {
         if (control.deadman && !control.isNeutral()) {
+            _deadzoneStopLatched = false;
             // Joystick is out of deadzone: start or check the activate hold timer.
             // Require JS_ACTIVATE_HOLD_MS of continuous out-of-deadzone before
             // transitioning to DRIVING, so ADC noise at the boundary can't jiggle the state.
@@ -223,11 +225,17 @@ void Supervisor::processInput(const ControlState& control) {
                 transitionTo(SUPERVISOR_DRIVING);
             }
             // Not yet held long enough - send stop and wait
-            sendStop();
+            if (!_deadzoneStopLatched) {
+                sendStop();
+                _deadzoneStopLatched = true;
+            }
         } else {
             // Back in deadzone: reset the activate timer
             _activateHoldStartMs = 0;
-            sendStop();
+            if (!_deadzoneStopLatched) {
+                sendStop();
+                _deadzoneStopLatched = true;
+            }
         }
     }
     else if (_state == SUPERVISOR_DRIVING) {
@@ -239,7 +247,10 @@ void Supervisor::processInput(const ControlState& control) {
             if (_idleHoldStartMs == 0) {
                 _idleHoldStartMs = millis();
             }
-            sendStop();
+            if (!_deadzoneStopLatched) {
+                sendStop();
+                _deadzoneStopLatched = true;
+            }
             if (millis() - _idleHoldStartMs >= JS_IDLE_HOLD_MS) {
                 if (debugFlags & DBG_STATE) {
                     Serial.println("[Supervisor] User released controls, returning to ARMED");
@@ -253,6 +264,7 @@ void Supervisor::processInput(const ControlState& control) {
 
         // Joystick still active: reset the idle timer
         _idleHoldStartMs = 0;
+        _deadzoneStopLatched = false;
         
         // Map to command
         CommandFrame cmd;
@@ -667,7 +679,7 @@ void Supervisor::checkWatchdogs() {
     }
     
     // Link watchdog - no successful command for too long
-    if (_lastLinkTimeMs > 0) {
+    if (_state == SUPERVISOR_DRIVING && _lastLinkTimeMs > 0) {
         if (now - _lastLinkTimeMs > _config.linkTimeoutMs) {
             Serial.println("[Supervisor] Link watchdog timeout");
             enterFailsafe("Link timeout");
@@ -757,6 +769,7 @@ void Supervisor::transitionTo(SupervisorState newState) {
         _activateHoldStartMs = 0;
         _idleHoldStartMs     = 0;
         _armedEntryMs        = millis();
+        _deadzoneStopLatched = false;
     }
 
     // On entry to DRIVING: reset per-wheel notify timestamps so the stale-notify
@@ -766,6 +779,7 @@ void Supervisor::transitionTo(SupervisorState newState) {
     if (newState == SUPERVISOR_DRIVING) {
         bleResetNotifyTimers();
         _driveEntryMs = millis();  // anchor for the stale-notify watchdog
+        _deadzoneStopLatched = false;
     }
 
     // Notify callbacks

@@ -41,7 +41,7 @@
  *   DBG_BUTTONS    0x10  button press/release events
  *   DBG_STATE      0x20  state transition detail logging
  *   DBG_TELEMETRY  0x40  BLE telemetry responses (battery, firmware, odometer)
- *   DBG_PROTO      0x80   raw BLE frame hex dumps (verbose, lowest-level)
+ *   DBG_PROTO      0x80   raw BLE TX/RX frame hex dumps with drive command decoding
  *   DBG_BT_AUTH    0x100  BT Classic auth/pairing and SPP state events
  *
  * Adding new debug flags
@@ -96,7 +96,7 @@ static const DebugFlagInfo _debugFlagTable[] = {
     { DBG_BUTTONS,   "buttons",   "Button press events" },
     { DBG_STATE,     "state",     "State transition details" },
     { DBG_TELEMETRY, "telemetry", "BLE telemetry responses (battery/FW/odometer)" },
-    { DBG_PROTO,     "proto",     "Raw BLE frame hex dumps (verbose)" },
+    { DBG_PROTO,     "proto",     "Raw BLE TX/RX hex dumps (verbose)" },
     { DBG_BT_AUTH,   "auth",      "RFCOMM auth/pairing and SPP events" },
 };
 static const uint8_t _debugFlagCount = sizeof(_debugFlagTable) / sizeof(_debugFlagTable[0]);

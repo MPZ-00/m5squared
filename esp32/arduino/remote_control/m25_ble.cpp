@@ -685,7 +685,9 @@ bool _m25Decrypt(const uint8_t* key, const uint8_t* frame, size_t frameLen,
 
 size_t _buildAndEncrypt(int idx, uint8_t serviceId, uint8_t paramId,
                         const uint8_t* payload, uint8_t payloadLen,
-                        uint8_t* out) {
+                        uint8_t* out,
+                        uint8_t* sppOut,
+                        uint8_t* sppLenOut) {
     WheelConnState_t &w = _wheels[idx];
 
     // Assemble plaintext SPP packet (6-byte header + payload)
@@ -703,9 +705,97 @@ size_t _buildAndEncrypt(int idx, uint8_t serviceId, uint8_t paramId,
         n += payloadLen;
     }
 
+    if (sppOut) {
+        memcpy(sppOut, spp, n);
+    }
+    if (sppLenOut) {
+        *sppLenOut = n;
+    }
+
     size_t encLen = 0;
     if (!_m25Encrypt(w.key, spp, n, out, &encLen)) return 0;
     return encLen;
+}
+
+static const char* _wheelNameOrDefault(int idx) {
+    if (idx < 0 || idx >= WHEEL_COUNT) return "?";
+    const char* name = _wheels[idx].name;
+    return name ? name : "?";
+}
+
+static const char* _paramName(uint8_t serviceId, uint8_t paramId) {
+    if (serviceId == M25_SRV_APP_MGMT) {
+        switch (paramId) {
+            case M25_PARAM_WRITE_SYSTEM_MODE:  return "WRITE_SYSTEM_MODE";
+            case M25_PARAM_WRITE_DRIVE_MODE:   return "WRITE_DRIVE_MODE";
+            case M25_PARAM_WRITE_REMOTE_SPEED: return "WRITE_REMOTE_SPEED";
+            case M25_PARAM_WRITE_ASSIST_LEVEL: return "WRITE_ASSIST_LEVEL";
+            case M25_PARAM_READ_ASSIST_LEVEL:  return "READ_ASSIST_LEVEL";
+            case M25_PARAM_READ_DRIVE_MODE:    return "READ_DRIVE_MODE";
+            case M25_PARAM_READ_CRUISE_VALUES: return "READ_CRUISE_VALUES";
+            default:                           return "APP_MGMT";
+        }
+    }
+    if (serviceId == M25_SRV_BATT_MGMT) {
+        return (paramId == M25_PARAM_READ_SOC) ? "READ_SOC" : "BATT_MGMT";
+    }
+    if (serviceId == M25_SRV_VERSION_MGMT) {
+        return (paramId == M25_PARAM_READ_SW_VERSION) ? "READ_SW_VERSION" : "VERSION_MGMT";
+    }
+    return "UNKNOWN";
+}
+
+static void _printHexBytes(const uint8_t* data, size_t len) {
+    if (!data || len == 0) {
+        Serial.print("<empty>");
+        return;
+    }
+    for (size_t i = 0; i < len; i++) {
+        if (i > 0) Serial.print(' ');
+        Serial.printf("%02X", data[i]);
+    }
+}
+
+static void _debugLogTxPacket(int idx,
+                              uint8_t serviceId,
+                              uint8_t paramId,
+                              const uint8_t* payload,
+                              uint8_t payloadLen,
+                              const uint8_t* spp,
+                              uint8_t sppLen,
+                              const uint8_t* wire,
+                              size_t wireLen) {
+    const char* wheelName = _wheelNameOrDefault(idx);
+    const char* paramName = _paramName(serviceId, paramId);
+    uint8_t telegramId = (sppLen >= 2) ? spp[1] : 0;
+
+    Serial.printf("[TX] %s %s svc=0x%02X param=0x%02X tg=0x%02X payloadLen=%u\n",
+                  wheelName, paramName, serviceId, paramId, telegramId, payloadLen);
+
+    if (serviceId == M25_SRV_APP_MGMT && paramId == M25_PARAM_WRITE_DRIVE_MODE && payloadLen >= 1) {
+        uint8_t mode = payload[0];
+        Serial.printf("[TX]   drive_mode=0x%02X remote=%u cruise=%u auto_hold=%u\n",
+                      mode,
+                      (mode & M25_DRIVE_MODE_REMOTE) ? 1 : 0,
+                      (mode & M25_DRIVE_MODE_CRUISE) ? 1 : 0,
+                      (mode & M25_DRIVE_MODE_AUTO_HOLD) ? 1 : 0);
+    } else if (serviceId == M25_SRV_APP_MGMT && paramId == M25_PARAM_WRITE_REMOTE_SPEED && payloadLen >= 2) {
+        int16_t raw = (int16_t)(((uint16_t)payload[0] << 8) | payload[1]);
+        float pct = (float)raw / M25_SPEED_SCALE;
+        Serial.printf("[TX]   remote_speed raw=%d pct=%+.1f payload=%02X %02X\n",
+                      (int)raw, (double)pct, payload[0], payload[1]);
+    } else if (payloadLen > 0) {
+        Serial.print("[TX]   payload: ");
+        _printHexBytes(payload, payloadLen);
+        Serial.println();
+    }
+
+    Serial.print("[TX]   spp   : ");
+    _printHexBytes(spp, sppLen);
+    Serial.println();
+    Serial.print("[TX]   wire  : ");
+    _printHexBytes(wire, wireLen);
+    Serial.println();
 }
 
 // Returns true while the wheel is still considered usable (transient failure),
@@ -834,8 +924,13 @@ bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
 #endif
         ) {
         uint8_t buf[128];
-        size_t len = _buildAndEncrypt(idx, serviceId, paramId, payload, payloadLen, buf);
+        uint8_t spp[32];
+        uint8_t sppLen = 0;
+        size_t len = _buildAndEncrypt(idx, serviceId, paramId, payload, payloadLen, buf, spp, &sppLen);
         if (len > 0) {
+            if (debugFlags & DBG_PROTO) {
+                _debugLogTxPacket(idx, serviceId, paramId, payload, payloadLen, spp, sppLen, buf, len);
+            }
 #if M25_TRANSPORT_BLE
             try {
                 bool sent = w.rxChar->writeValue(buf, len, w.rxWriteWithResponse);
@@ -1040,12 +1135,14 @@ void _printResponse(const char* wheelName, const ResponseHeader* hdr, const Resp
         } else if (hdr->payloadLen > 0) {
             // ACK from a read command may carry the response data in its payload.
             // Log it unconditionally so protocol surprises are always visible.
-            Serial.printf("[BLE] %s wheel ACK with payload (srv=0x%02X, param=0x%02X, %zu bytes:",
-                         wheelName, hdr->serviceId, hdr->paramId, hdr->payloadLen);
-            for (size_t _pi = 0; _pi < hdr->payloadLen && _pi < 8; _pi++)
-                Serial.printf(" %02X", hdr->payload[_pi]);
-            if (hdr->payloadLen > 8) Serial.print(" ...");
-            Serial.println(")");
+            if (debugFlags & DBG_BLE) {
+                Serial.printf("[BLE] %s wheel ACK with payload (srv=0x%02X, param=0x%02X, %zu bytes:",
+                             wheelName, hdr->serviceId, hdr->paramId, hdr->payloadLen);
+                for (size_t _pi = 0; _pi < hdr->payloadLen && _pi < 8; _pi++)
+                    Serial.printf(" %02X", hdr->payload[_pi]);
+                if (hdr->payloadLen > 8) Serial.print(" ...");
+                Serial.println(")");
+            }
         }
     }
     else {
@@ -1898,6 +1995,20 @@ struct _MotorCmd {
 static QueueHandle_t  _motorQueue   = nullptr;
 static volatile bool  _motorWriteOk = true;   // cleared by task on write failure
 
+static bool _writeDriveModeIfNeeded(int idx, uint8_t targetMode) {
+    if (idx < 0 || idx >= WHEEL_COUNT) return false;
+    if (!bleIsConnected(idx)) return false;
+
+    WheelConnState_t &w = _wheels[idx];
+    if (w.driveModeBits == targetMode) return true;
+
+    bool sent = _sendCommand(idx, M25_SRV_APP_MGMT, M25_PARAM_WRITE_DRIVE_MODE, &targetMode, 1);
+    if (sent) {
+        w.driveModeBits = targetMode;
+    }
+    return sent;
+}
+
 static void _bleMotorTask(void* /*pv*/) {
     _MotorCmd cmd;
     uint32_t motorFailStreak = 0;  // consecutive failed write cycles (any wheel)
@@ -1933,6 +2044,20 @@ static void _bleMotorTask(void* /*pv*/) {
 
             if (!bleIsConnected(i)) continue;
 
+            WheelConnState_t &w = _wheels[i];
+            uint8_t targetDriveMode = cmd.isStop
+                ? (uint8_t)((w.driveModeBits | M25_DRIVE_MODE_REMOTE) & (uint8_t)~M25_DRIVE_MODE_CRUISE)
+                : (uint8_t)(w.driveModeBits | M25_DRIVE_MODE_REMOTE | M25_DRIVE_MODE_CRUISE);
+
+            if (!cmd.isStop) {
+                bool modeOk = _writeDriveModeIfNeeded(i, targetDriveMode);
+                if (!modeOk && (debugFlags & DBG_BLE)) {
+                    Serial.printf("[BLE] drive mode update failed on wheel %d\n", i);
+                }
+                ok &= modeOk;
+                if (!modeOk) continue;
+            }
+
             uint8_t spd[2];
             if (cmd.isStop) {
                 spd[0] = spd[1] = 0;
@@ -1948,6 +2073,14 @@ static void _bleMotorTask(void* /*pv*/) {
                 Serial.printf("[BLE] motor write failed on wheel %d\n", i);
             }
             ok &= sent;
+
+            if (cmd.isStop && sent) {
+                bool modeOk = _writeDriveModeIfNeeded(i, targetDriveMode);
+                if (!modeOk && (debugFlags & DBG_BLE)) {
+                    Serial.printf("[BLE] stop drive mode restore failed on wheel %d\n", i);
+                }
+                ok &= modeOk;
+            }
         }
         // Log write failures unconditionally (not behind DBG_BLE):
         // first failure is always printed; then every 20 cycles (~1 s at 20 Hz).
@@ -2015,8 +2148,11 @@ bool bleSendStop() {
     uint8_t spd[2] = { 0, 0 };
     bool ok = true;
     for (int i = 0; i < WHEEL_COUNT; i++) {
-        if (bleIsConnected(i))
-            ok &= _sendCommand(i, M25_SRV_APP_MGMT, M25_PARAM_WRITE_REMOTE_SPEED, spd, 2);
+        if (!bleIsConnected(i)) continue;
+        ok &= _sendCommand(i, M25_SRV_APP_MGMT, M25_PARAM_WRITE_REMOTE_SPEED, spd, 2);
+        uint8_t targetDriveMode = (uint8_t)((_wheels[i].driveModeBits | M25_DRIVE_MODE_REMOTE) &
+                                            (uint8_t)~M25_DRIVE_MODE_CRUISE);
+        ok &= _writeDriveModeIfNeeded(i, targetDriveMode);
     }
     return ok;
 }
@@ -2031,6 +2167,12 @@ bool bleSendMotorCommand(float leftPercent, float rightPercent) {
     bool ok = true;
     for (int i = 0; i < WHEEL_COUNT; i++) {
         if (!bleIsConnected(i)) continue;
+        uint8_t targetDriveMode = (uint8_t)(_wheels[i].driveModeBits |
+                                            M25_DRIVE_MODE_REMOTE |
+                                            M25_DRIVE_MODE_CRUISE);
+        bool modeOk = _writeDriveModeIfNeeded(i, targetDriveMode);
+        ok &= modeOk;
+        if (!modeOk) continue;
         float   pct = (i == WHEEL_LEFT) ? -leftPercent : rightPercent;
         int16_t raw = (int16_t)constrain(pct * M25_SPEED_SCALE, -32768.0f, 32767.0f);
         uint8_t spd[2] = { (uint8_t)((raw >> 8) & 0xFF), (uint8_t)(raw & 0xFF) };
