@@ -2427,6 +2427,15 @@ void bleSetMac(int idx, const char* mac) {
     }
     
     WheelConnState_t &w = _wheels[idx];
+    if (strncmp(w.mac, mac, 17) == 0) {
+        if (debugFlags & DBG_BLE) {
+            Serial.printf("[BLE] %s wheel MAC unchanged (%s)\n",
+                          w.name ? w.name : "Unknown",
+                          mac);
+        }
+        return;
+    }
+
     if (debugFlags & DBG_BLE) {
         Serial.printf("[BLE] Got reference to wheel struct (name=%s)\n", w.name ? w.name : "NULL");
     }
@@ -2473,6 +2482,13 @@ void bleSetKey(int idx, const uint8_t* newKey) {
     }
     
     WheelConnState_t &w = _wheels[idx];
+    if (memcmp(w.key, newKey, 16) == 0) {
+        if (debugFlags & DBG_BLE) {
+            Serial.printf("[BLE] %s wheel key unchanged\n", w.name ? w.name : "Unknown");
+        }
+        return;
+    }
+
     if (debugFlags & DBG_BLE) {
         Serial.printf("[BLE] _wheels[%d].key address: %p\n", idx, (void*)w.key);
         Serial.printf("[BLE] _wheels[%d].mac address: %p\n", idx, (void*)w.mac);
