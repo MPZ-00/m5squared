@@ -76,14 +76,13 @@
 // ---------------------------------------------------------------------------
 // Transport selection
 // Exactly one transport must be enabled.
-// RFCOMM (Bluetooth Classic SPP, channel 6 on real wheels) is preferred here.
 // ---------------------------------------------------------------------------
 #ifndef M25_TRANSPORT_RFCOMM
-#define M25_TRANSPORT_RFCOMM 1
+#define M25_TRANSPORT_RFCOMM 0
 #endif
 
 #ifndef M25_TRANSPORT_BLE
-#define M25_TRANSPORT_BLE 0
+#define M25_TRANSPORT_BLE 1
 #endif
 
 #if (M25_TRANSPORT_RFCOMM + M25_TRANSPORT_BLE) != 1
