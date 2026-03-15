@@ -365,6 +365,7 @@ class ECSRemote:
 
         for attempt in range(self.retries + 1):
             packet = build_method()
+            requested_tid = packet[POS_TELEGRAM_ID] if len(packet) > POS_TELEGRAM_ID else None
             requested_service_id = packet[POS_SERVICE_ID] if len(packet) > POS_SERVICE_ID else None
             requested_param_id = packet[POS_PARAM_ID] if len(packet) > POS_PARAM_ID else None
             response = conn.transact(packet)
@@ -378,6 +379,13 @@ class ECSRemote:
             header = ResponseParser.parse_header(response)
             if header is None:
                 last_error = "invalid response"
+                continue
+
+            response_tid = header.get('telegram_id')
+            if requested_tid is not None and response_tid is not None and response_tid != requested_tid:
+                last_error = f"telegram mismatch req=0x{requested_tid:02X} resp=0x{response_tid:02X}"
+                if attempt < self.retries:
+                    time.sleep(0.05)
                 continue
 
             if ResponseParser.is_nack(header):
@@ -427,6 +435,7 @@ class ECSRemote:
             True if ACK received, False otherwise
         """
         last_error = None
+        requested_tid = packet[POS_TELEGRAM_ID] if len(packet) > POS_TELEGRAM_ID else None
 
         for attempt in range(self.retries + 1):
             response = conn.transact(packet)
@@ -440,6 +449,13 @@ class ECSRemote:
             header = ResponseParser.parse_header(response)
             if header is None:
                 last_error = "invalid response"
+                continue
+
+            response_tid = header.get('telegram_id')
+            if requested_tid is not None and response_tid is not None and response_tid != requested_tid:
+                last_error = f"telegram mismatch req=0x{requested_tid:02X} resp=0x{response_tid:02X}"
+                if attempt < self.retries:
+                    time.sleep(0.05)
                 continue
 
             if ResponseParser.is_nack(header):

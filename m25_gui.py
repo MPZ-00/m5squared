@@ -83,6 +83,8 @@ from m25_protocol_data import (
     PARAM_ID_STATUS_SW_VERSION,
     PARAM_ID_CRUISE_VALUES,
     PARAM_ID_STATUS_DUO_DRIVE_PARAMS,
+    DRIVE_MODE_BIT_CRUISE,
+    DRIVE_MODE_BIT_REMOTE,
 )
 from m25_transport import (
     M25_VERSION_AUTO,
@@ -340,6 +342,9 @@ class M25GUI:
     REMOTE_STOP_DURATION_S = 0.2
     REMOTE_ARM_SETTLE_S = 0.08
     REMOTE_PRIME_DURATION_S = 0.12
+    REMOTE_ARM_ATTEMPTS = 4
+    REMOTE_REARM_DELAY_S = 0.09
+    REMOTE_READBACK_RETRY_DELAY_S = 0.18
 
     # Turn-in-place tuning for scripted drive test.
     # Some wheel setups need higher differential than half-speed to overcome deadband.
@@ -1438,6 +1443,88 @@ class M25GUI:
         )
         return left_mode, right_mode
 
+    @staticmethod
+    def _remote_bit_active(mode):
+        """Return True when parsed drive mode indicates remote bit is active."""
+        return bool(mode and mode.get("remote"))
+
+    def _ensure_remote_mode_both(self, builder, ui_log=None):
+        """Try hard to arm remote mode on both wheels and verify readback.
+
+        Some firmware builds ACK write commands but only latch remote mode
+        after an explicit re-arm cycle. This helper retries and validates.
+        """
+        if not self.ecs_remote or not self.left_conn or not self.right_conn:
+            return False, None, None
+
+        left_mode = None
+        right_mode = None
+        mode_candidates = [DRIVE_MODE_BIT_REMOTE | DRIVE_MODE_BIT_CRUISE, DRIVE_MODE_BIT_REMOTE]
+
+        for attempt in range(1, self.REMOTE_ARM_ATTEMPTS + 1):
+            # Re-sync application mode handshake before each arm attempt.
+            left_init_ok = self.ecs_remote.init_connection(self.left_conn, builder)
+            right_init_ok = self.ecs_remote.init_connection(self.right_conn, builder)
+            if ui_log:
+                ui_log(
+                    "muted",
+                    f"Remote arm attempt {attempt}/{self.REMOTE_ARM_ATTEMPTS}: init left={left_init_ok}, right={right_init_ok}",
+                )
+
+            if attempt > 1:
+                # Force a clean edge before re-arming to satisfy strict firmware.
+                self._set_remote_mode_both(builder, False)
+                time.sleep(self.REMOTE_REARM_DELAY_S)
+
+            left_ok, right_ok = self._set_remote_mode_both(builder, True)
+            if ui_log:
+                ui_log(
+                    "muted",
+                    f"Remote arm attempt {attempt}/{self.REMOTE_ARM_ATTEMPTS}: write left={left_ok}, right={right_ok}",
+                )
+
+            if not (left_ok and right_ok):
+                time.sleep(self.REMOTE_REARM_DELAY_S)
+                continue
+
+            time.sleep(self.REMOTE_ARM_SETTLE_S)
+            left_mode, right_mode = self._read_drive_mode_both(builder)
+            if ui_log:
+                ui_log(
+                    "muted",
+                    f"Drive mode flags after enable attempt {attempt}: left={left_mode}, right={right_mode}",
+                )
+
+            if self._remote_bit_active(left_mode) and self._remote_bit_active(right_mode):
+                return True, left_mode, right_mode
+
+            # Additional fallback: force explicit mode sequence on each wheel.
+            # Some variants ACK generic helper writes but only latch after raw 0x06/0x04.
+            for mode in mode_candidates:
+                left_packet = builder.build_write_drive_mode(mode)
+                right_packet = builder.build_write_drive_mode(mode)
+                left_force_ok = self.ecs_remote.write_value(self.left_conn, left_packet, f"force_remote_left(0x{mode:02X})")
+                right_force_ok = self.ecs_remote.write_value(self.right_conn, right_packet, f"force_remote_right(0x{mode:02X})")
+                if ui_log:
+                    ui_log(
+                        "muted",
+                        f"Remote force mode 0x{mode:02X}: left={left_force_ok}, right={right_force_ok}",
+                    )
+
+            time.sleep(self.REMOTE_READBACK_RETRY_DELAY_S)
+            left_mode, right_mode = self._read_drive_mode_both(builder)
+            if ui_log:
+                ui_log(
+                    "muted",
+                    f"Drive mode flags after explicit force sequence: left={left_mode}, right={right_mode}",
+                )
+            if self._remote_bit_active(left_mode) and self._remote_bit_active(right_mode):
+                return True, left_mode, right_mode
+
+            time.sleep(self.REMOTE_REARM_DELAY_S)
+
+        return False, left_mode, right_mode
+
     def _pulse_remote_speed(self, builder, left_speed: int, right_speed: int, duration_s: float, interval_s: float | None = None):
         """Send remote speed repeatedly for a duration.
         Wheels expect periodic speed updates while in remote mode.
@@ -1502,16 +1589,12 @@ class M25GUI:
                     min(self.TURN_DURATION_FACTOR_MAX, float(self.turn_duration_factor_var.get())),
                 )
 
-                remote_left_ok, remote_right_ok = self._set_remote_mode_both(builder, True)
-                if not (remote_left_ok and remote_right_ok):
-                    ui_log("error", f"Failed to enter remote mode: Left={remote_left_ok}, Right={remote_right_ok}")
-                    ui_status("error", "Drive test failed: remote mode not enabled")
+                remote_armed, left_mode, right_mode = self._ensure_remote_mode_both(builder, ui_log)
+                if not remote_armed:
+                    ui_log("error", "Failed to latch remote mode on both wheels after force re-arm attempts")
+                    ui_log("warning", f"Final drive mode flags: left={left_mode}, right={right_mode}")
+                    ui_status("error", "Drive test failed: remote bit not active")
                     return
-
-                left_mode, right_mode = self._read_drive_mode_both(builder)
-                ui_log("muted", f"Drive mode flags after enable: left={left_mode}, right={right_mode}")
-                if left_mode and right_mode and (not left_mode.get('remote') or not right_mode.get('remote')):
-                    ui_log("warning", "Remote bit not active on both wheels after enable - firmware safety policy may be blocking movement")
                 self._prime_remote_motion(builder)
                 
                 # Test sequence in chair coordinates (left/right logical wheel speeds).
@@ -1605,16 +1688,12 @@ class M25GUI:
                 test_speed = max(self.MOTION_SPEED_MIN, min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())))
                 speed = test_speed if direction == "Forward" else -test_speed
 
-                remote_left_ok, remote_right_ok = self._set_remote_mode_both(builder, True)
-                if not (remote_left_ok and remote_right_ok):
-                    ui_log("error", f"Failed to enter remote mode: Left={remote_left_ok}, Right={remote_right_ok}")
-                    ui_status("error", "Test failed: remote mode not enabled")
+                remote_armed, left_mode, right_mode = self._ensure_remote_mode_both(builder, ui_log)
+                if not remote_armed:
+                    ui_log("error", "Failed to latch remote mode on both wheels after force re-arm attempts")
+                    ui_log("warning", f"Final drive mode flags: left={left_mode}, right={right_mode}")
+                    ui_status("error", "Test failed: remote bit not active")
                     return
-
-                left_mode, right_mode = self._read_drive_mode_both(builder)
-                ui_log("muted", f"Drive mode flags after enable: left={left_mode}, right={right_mode}")
-                if left_mode and right_mode and (not left_mode.get('remote') or not right_mode.get('remote')):
-                    ui_log("warning", "Remote bit not active on both wheels after enable - firmware safety policy may be blocking movement")
                 self._prime_remote_motion(builder)
 
                 ui_test_status(f"{direction}...")
@@ -1669,15 +1748,11 @@ class M25GUI:
                 speed = speed_mag if direction == "forward" else -speed_mag
                 label = "Forward" if direction == "forward" else "Backward"
 
-                remote_left_ok, remote_right_ok = self._set_remote_mode_both(builder, True)
-                if not (remote_left_ok and remote_right_ok):
-                    ui_log("error", f"Failed to enter remote mode: Left={remote_left_ok}, Right={remote_right_ok}")
+                remote_armed, left_mode, right_mode = self._ensure_remote_mode_both(builder, ui_log)
+                if not remote_armed:
+                    ui_log("error", "Failed to latch remote mode on both wheels after force re-arm attempts")
+                    ui_log("warning", f"Final drive mode flags: left={left_mode}, right={right_mode}")
                     return
-
-                left_mode, right_mode = self._read_drive_mode_both(builder)
-                ui_log("muted", f"Drive mode flags after enable: left={left_mode}, right={right_mode}")
-                if left_mode and right_mode and (not left_mode.get('remote') or not right_mode.get('remote')):
-                    ui_log("warning", "Remote bit not active on both wheels after enable - firmware safety policy may be blocking movement")
                 self._prime_remote_motion(builder)
 
                 ui_test_status(f"Quick {label}...")
