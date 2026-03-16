@@ -292,6 +292,9 @@ struct WheelConnState_t {
     uint32_t                     lastConnectAttemptMs;
     uint8_t                      consecutiveFails;   // resets on success; auto-reconnect stops at BLE_MAX_RECONNECT_FAILS
     volatile uint32_t            lastNotifyMs;       // millis() of last successful notify; 0 before first notify
+    volatile uint8_t             driveModeReadbackBits; // last parsed STATUS/READ drive mode
+    volatile uint32_t            driveModeReadbackMs;   // millis() timestamp of last parsed drive mode
+    bool                         driveModeReadbackValid;
     uint8_t                      txFailStreak;       // consecutive TX failures within BLE_TX_FAIL_WINDOW_MS
     uint32_t                     lastTxFailMs;       // millis() of most recent TX failure
 

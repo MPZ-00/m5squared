@@ -898,6 +898,9 @@ static bool _handleTxFailure(int idx, uint8_t serviceId, uint8_t paramId, const 
     w.connected     = false;
     w.protocolReady = false;
     w.driveModeBits = 0;
+    w.driveModeReadbackBits = 0;
+    w.driveModeReadbackMs = 0;
+    w.driveModeReadbackValid = false;
     return false;
 }
 
@@ -1096,6 +1099,13 @@ bool _parseResponseData(const ResponseHeader* hdr, ResponseData* data) {
             data->driveMode.remote = (data->driveMode.mode & M25_DRIVE_MODE_REMOTE) != 0;
             return true;
         }
+        else if (hdr->paramId == M25_PARAM_READ_DRIVE_MODE && len >= 1) {
+            data->driveMode.mode = _parseUint8(p, 0);
+            data->driveMode.autoHold = (data->driveMode.mode & M25_DRIVE_MODE_AUTO_HOLD) != 0;
+            data->driveMode.cruise = (data->driveMode.mode & M25_DRIVE_MODE_CRUISE) != 0;
+            data->driveMode.remote = (data->driveMode.mode & M25_DRIVE_MODE_REMOTE) != 0;
+            return true;
+        }
         else if (hdr->paramId == M25_PARAM_CRUISE_VALUES && len >= 12) {
             // Full cruise status (D2): 12-byte payload
             //   [0]   drive_mode
@@ -1273,6 +1283,14 @@ void _updateWheelCache(int idx, const ResponseHeader* hdr, const ResponseData* d
         w.fwValid = true;
     }
     else if (hdr->serviceId == M25_SRV_APP_MGMT &&
+             (hdr->paramId == M25_PARAM_STATUS_DRIVE_MODE ||
+              hdr->paramId == M25_PARAM_READ_DRIVE_MODE)) {
+        w.driveModeBits = data->driveMode.mode;
+        w.driveModeReadbackBits = data->driveMode.mode;
+        w.driveModeReadbackMs = millis();
+        w.driveModeReadbackValid = true;
+    }
+    else if (hdr->serviceId == M25_SRV_APP_MGMT &&
              (hdr->paramId == M25_PARAM_CRUISE_VALUES ||
               hdr->paramId == M25_PARAM_READ_CRUISE_VALUES)) {
         w.distanceKm    = data->cruiseValues.distanceKm;
@@ -1388,6 +1406,9 @@ void M25DisconnectCallback::onDisconnect(BLEClient*) {
     _wheels[wheelIdx].connected     = false;
     _wheels[wheelIdx].protocolReady = false;
     _wheels[wheelIdx].driveModeBits = 0;
+    _wheels[wheelIdx].driveModeReadbackBits = 0;
+    _wheels[wheelIdx].driveModeReadbackMs = 0;
+    _wheels[wheelIdx].driveModeReadbackValid = false;
     _wheels[wheelIdx].txFailStreak  = 0;
     _wheels[wheelIdx].lastTxFailMs  = 0;
     
@@ -1432,6 +1453,9 @@ bool _connectWheel(int idx) {
     w.telegramId    = M25_TELEGRAM_ID_START;
     w.driveModeBits = 0;
     w.protocolReady = false;
+    w.driveModeReadbackBits = 0;
+    w.driveModeReadbackMs = 0;
+    w.driveModeReadbackValid = false;
 
     const char* wheelName = w.name ? w.name : "Unknown";
     Serial.printf("[BLE] Connecting to %s wheel (%s)...\n", wheelName, w.mac);
@@ -1655,58 +1679,142 @@ bool _connectWheel(int idx) {
     // Increased from 50ms to 200ms to improve first-connection reliability
     delay(BLE_POST_GATT_DELAY_MS);
 
-    // M25 protocol init sequence (m25_parking.py connect())
-    // Step 0: WRITE_SYSTEM_MODE = 0x01 (initialize communication)
-    uint8_t sysMode = M25_SYSTEM_MODE_CONNECT;
-    const uint8_t systemModeMaxAttempts = 3;
-    const uint32_t systemModeAckWaitMs = 1000;
-    const uint32_t systemModeRetryDelayMs = 200;
-    bool systemModeAcked = false;
-    bool systemModeDisconnected = false;
-    uint32_t waitStart = 0;
+    // M25 protocol init+arm sequence aligned with Python helper:
+    // - init_connection() each attempt (SYSTEM_MODE=0x01)
+    // - retry attempts de-arm with 0x00 for a clean edge
+    // - arm tries 0x06 then 0x04 fallback
+    // - readback verifies REMOTE bit latched; if not, force 0x06 -> 0x04 then retry readback
+    const uint8_t remoteModeCandidates[] = {
+        (uint8_t)(M25_DRIVE_MODE_REMOTE | M25_DRIVE_MODE_CRUISE),
+        (uint8_t)(M25_DRIVE_MODE_REMOTE),
+    };
+    const uint8_t connectAttempts = 4;
+    const uint32_t armSettleMs = 80;
+    const uint32_t rearmDelayMs = 90;
+    const uint32_t readbackRetryDelayMs = 180;
 
-    for (uint8_t attempt = 1; attempt <= systemModeMaxAttempts; attempt++) {
-        bool sent = _sendCommand(idx, M25_SRV_APP_MGMT, M25_PARAM_WRITE_SYSTEM_MODE, &sysMode, 1);
-        if (!sent) {
-            Serial.printf("[BLE] %s wheel: SYSTEM_MODE send failed (attempt %u/%u)\n",
-                          wheelName,
-                          (unsigned)attempt,
-                          (unsigned)systemModeMaxAttempts);
-        }
-
-        waitStart = millis();
-        while (!w.receivedFirstAck && (millis() - waitStart < systemModeAckWaitMs)) {
+    auto _delayWithUiTicks = [](uint32_t ms) {
+        uint32_t start = millis();
+        while ((millis() - start) < ms) {
             extern void ledTick();
             extern void buzzerTick();
             ledTick();
             buzzerTick();
-            delay(10);
+            delay(1);
+        }
+    };
+
+    auto _readRemoteBitLatched = [&](uint8_t* observedMode) {
+        uint32_t beforeMs = w.driveModeReadbackMs;
+        bool sent = _sendCommand(idx, M25_SRV_APP_MGMT, M25_PARAM_READ_DRIVE_MODE, nullptr, 0);
+        if (!sent) {
+            return false;
         }
 
-        if (w.receivedFirstAck) {
-            systemModeAcked = true;
-            break;
+        uint32_t waitStart = millis();
+        while ((millis() - waitStart) < readbackRetryDelayMs) {
+            if (w.driveModeReadbackValid && w.driveModeReadbackMs != beforeMs) {
+                if (observedMode) *observedMode = w.driveModeReadbackBits;
+                return (w.driveModeReadbackBits & M25_DRIVE_MODE_REMOTE) != 0;
+            }
+            extern void ledTick();
+            extern void buzzerTick();
+            ledTick();
+            buzzerTick();
+            delay(5);
         }
 
-        if (!w.connected) {
-            systemModeDisconnected = true;
-            break;
+        if (observedMode && w.driveModeReadbackValid) {
+            *observedMode = w.driveModeReadbackBits;
         }
+        return false;
+    };
 
-        if (attempt < systemModeMaxAttempts) {
-            Serial.printf("[BLE] %s wheel: no ACK to SYSTEM_MODE yet, retrying (%u/%u)\n",
+    uint8_t observedMode = 0;
+    bool remoteLatched = false;
+
+    for (uint8_t attempt = 1; attempt <= connectAttempts; attempt++) {
+        uint8_t sysMode = M25_SYSTEM_MODE_CONNECT;
+        bool initOk = _sendCommand(idx, M25_SRV_APP_MGMT, M25_PARAM_WRITE_SYSTEM_MODE, &sysMode, 1);
+        if (!initOk) {
+            Serial.printf("[BLE] %s wheel: SYSTEM_MODE send failed (%u/%u)\n",
                           wheelName,
-                          (unsigned)(attempt + 1),
-                          (unsigned)systemModeMaxAttempts);
-            delay(systemModeRetryDelayMs);
+                          (unsigned)attempt,
+                          (unsigned)connectAttempts);
+            if (attempt < connectAttempts) _delayWithUiTicks(rearmDelayMs);
+            continue;
         }
-    }
 
-    if (!systemModeAcked) {
-        Serial.printf("[BLE] %s wheel: No response to SYSTEM_MODE after %u attempts (%s)\n",
+        if (attempt > 1) {
+            uint8_t dearmMode = M25_DRIVE_MODE_NORMAL;
+            bool dearmOk = _sendCommand(idx, M25_SRV_APP_MGMT, M25_PARAM_WRITE_DRIVE_MODE, &dearmMode, 1);
+            if (!dearmOk) {
+                _txStatsCountDriveModeWriteFail();
+                Serial.printf("[BLE] %s wheel: de-arm write 0x00 failed (%u/%u)\n",
+                              wheelName,
+                              (unsigned)attempt,
+                              (unsigned)connectAttempts);
+            }
+            _delayWithUiTicks(rearmDelayMs);
+        }
+
+        bool armWriteOk = false;
+        for (uint8_t mode : remoteModeCandidates) {
+            bool writeOk = _sendCommand(idx, M25_SRV_APP_MGMT, M25_PARAM_WRITE_DRIVE_MODE, &mode, 1);
+            if (writeOk) {
+                armWriteOk = true;
+                break;
+            }
+            _txStatsCountDriveModeWriteFail();
+            Serial.printf("[BLE] %s wheel: arm write 0x%02X failed (%u/%u)\n",
+                          wheelName,
+                          mode,
+                          (unsigned)attempt,
+                          (unsigned)connectAttempts);
+        }
+        if (!armWriteOk) {
+            if (attempt < connectAttempts) _delayWithUiTicks(rearmDelayMs);
+            continue;
+        }
+
+        _delayWithUiTicks(armSettleMs);
+        if (_readRemoteBitLatched(&observedMode)) {
+            remoteLatched = true;
+            break;
+        }
+
+        Serial.printf("[BLE] %s wheel: drive mode readback not latched (attempt %u/%u, mode=0x%02X)\n",
                       wheelName,
-                      (unsigned)systemModeMaxAttempts,
-                      systemModeDisconnected ? "disconnected" : "timeout");
+                      (unsigned)attempt,
+                      (unsigned)connectAttempts,
+                      observedMode);
+
+        // Explicit fallback sequence after failed readback.
+        for (uint8_t mode : remoteModeCandidates) {
+            bool forceOk = _sendCommand(idx, M25_SRV_APP_MGMT, M25_PARAM_WRITE_DRIVE_MODE, &mode, 1);
+            if (!forceOk) {
+                _txStatsCountDriveModeWriteFail();
+                Serial.printf("[BLE] %s wheel: forced arm write 0x%02X failed (%u/%u)\n",
+                              wheelName,
+                              mode,
+                              (unsigned)attempt,
+                              (unsigned)connectAttempts);
+            }
+        }
+
+        _delayWithUiTicks(readbackRetryDelayMs);
+        if (_readRemoteBitLatched(&observedMode)) {
+            remoteLatched = true;
+            break;
+        }
+
+        if (attempt < connectAttempts) _delayWithUiTicks(rearmDelayMs);
+    }
+
+    if (!remoteLatched) {
+        Serial.printf("[BLE] %s wheel: remote mode not latched after %u attempts\n",
+                      wheelName,
+                      (unsigned)connectAttempts);
 #if M25_TRANSPORT_BLE
         w.client->disconnect();
 #endif
@@ -1719,34 +1827,7 @@ bool _connectWheel(int idx) {
         return false;
     }
 
-    // Step 1: WRITE_DRIVE_MODE = 0x06 (enable remote + cruise bits)
-    uint8_t driveMode = (uint8_t)(M25_DRIVE_MODE_REMOTE | M25_DRIVE_MODE_CRUISE);
-    bool driveModeOk = _sendCommand(idx, M25_SRV_APP_MGMT, M25_PARAM_WRITE_DRIVE_MODE, &driveMode, 1);
-    if (!driveModeOk) {
-        _txStatsCountDriveModeWriteFail();
-        Serial.printf("[BLE] %s wheel: failed to set initial drive mode 0x%02X\n", wheelName, driveMode);
-#if M25_TRANSPORT_BLE
-        w.client->disconnect();
-#endif
-#if M25_TRANSPORT_RFCOMM
-        if (w.sppHandle) esp_spp_disconnect(w.sppHandle);
-        w.sppHandle = 0;
-#endif
-        w.consecutiveFails++;
-        w.connected = false;
-        return false;
-    }
-    w.driveModeBits = driveMode;
-    
-    // Brief delay for drive mode to take effect
-    waitStart = millis();
-    while (millis() - waitStart < 200) {
-        extern void ledTick();
-        extern void buzzerTick();
-        ledTick();
-        buzzerTick();
-        delay(1);
-    }
+    w.driveModeBits = observedMode;
 
     w.protocolReady = true;
     w.lastNotifyMs  = millis();  // seed timer; watchdog won't trip before first real notify arrives
@@ -1943,6 +2024,9 @@ void bleResetWheel(int idx) {
     w.protocolReady    = false;
     w.telegramId       = M25_TELEGRAM_ID_START;
     w.driveModeBits    = 0;
+    w.driveModeReadbackBits = 0;
+    w.driveModeReadbackMs = 0;
+    w.driveModeReadbackValid = false;
     _transportClearLinkState(w, idx);
     w.receivedFirstAck     = false;
     w.consecutiveFails = 0;
@@ -2037,6 +2121,9 @@ void bleDisconnect() {
         w.connected     = false;
         w.protocolReady = false;
         w.driveModeBits = 0;
+        w.driveModeReadbackBits = 0;
+        w.driveModeReadbackMs = 0;
+        w.driveModeReadbackValid = false;
         w.txFailStreak  = 0;
         w.lastTxFailMs  = 0;
     }
