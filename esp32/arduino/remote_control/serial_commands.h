@@ -9,9 +9,11 @@
  * ------------------
  *   help / ?                    List all commands
  *   status                      Full status: state, wheels, telemetry, watchdogs, record
- *   debug                       Show all available debug flags with status
- *   debug <flag>                Toggle specific flag (js, motor, heartbeat, ble, buttons, state, telemetry, proto, auth)
- *   debug all / off             Enable or disable all debug flags
+ *   log                         Show logger level + tag status
+ *   log level <...>             Set logger level (none/error/warn/info/debug/verbose)
+ *   log tag <name> <on|off>     Enable/disable one logger tag
+ *   log all <on|off>            Enable/disable all logger tags
+ *   debug ...                   Legacy alias to log controls
  *   js                          One-shot joystick snapshot (raw + normalized)
  *   ble                         BLE connection status for each wheel
  *   wheels                      Verbose per-wheel status + key
@@ -32,29 +34,18 @@
  *   power off                   Turn device off (enters deep sleep)
  *   battery                     Print battery % (requires ENABLE_BATTERY_MONITOR)
  *
- * Debug output flags (check these before printing in the main sketch)
- * -------------------------------------------------------------------
- *   DBG_JS         0x01  live joystick raw + normalized values every 200 ms
- *   DBG_MOTOR      0x02  every motor command forwarded to the wheels (20 Hz)
- *   DBG_HEARTBEAT  0x04  loop heartbeat every 5 seconds
- *   DBG_BLE        0x08  BLE connection events and errors
- *   DBG_BUTTONS    0x10  button press/release events
- *   DBG_STATE      0x20  state transition detail logging
- *   DBG_TELEMETRY  0x40  BLE telemetry responses (battery, firmware, odometer)
- *   DBG_PROTO      0x80   raw BLE TX/RX frame hex dumps with drive command decoding
- *   DBG_BT_AUTH    0x100  BT Classic auth/pairing and SPP state events
- *
- * Adding new debug flags
- * ----------------------
- *   debugFlags is a uint16_t bitfield so extended debug flags are supported.
+ * Logger tag controls
+ * -------------------
+ *   joystick, motor, heartbeat, ble, button, state, telemetry, tx, auth
+ *   debugFlags remains as a temporary compatibility mirror for non-migrated code.
  *
  * Integration in remote_control.ino
  * ----------------------------------
  *   1.  Declare a SerialContext and fill in all pointers (after state vars).
  *   2.  Call serialInit(ctx) at the end of setup().
  *   3.  Call serialTick(ctx) at the top of loop().
- *   4.  Gate debug prints on debugFlags:
- *         if (debugFlags & DBG_MOTOR) printMotorCommand(cmd);
+ *   4.  Prefer logger tags for diagnostics:
+ *         log tag motor on
  */
 
 #ifndef SERIAL_COMMANDS_H
@@ -68,6 +59,7 @@
 #include "joystick.h"
 #include "motor_control.h"
 #include "m25_ble.h"
+#include "Logger.h"
 #include <esp_chip_info.h>
 #include <BLEDevice.h>
  // Note: WiFi.h is NOT included here - the WiFi stack adds ~500 kB to the binary.
@@ -95,31 +87,78 @@
 #endif
 
 // ---------------------------------------------------------------------------
-// Debug output flags - definitions in device_config.h
+// Legacy debug flag bridge (temporary while non-migrated modules still read debugFlags)
 // ---------------------------------------------------------------------------
 // volatile: read/written from two cores (Core1 = serial handler, Core0 = motor task).
-// Without volatile, Core 0 may cache the stale pre-update value indefinitely.
-volatile uint16_t debugFlags = 0;   // all off by default, accessible globally
+volatile uint16_t debugFlags = 0;
 
-// Debug flag metadata for better UI
-struct DebugFlagInfo {
-    uint16_t    mask;
+struct LogTagInfo {
+    uint32_t    tag;
+    uint16_t    legacyMask;
     const char* name;
     const char* description;
 };
 
-static const DebugFlagInfo _debugFlagTable[] = {
-    { DBG_JS,        "js",        "Joystick values (~5 Hz)" },
-    { DBG_MOTOR,     "motor",     "Motor commands (20 Hz)" },
-    { DBG_HEARTBEAT, "heartbeat", "Loop heartbeat (5 s)" },
-    { DBG_BLE,       "ble",       "BLE events & errors" },
-    { DBG_BUTTONS,   "buttons",   "Button press events" },
-    { DBG_STATE,     "state",     "State transition details" },
-    { DBG_TELEMETRY, "telemetry", "BLE telemetry responses (battery/FW/odometer)" },
-    { DBG_PROTO,     "proto",     "Raw BLE TX/RX hex dumps (verbose)" },
-    { DBG_BT_AUTH,   "auth",      "RFCOMM auth/pairing and SPP events" },
+static const LogTagInfo _logTagTable[] = {
+    { TAG_JOYSTICK,  DBG_JS,        "joystick",  "Joystick values (~5 Hz)" },
+    { TAG_MOTOR,     DBG_MOTOR,     "motor",     "Motor commands (20 Hz)" },
+    { TAG_SUPERVISOR,DBG_HEARTBEAT, "heartbeat", "Loop/supervisor heartbeat" },
+    { TAG_BLE,       DBG_BLE,       "ble",       "BLE events & errors" },
+    { TAG_BUTTON,    DBG_BUTTONS,   "button",    "Button press events" },
+    { TAG_SUPERVISOR,DBG_STATE,     "state",     "State transition details" },
+    { TAG_TELEMETRY, DBG_TELEMETRY, "telemetry", "BLE telemetry responses" },
+    { TAG_TX,        DBG_PROTO,     "tx",        "Raw BLE TX/RX hex dumps" },
+    { TAG_AUTH,      DBG_BT_AUTH,   "auth",      "RFCOMM auth/pairing and SPP events" },
 };
-static const uint8_t _debugFlagCount = sizeof(_debugFlagTable) / sizeof(_debugFlagTable[0]);
+static const uint8_t _logTagCount = sizeof(_logTagTable) / sizeof(_logTagTable[0]);
+
+static uint16_t _scBuildLegacyFlagsFromTagMask(uint32_t tagMask) {
+    uint16_t flags = 0;
+    for (uint8_t i = 0; i < _logTagCount; i++) {
+        if ((tagMask & _logTagTable[i].tag) != 0) {
+            flags |= _logTagTable[i].legacyMask;
+        }
+    }
+    return flags;
+}
+
+static void _scSyncLegacyDebugFlagsFromLogger() {
+    debugFlags = _scBuildLegacyFlagsFromTagMask(Logger::instance().getTagMask());
+}
+
+static bool _scTryGetTagByName(const char* name, uint32_t* outTag) {
+    if (!name || !outTag) return false;
+    for (uint8_t i = 0; i < _logTagCount; i++) {
+        if (strcmp(name, _logTagTable[i].name) == 0) {
+            *outTag = _logTagTable[i].tag;
+            return true;
+        }
+    }
+    return false;
+}
+
+static const char* _scLevelName(LogLevel level) {
+    switch (level) {
+    case LogLevel::NONE: return "none";
+    case LogLevel::ERROR: return "error";
+    case LogLevel::WARN: return "warn";
+    case LogLevel::INFO: return "info";
+    case LogLevel::DEBUG: return "debug";
+    case LogLevel::VERBOSE: return "verbose";
+    default: return "?";
+    }
+}
+
+static bool _scTryParseLevel(const char* text, LogLevel* outLevel) {
+    if (!text || !outLevel) return false;
+    if (strcmp(text, "none") == 0) { *outLevel = LogLevel::NONE; return true; }
+    if (strcmp(text, "error") == 0) { *outLevel = LogLevel::ERROR; return true; }
+    if (strcmp(text, "warn") == 0) { *outLevel = LogLevel::WARN; return true; }
+    if (strcmp(text, "info") == 0) { *outLevel = LogLevel::INFO; return true; }
+    if (strcmp(text, "debug") == 0) { *outLevel = LogLevel::DEBUG; return true; }
+    if (strcmp(text, "verbose") == 0) { *outLevel = LogLevel::VERBOSE; return true; }
+    return false;
+}
 
 // Forward declaration
 class Supervisor;
@@ -173,9 +212,11 @@ static void _scPrintHelp() {
     Serial.println(F("  status                    Full system status (state, wheels, telemetry, watchdogs)"));
     Serial.println(F("  sysinfo                   Chip, heap, uptime, WiFi/BT status"));
     Serial.println(F("--- Debug ---"));
-    Serial.println(F("  debug                     Show all debug flags (with usage)"));
-    Serial.println(F("  debug <flag>              Toggle flag (js|motor|heartbeat|ble|buttons|state|telemetry|proto|auth)"));
-    Serial.println(F("  debug all / off           Enable/disable all debug output"));
+    Serial.println(F("  log                       Show logger level and tags"));
+    Serial.println(F("  log level <none|error|warn|info|debug|verbose>"));
+    Serial.println(F("  log tag <name> <on|off>   names: joystick|motor|heartbeat|ble|button|state|telemetry|tx|auth"));
+    Serial.println(F("  log all <on|off>          Enable/disable all tags"));
+    Serial.println(F("  debug ...                 Alias for legacy scripts (deprecated)"));
     Serial.println(F("  txstats [reset]           Show/reset BLE TX command counters"));
     Serial.println(F("  log stop <on|off>         Enable/disable STOP lines in motor debug"));
     Serial.println(F("  log stop every <N>        Print every Nth STOP line (when enabled)"));
@@ -217,41 +258,25 @@ static void _scPrintHelp() {
     Serial.println(F("----------------"));
 }
 
-static void _scPrintDebugFlags() {
-    Serial.println(F("--- Debug Flags ---"));
-    Serial.printf("Current: 0x%04X", debugFlags);
-    if (debugFlags == 0) {
-        Serial.println(F("  (all disabled)"));
-    }
-    else {
-        Serial.print(F("  ("));
-        bool first = true;
-        for (uint8_t i = 0; i < _debugFlagCount; i++) {
-            if (debugFlags & _debugFlagTable[i].mask) {
-                if (!first) Serial.print(F(", "));
-                Serial.print(_debugFlagTable[i].name);
-                first = false;
-            }
-        }
-        Serial.println(F(")"));
-    }
-    Serial.println();
-    Serial.println(F("Flag       Status  Description"));
-    Serial.println(F("---------- ------- ----------------------------------"));
+static void _scPrintLoggerSettings() {
+    Logger& logger = Logger::instance();
+    uint32_t tagMask = logger.getTagMask();
+    _scSyncLegacyDebugFlagsFromLogger();
 
-    for (uint8_t i = 0; i < _debugFlagCount; i++) {
-        bool enabled = (debugFlags & _debugFlagTable[i].mask) != 0;
-        Serial.printf("%-10s [%s]  %s\n",
-            _debugFlagTable[i].name,
-            enabled ? "ON " : "off",
-            _debugFlagTable[i].description);
+    Serial.println(F("--- Logger Settings ---"));
+    Serial.printf("Level: %s\n", _scLevelName(logger.getLevel()));
+    Serial.printf("Tag mask: 0x%08lX\n", (unsigned long)tagMask);
+    Serial.println(F("Tag         Status  Description"));
+    Serial.println(F("----------  ------  ----------------------------------"));
+    for (uint8_t i = 0; i < _logTagCount; i++) {
+        bool enabled = (tagMask & _logTagTable[i].tag) != 0;
+        Serial.printf("%-10s  %-6s  %s\n",
+            _logTagTable[i].name,
+            enabled ? "ON" : "off",
+            _logTagTable[i].description);
     }
-
-    Serial.println(F("\nUsage:"));
-    Serial.println(F("  debug              Show this list"));
-    Serial.println(F("  debug <flag>       Toggle specific flag (e.g., 'debug js')"));
-    Serial.println(F("  debug all          Enable all flags"));
-    Serial.println(F("  debug off          Disable all flags"));
+    Serial.println(F("\nLegacy bridge:"));
+    Serial.printf("debugFlags mirror: 0x%04X\n", debugFlags);
 }
 
 static void _scPrintStatus(const SerialContext& ctx) {
@@ -342,22 +367,12 @@ static void _scPrintStatus(const SerialContext& ctx) {
     }
 #endif
 
-    // --- Debug flags ---
-    if (debugFlags == 0) {
-        Serial.println(F("[Debug]    off  (use 'debug' to see options)"));
-    }
-    else {
-        Serial.print(F("[Debug]    "));
-        bool first = true;
-        for (uint8_t i = 0; i < _debugFlagCount; i++) {
-            if (debugFlags & _debugFlagTable[i].mask) {
-                if (!first) Serial.print(F(", "));
-                Serial.print(_debugFlagTable[i].name);
-                first = false;
-            }
-        }
-        Serial.printf("  (0x%04X)\n", debugFlags);
-    }
+    // --- Logger status ---
+    Logger& logger = Logger::instance();
+    uint32_t tagMask = logger.getTagMask();
+    Serial.printf("[Log]      level=%s  tags=0x%08lX\n",
+        _scLevelName(logger.getLevel()),
+        (unsigned long)tagMask);
 
     // --- Record status ---
     if (bleRecordIsActive()) {
@@ -495,58 +510,123 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
         return;
     }
 
-    // debug (show flags or toggle specific flag)
-    if (strncmp(cmd, "debug", 5) == 0) {
-        const char* arg = cmd + 5;
-
-        // Skip whitespace
+    // log (new logger-native control plane)
+    if (strncmp(cmd, "log", 3) == 0) {
+        const char* arg = cmd + 3;
         while (*arg == ' ') arg++;
 
-        // No argument: show all flags
+        if (*arg == '\0' || strcmp(arg, "show") == 0) {
+            _scPrintLoggerSettings();
+            return;
+        }
+
+        if (strncmp(arg, "level ", 6) == 0) {
+            LogLevel lvl;
+            if (!_scTryParseLevel(arg + 6, &lvl)) {
+                Serial.println(F("[Log] level: use none|error|warn|info|debug|verbose"));
+                return;
+            }
+            Logger::instance().setLevel(lvl, true);
+            _scSyncLegacyDebugFlagsFromLogger();
+            Serial.printf("[Log] level -> %s\n", _scLevelName(lvl));
+            return;
+        }
+
+        if (strncmp(arg, "all ", 4) == 0) {
+            const char* mode = arg + 4;
+            if (strcmp(mode, "on") == 0) {
+                Logger::instance().setTagMask(TAG_ALL, true);
+            }
+            else if (strcmp(mode, "off") == 0) {
+                Logger::instance().setTagMask(0, true);
+            }
+            else {
+                Serial.println(F("[Log] all: use 'on' or 'off'"));
+                return;
+            }
+            _scSyncLegacyDebugFlagsFromLogger();
+            _scPrintLoggerSettings();
+            return;
+        }
+
+        if (strncmp(arg, "tag ", 4) == 0) {
+            const char* p = arg + 4;
+            char tagName[16] = { 0 };
+            size_t n = 0;
+            while (*p != '\0' && *p != ' ' && n < sizeof(tagName) - 1) {
+                tagName[n++] = *p++;
+            }
+            while (*p == ' ') p++;
+
+            uint32_t tag = 0;
+            if (!_scTryGetTagByName(tagName, &tag)) {
+                Serial.printf("[Log] unknown tag: '%s'\n", tagName);
+                return;
+            }
+            if (strcmp(p, "on") == 0) {
+                Logger::instance().setTagEnabled(tag, true, true);
+            }
+            else if (strcmp(p, "off") == 0) {
+                Logger::instance().setTagEnabled(tag, false, true);
+            }
+            else {
+                Serial.println(F("[Log] tag: use 'log tag <name> <on|off>'"));
+                return;
+            }
+            _scSyncLegacyDebugFlagsFromLogger();
+            Serial.printf("[Log] tag %s -> %s\n", tagName, p);
+            return;
+        }
+
+        Serial.println(F("[Log] usage: 'log', 'log level <...>', 'log tag <name> <on|off>', 'log all <on|off>'"));
+        return;
+    }
+
+    // debug alias (deprecated)
+    if (strncmp(cmd, "debug", 5) == 0) {
+        const char* arg = cmd + 5;
+        while (*arg == ' ') arg++;
+
         if (*arg == '\0') {
-            _scPrintDebugFlags();
+            _scPrintLoggerSettings();
             return;
         }
-
-        // debug off
         if (strcmp(arg, "off") == 0) {
-            debugFlags = 0;
-            Serial.println(F("[Debug] All flags disabled"));
-            _scPrintDebugFlags();
+            Logger::instance().setTagMask(0, true);
+            _scSyncLegacyDebugFlagsFromLogger();
+            Serial.println(F("[Debug] Deprecated alias: use 'log all off'"));
             return;
         }
-
-        // debug all
         if (strcmp(arg, "all") == 0) {
-            debugFlags = 0xFFFF;  // Enable all flags
-            Serial.println(F("[Debug] All flags enabled"));
-            _scPrintDebugFlags();
+            Logger::instance().setTagMask(TAG_ALL, true);
+            _scSyncLegacyDebugFlagsFromLogger();
+            Serial.println(F("[Debug] Deprecated alias: use 'log all on'"));
             return;
         }
 
-        // Try to find matching flag name in table
-        bool found = false;
-        for (uint8_t i = 0; i < _debugFlagCount; i++) {
-            if (strcmp(arg, _debugFlagTable[i].name) == 0) {
-                debugFlags ^= _debugFlagTable[i].mask;  // Toggle
-                bool nowEnabled = (debugFlags & _debugFlagTable[i].mask) != 0;
-                Serial.printf("[Debug] %s -> %s\n",
-                    _debugFlagTable[i].name,
-                    nowEnabled ? "ON" : "off");
-                found = true;
-                break;
-            }
+        uint32_t tag = 0;
+        if (!_scTryGetTagByName(arg, &tag)) {
+            // legacy alias map
+            if (strcmp(arg, "js") == 0) tag = TAG_JOYSTICK;
+            else if (strcmp(arg, "buttons") == 0) tag = TAG_BUTTON;
+            else if (strcmp(arg, "proto") == 0) tag = TAG_TX;
+            else if (strcmp(arg, "telemetry") == 0) tag = TAG_TELEMETRY;
+            else if (strcmp(arg, "ble") == 0) tag = TAG_BLE;
+            else if (strcmp(arg, "state") == 0 || strcmp(arg, "heartbeat") == 0) tag = TAG_SUPERVISOR;
+            else if (strcmp(arg, "motor") == 0) tag = TAG_MOTOR;
+            else if (strcmp(arg, "auth") == 0) tag = TAG_AUTH;
         }
 
-        if (!found) {
+        if (tag == 0) {
             Serial.printf("[Debug] Unknown flag: '%s'\n", arg);
-            Serial.println(F("[Debug] Available flags:"));
-            for (uint8_t i = 0; i < _debugFlagCount; i++) {
-                Serial.printf("  %-10s  %s\n",
-                    _debugFlagTable[i].name,
-                    _debugFlagTable[i].description);
-            }
+            Serial.println(F("[Debug] Use 'log' to list supported tag names."));
+            return;
         }
+
+        bool currentlyEnabled = Logger::instance().isTagEnabled(tag);
+        Logger::instance().setTagEnabled(tag, !currentlyEnabled, true);
+        _scSyncLegacyDebugFlagsFromLogger();
+        Serial.println(F("[Debug] Deprecated alias: use 'log tag <name> <on|off>'"));
         return;
     }
 
@@ -795,7 +875,7 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
             Serial.println();
         }
         if (requestAllowed) {
-            Serial.println(F("[Telemetry] Fresh values arrive via BLE notify - run 'telemetry' again or enable 'debug telemetry'"));
+            Serial.println(F("[Telemetry] Fresh values arrive via BLE notify - run 'telemetry' again or use 'log tag telemetry on'"));
         }
         else {
             Serial.println(F("[Telemetry] Cached-only output in ARMED/DRIVING. Use telemetry in PAIRED for live requests."));
@@ -1076,6 +1156,7 @@ static uint32_t _scLastJsMs = 0;
 /*  Call once at the end of setup().  Prints the ready banner. */
 inline void serialInit(const SerialContext& ctx) {
     (void)ctx;
+    _scSyncLegacyDebugFlagsFromLogger();
     Serial.println(F("[Serial] Ready - type 'help' for commands"));
 }
 
@@ -1115,8 +1196,8 @@ inline void serialTick(const SerialContext& ctx) {
         }
     }
 
-    // --- Live joystick stream (DBG_JS) ---
-    if ((debugFlags & DBG_JS) &&
+    // --- Live joystick stream (logger tag) ---
+    if (Logger::instance().isTagEnabled(TAG_JOYSTICK) &&
         (millis() - _scLastJsMs >= SC_JS_INTERVAL_MS)) {
         _scLastJsMs = millis();
         _scPrintJs();
