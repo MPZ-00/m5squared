@@ -2444,12 +2444,10 @@ void bleTick() {
         if (!w.connected) {
             if (now - w.lastConnectAttemptMs >= BLE_RECONNECT_DELAY_MS) {
                 w.lastConnectAttemptMs = now;
-                if (Logger::instance().isTagEnabled(TAG_BLE)) {
-                    LOG_DEBUG(TAG_BLE, "Attempting reconnect to %s wheel... (attempt %u/%u)",
-                        w.name,
-                        (unsigned)(w.consecutiveFails + 1),
-                        (unsigned)BLE_MAX_RECONNECT_FAILS);
-                }
+                LOG_DEBUG(TAG_BLE, "Attempting reconnect to %s wheel... (attempt %u/%u)",
+                    w.name,
+                    (unsigned)(w.consecutiveFails + 1),
+                    (unsigned)BLE_MAX_RECONNECT_FAILS);
                 _connectWheel(i);
                 if (w.consecutiveFails >= BLE_MAX_RECONNECT_FAILS) {
                     LOG_ERROR(TAG_BLE, "%s wheel: %u consecutive failures - disabling auto-reconnect. Use 'autoreconnect on' to retry.",
@@ -2531,47 +2529,33 @@ void bleResetTxStats() {
 void bleSetMac(int idx, const char* mac) {
     if (idx < 0 || idx >= WHEEL_COUNT) return;
     if (!_wheelActive(idx)) {
-        if (Logger::instance().isTagEnabled(TAG_BLE)) {
-            LOG_DEBUG(TAG_BLE, "bleSetMac: Skipping inactive wheel %d", idx);
-        }
+        LOG_DEBUG(TAG_BLE, "bleSetMac: Skipping inactive wheel %d", idx);
         return;
     }
     if (!mac) {
         LOG_ERROR(TAG_BLE, "NULL MAC address provided");
         return;
     }
-    if (Logger::instance().isTagEnabled(TAG_BLE)) {
-        LOG_DEBUG(TAG_BLE, "bleSetMac(%d, %s)", idx, mac);
-    }
+    LOG_DEBUG(TAG_BLE, "bleSetMac(%d, %s)", idx, mac);
 
     WheelConnState_t& w = _wheels[idx];
     if (strncmp(w.mac, mac, 17) == 0) {
-        if (Logger::instance().isTagEnabled(TAG_BLE)) {
-            LOG_DEBUG(TAG_BLE, "%s wheel MAC unchanged (%s)",
-                w.name ? w.name : "Unknown",
-                mac);
-        }
+        LOG_DEBUG(TAG_BLE, "%s wheel MAC unchanged (%s)",
+            w.name ? w.name : "Unknown",
+            mac);
         return;
     }
 
-    if (Logger::instance().isTagEnabled(TAG_BLE)) {
-        LOG_DEBUG(TAG_BLE, "Got reference to wheel struct (name=%s)", w.name ? w.name : "NULL");
-    }
+    LOG_DEBUG(TAG_BLE, "Got reference to wheel struct (name=%s)", w.name ? w.name : "NULL");
 
     // Safely check and disconnect existing client
-    if (Logger::instance().isTagEnabled(TAG_BLE)) {
-        LOG_DEBUG(TAG_BLE, "Checking existing transport link state...");
-    }
+    LOG_DEBUG(TAG_BLE, "Checking existing transport link state...");
     if (_transportHasOpenLink(w)) {
-        if (Logger::instance().isTagEnabled(TAG_BLE)) {
-            LOG_DEBUG(TAG_BLE, "Disconnecting existing link...");
-        }
+        LOG_DEBUG(TAG_BLE, "Disconnecting existing link...");
         _transportDisconnectLink(w);
     }
     _transportClearLinkState(w, idx);
-    if (Logger::instance().isTagEnabled(TAG_BLE)) {
-        LOG_DEBUG(TAG_BLE, "Updating wheel state...");
-    }
+    LOG_DEBUG(TAG_BLE, "Updating wheel state...");
     w.connected = false;
     w.protocolReady = false;
     w.consecutiveFails = 0;
@@ -2586,42 +2570,32 @@ void bleSetMac(int idx, const char* mac) {
 void bleSetKey(int idx, const uint8_t* newKey) {
     if (idx < 0 || idx >= WHEEL_COUNT) return;
     if (!_wheelActive(idx)) {
-        if (Logger::instance().isTagEnabled(TAG_BLE)) {
-            LOG_DEBUG(TAG_BLE, "bleSetKey: Skipping inactive wheel %d", idx);
-        }
+        LOG_DEBUG(TAG_BLE, "bleSetKey: Skipping inactive wheel %d", idx);
         return;
     }
     if (!newKey) {
         LOG_ERROR(TAG_BLE, "NULL key provided");
         return;
     }
-    if (Logger::instance().isTagEnabled(TAG_BLE)) {
-        LOG_DEBUG(TAG_BLE, "bleSetKey(%d, [key data])", idx);
-    }
+    LOG_DEBUG(TAG_BLE, "bleSetKey(%d, [key data])", idx);
 
     WheelConnState_t& w = _wheels[idx];
     if (memcmp(w.key, newKey, 16) == 0) {
-        if (Logger::instance().isTagEnabled(TAG_BLE)) {
-            LOG_DEBUG(TAG_BLE, "%s wheel key unchanged", w.name ? w.name : "Unknown");
-        }
+        LOG_DEBUG(TAG_BLE, "%s wheel key unchanged", w.name ? w.name : "Unknown");
         return;
     }
 
-    if (Logger::instance().isTagEnabled(TAG_BLE)) {
-        LOG_DEBUG(TAG_BLE, "_wheels[%d].key address: %p", idx, (void*)w.key);
-        LOG_DEBUG(TAG_BLE, "_wheels[%d].mac address: %p", idx, (void*)w.mac);
-        LOG_DEBUG(TAG_BLE, "_wheels[%d].name before: %s", idx, w.name ? w.name : "NULL");
-        LOG_DEBUG(TAG_BLE, "_wheels[%d].mac before: '%s' (len=%d)", idx, w.mac, (int)strlen(w.mac));
-    }
+    LOG_DEBUG(TAG_BLE, "_wheels[%d].key address: %p", idx, (void*)w.key);
+    LOG_DEBUG(TAG_BLE, "_wheels[%d].mac address: %p", idx, (void*)w.mac);
+    LOG_DEBUG(TAG_BLE, "_wheels[%d].name before: %s", idx, w.name ? w.name : "NULL");
+    LOG_DEBUG(TAG_BLE, "_wheels[%d].mac before: '%s' (len=%d)", idx, w.mac, (int)strlen(w.mac));
 
     memcpy(w.key, newKey, 16);
     w.txFailStreak = 0;
     w.lastTxFailMs = 0;
 
-    if (Logger::instance().isTagEnabled(TAG_BLE)) {
-        LOG_DEBUG(TAG_BLE, "_wheels[%d].name after: %s", idx, w.name ? w.name : "NULL");
-        LOG_DEBUG(TAG_BLE, "_wheels[%d].mac after: '%s' (len=%d)", idx, w.mac, (int)strlen(w.mac));
-    }
+    LOG_DEBUG(TAG_BLE, "_wheels[%d].name after: %s", idx, w.name ? w.name : "NULL");
+    LOG_DEBUG(TAG_BLE, "_wheels[%d].mac after: '%s' (len=%d)", idx, w.mac, (int)strlen(w.mac));
 
     if (w.name) {
         LOG_INFO(TAG_BLE, "%s wheel key updated  (reconnect required)", w.name);

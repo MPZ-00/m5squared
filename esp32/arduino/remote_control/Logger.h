@@ -50,6 +50,9 @@ public:
     LogLevel getLevel() const { return _level; }
     uint32_t getTagMask() const { return _tagMask; }
     bool isTagEnabled(uint32_t tag) const { return (_tagMask & tag) != 0; }
+    bool shouldLog(LogLevel level, uint32_t tag) const {
+        return (level <= _level) && ((_tagMask & tag) != 0);
+    }
     void setTagEnabled(uint32_t tag, bool enabled, bool persist = true);
 
     // Core log - use the macros below instead of calling this directly
@@ -79,14 +82,16 @@ private:
 #endif
 
 #if LOGGING_ENABLED
-#define LOG_ERROR(tag, fmt, ...) Logger::instance().log(LogLevel::ERROR, tag, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
-#define LOG_WARN(tag, fmt, ...) Logger::instance().log(LogLevel::WARN, tag, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
-#define LOG_INFO(tag, fmt, ...) Logger::instance().log(LogLevel::INFO, tag, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
-#define LOG_DEBUG(tag, fmt, ...) Logger::instance().log(LogLevel::DEBUG, tag, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
-#define LOG_VERBOSE(tag, fmt, ...) Logger::instance().log(LogLevel::VERBOSE, tag, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
+#define LOG_SHOULD_LOG(level, tag) (Logger::instance().shouldLog((level), (tag)))
+#define LOG_ERROR(tag, fmt, ...) do { Logger& _logger = Logger::instance(); if (_logger.shouldLog(LogLevel::ERROR, (tag))) _logger.log(LogLevel::ERROR, (tag), __FILE__, __LINE__, (fmt), ##__VA_ARGS__); } while (0)
+#define LOG_WARN(tag, fmt, ...) do { Logger& _logger = Logger::instance(); if (_logger.shouldLog(LogLevel::WARN, (tag))) _logger.log(LogLevel::WARN, (tag), __FILE__, __LINE__, (fmt), ##__VA_ARGS__); } while (0)
+#define LOG_INFO(tag, fmt, ...) do { Logger& _logger = Logger::instance(); if (_logger.shouldLog(LogLevel::INFO, (tag))) _logger.log(LogLevel::INFO, (tag), __FILE__, __LINE__, (fmt), ##__VA_ARGS__); } while (0)
+#define LOG_DEBUG(tag, fmt, ...) do { Logger& _logger = Logger::instance(); if (_logger.shouldLog(LogLevel::DEBUG, (tag))) _logger.log(LogLevel::DEBUG, (tag), __FILE__, __LINE__, (fmt), ##__VA_ARGS__); } while (0)
+#define LOG_VERBOSE(tag, fmt, ...) do { Logger& _logger = Logger::instance(); if (_logger.shouldLog(LogLevel::VERBOSE, (tag))) _logger.log(LogLevel::VERBOSE, (tag), __FILE__, __LINE__, (fmt), ##__VA_ARGS__); } while (0)
 #else
 
 // Compile-time elimination - zero overhead in production
+#define LOG_SHOULD_LOG(level, tag) (false)
 #define LOG_ERROR(tag, fmt, ...) ((void)0)
 #define LOG_WARN(tag, fmt, ...) ((void)0)
 #define LOG_INFO(tag, fmt, ...) ((void)0)
