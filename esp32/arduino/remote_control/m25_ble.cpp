@@ -1705,6 +1705,7 @@ bool _connectWheel(int idx) {
     const uint32_t armSettleMs = 80;
     const uint32_t rearmDelayMs = 90;
     const uint32_t readbackRetryDelayMs = 180;
+    const uint32_t edgePulseDelayMs = 45;
 
     auto _delayWithUiTicks = [](uint32_t ms) {
         uint32_t start = millis();
@@ -1743,6 +1744,40 @@ bool _connectWheel(int idx) {
         return false;
         };
 
+    auto _sendDriveModeEdgePulse = [&](uint8_t riseMode, uint8_t attemptNo) {
+        uint8_t fallMode = M25_DRIVE_MODE_NORMAL;
+        bool fallOk = _sendCommand(idx, M25_SRV_APP_MGMT, M25_PARAM_WRITE_DRIVE_MODE, &fallMode, 1);
+        if (!fallOk) {
+            _txStatsCountDriveModeWriteFail();
+            LOG_WARN(TAG_BLE, "%s wheel: edge pulse fall write 0x00 failed (%u/%u)",
+                wheelName,
+                (unsigned)attemptNo,
+                (unsigned)connectAttempts);
+            return false;
+        }
+
+        _delayWithUiTicks(edgePulseDelayMs);
+
+        bool riseOk = _sendCommand(idx, M25_SRV_APP_MGMT, M25_PARAM_WRITE_DRIVE_MODE, &riseMode, 1);
+        if (!riseOk) {
+            _txStatsCountDriveModeWriteFail();
+            LOG_WARN(TAG_BLE, "%s wheel: edge pulse rise write 0x%02X failed (%u/%u)",
+                wheelName,
+                riseMode,
+                (unsigned)attemptNo,
+                (unsigned)connectAttempts);
+            return false;
+        }
+
+        LOG_INFO(TAG_BLE, "%s wheel: edge pulse 0x00->0x%02X sent (%u/%u)",
+            wheelName,
+            riseMode,
+            (unsigned)attemptNo,
+            (unsigned)connectAttempts);
+        _delayWithUiTicks(edgePulseDelayMs);
+        return true;
+        };
+
     uint8_t observedMode = 0;
     bool remoteLatched = false;
 
@@ -1758,16 +1793,15 @@ bool _connectWheel(int idx) {
             continue;
         }
 
-        if (attempt > 1) {
-            uint8_t dearmMode = M25_DRIVE_MODE_NORMAL;
-            bool dearmOk = _sendCommand(idx, M25_SRV_APP_MGMT, M25_PARAM_WRITE_DRIVE_MODE, &dearmMode, 1);
-            if (!dearmOk) {
-                _txStatsCountDriveModeWriteFail();
-                LOG_WARN(TAG_BLE, "%s wheel: de-arm write 0x00 failed (%u/%u)",
-                    wheelName,
-                    (unsigned)attempt,
-                    (unsigned)connectAttempts);
+        bool pulseOk = _sendDriveModeEdgePulse((uint8_t)M25_DRIVE_MODE_REMOTE, attempt);
+        if (!pulseOk) {
+            if (attempt < connectAttempts) {
+                _delayWithUiTicks(rearmDelayMs);
             }
+            continue;
+        }
+
+        if (attempt > 1) {
             _delayWithUiTicks(rearmDelayMs);
         }
 
