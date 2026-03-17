@@ -10,9 +10,26 @@ enum class LogLevel : uint8_t {
 };
 
 enum LogTag : uint32_t {
-	TAG_SYSTEM = (1 << 0),
-	TAG_SUPERVISOR = (1 << 1),
-	TAG_BLE = (1 << 2),
+	TAG_SYSTEM = (1 << 0),     // boot, reset, sleep, wake, etc
+	TAG_SUPERVISOR = (1 << 1), // main loop, watchdog, task watchdog, heap, uptime, etc
+	TAG_BLE = (1 << 2),        // GAP, GATT, connection events, RSSI, etc (separate concerns from RFCOMM/SPP)
+	TAG_MOTOR = (1 << 3),      // speed writes, stop, drive-mode gate, failure streaks
+	TAG_RFCOMM = (1 << 4),     // SPP/BT Classic transport (separate concerns from BLE)
+	TAG_AUTH = (1 << 5),       // GAP pairing events (PIN, passkey, AUTH_CMPL)
+	TAG_TX = (1 << 6),         // BLE TX details and stats
+	TAG_CONFIG = (1 << 7),     // NVS read/write, MAC/key/profile management
+	TAG_WATCHDOG = (1 << 8),   // input, link, stale-notify, arm-idle timeouts
+	TAG_SAFETY = (1 << 9),     // joystick centering check, emergency stop
+	TAG_BOOT = (1 << 10),      // startup banner, wake source, cold-boot vs deep-sleep
+	TAG_POWER = (1 << 11),     // deep sleep entry, power on/off
+	TAG_BUTTON = (1 << 12),    // button press events
+	TAG_JOYSTICK = (1 << 13),  // calibration, ADC snapshots
+	TAG_TELEMETRY = (1 << 14), // battery %, FW version, odometer from wheels
+	TAG_RECORD = (1 << 15),    // BLE packet capture/dump
+	TAG_BUZZER = (1 << 16),    // hardware init, pattern errors
+	TAG_CMD = (1 << 17),       // serial REPL command feedback
+	TAG_SYS = (1 << 18),       // chip info, heap, uptime, WiFi stats
+	TAG_CRYPTO = (1 << 19),    // encryption/decryption errors (BLE-ENC, BLE-DEC)
 	TAG_ALL = (1 << 32) - 1
 };
 
