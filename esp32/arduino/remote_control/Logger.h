@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Arduino.h>
+
 enum class LogLevel : uint8_t {
     NONE = 0,
     ERROR = 1,
@@ -47,10 +49,15 @@ public:
 
     LogLevel getLevel() const { return _level; }
     uint32_t getTagMask() const { return _tagMask; }
+    bool isTagEnabled(uint32_t tag) const { return (_tagMask & tag) != 0; }
+    void setTagEnabled(uint32_t tag, bool enabled, bool persist = true);
 
     // Core log - use the macros below instead of calling this directly
     void log(LogLevel level, uint32_t tag, const char* file, int line, const char* fmt, ...)
         __attribute__((format(printf, 6, 7)));
+
+    static const char* levelString(LogLevel level);
+    static const char* tagString(uint32_t tag);
 
 private:
     Logger() = default;
@@ -65,6 +72,10 @@ private:
 // Set to 0 to strip ALL logging at compile time (production build flag)
 #ifndef LOGGING_ENABLED
 #define LOGGING_ENABLED 1
+#endif
+
+#ifndef LOG_FORMAT_DETAILED
+#define LOG_FORMAT_DETAILED 0
 #endif
 
 #if LOGGING_ENABLED
