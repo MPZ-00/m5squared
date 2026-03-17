@@ -2,7 +2,7 @@
  * supervisor.cpp - State machine, watchdogs, and safety orchestration
  *
  * SAFETY-CRITICAL CODE
- * 
+ *
  * Implementation of the Supervisor class.
  * See supervisor.h for detailed documentation.
  */
@@ -11,12 +11,9 @@
 #include "m25_ble.h"
 #include "Logger.h"
 
-// External debug flags (defined in serial_commands.h)
-extern volatile uint16_t debugFlags;
-
-// ---------------------------------------------------------------------------
-// Constructor
-// ---------------------------------------------------------------------------
+ // ---------------------------------------------------------------------------
+ // Constructor
+ // ---------------------------------------------------------------------------
 Supervisor::Supervisor(Mapper& mapper, const SupervisorConfig& config)
     : _mapper(mapper)
     , _config(config)
@@ -42,8 +39,7 @@ Supervisor::Supervisor(Mapper& mapper, const SupervisorConfig& config)
     , _callbackCount(0)
     , _connectTask(nullptr)
     , _connectDone(false)
-    , _connectAbort(false)
-{
+    , _connectAbort(false) {
     memset(_leftAddr, 0, sizeof(_leftAddr));
     memset(_rightAddr, 0, sizeof(_rightAddr));
     memset(_leftKey, 0, sizeof(_leftKey));
@@ -58,7 +54,7 @@ Supervisor::Supervisor(Mapper& mapper, const SupervisorConfig& config)
 void Supervisor::begin() {
     _lastUpdateMs = millis();
     _lastHeartbeatMs = millis();
-    Serial.println("[Supervisor] Initialized");
+    LOG_INFO(TAG_SUPERVISOR, "Initialized");
 }
 
 // ---------------------------------------------------------------------------
@@ -66,51 +62,51 @@ void Supervisor::begin() {
 // ---------------------------------------------------------------------------
 bool Supervisor::update() {
     uint32_t now = millis();
-    
+
     // Rate limiting based on loop interval
     if (now - _lastUpdateMs < _config.loopIntervalMs) {
         return false;
     }
     _lastUpdateMs = now;
-    
+
     // Handle stop request
     if (_stopRequested) {
         handleStopRequest();
         return true;
     }
-    
+
     // State machine
     switch (_state) {
-        case SUPERVISOR_DISCONNECTED:
-            handleDisconnected();
-            break;
-        
-        case SUPERVISOR_CONNECTING:
-            handleConnecting();
-            break;
-        
-        case SUPERVISOR_PAIRED:
-            handlePaired();
-            break;
-        
-        case SUPERVISOR_ARMED:
-            handleArmed();
-            break;
-        
-        case SUPERVISOR_DRIVING:
-            handleDriving();
-            break;
-        
-        case SUPERVISOR_FAILSAFE:
-            handleFailsafe();
-            break;
+    case SUPERVISOR_DISCONNECTED:
+        handleDisconnected();
+        break;
+
+    case SUPERVISOR_CONNECTING:
+        handleConnecting();
+        break;
+
+    case SUPERVISOR_PAIRED:
+        handlePaired();
+        break;
+
+    case SUPERVISOR_ARMED:
+        handleArmed();
+        break;
+
+    case SUPERVISOR_DRIVING:
+        handleDriving();
+        break;
+
+    case SUPERVISOR_FAILSAFE:
+        handleFailsafe();
+        break;
     }
-    
+
     // Watchdogs (active in ARMED and DRIVING states)
     if (_state == SUPERVISOR_ARMED || _state == SUPERVISOR_DRIVING) {
         checkWatchdogs();
     }
-    
+
     return true;
 }
 
@@ -118,33 +114,29 @@ bool Supervisor::update() {
 // Connection Management
 // ---------------------------------------------------------------------------
 void Supervisor::requestConnect(const char* leftAddr, const char* rightAddr,
-                                const uint8_t* leftKey, const uint8_t* rightKey) {
+    const uint8_t* leftKey, const uint8_t* rightKey) {
     if (!leftAddr || !rightAddr || !leftKey || !rightKey) {
-        Serial.println("[Supervisor] ERROR: NULL connection parameters provided");
+        LOG_ERROR(TAG_SUPERVISOR, "NULL connection parameters provided");
         return;
     }
-    
-    if (debugFlags & DBG_BLE) {
-        Serial.printf("[Supervisor] requestConnect: L=%s R=%s\n", leftAddr, rightAddr);
-    }
-    
+
+    LOG_DEBUG(TAG_SUPERVISOR, "requestConnect: L=%s R=%s", leftAddr, rightAddr);
+
     strncpy(_leftAddr, leftAddr, sizeof(_leftAddr) - 1);
     _leftAddr[sizeof(_leftAddr) - 1] = '\0';
     strncpy(_rightAddr, rightAddr, sizeof(_rightAddr) - 1);
     _rightAddr[sizeof(_rightAddr) - 1] = '\0';
     memcpy(_leftKey, leftKey, 16);
     memcpy(_rightKey, rightKey, 16);
-    
-    if (debugFlags & DBG_BLE) {
-        Serial.printf("[Supervisor] Stored: L=%s R=%s\n", _leftAddr, _rightAddr);
-    }
+
+    LOG_DEBUG(TAG_SUPERVISOR, "Stored: L=%s R=%s", _leftAddr, _rightAddr);
 
     // Keep BLE runtime credentials in sync with the latest requested values.
     // This ensures serial 'wheels' and the next connect attempt both use NVS data.
     applyRuntimeWheelConfig();
-    
+
     _connectionRequested = true;
-    
+
     if (_state == SUPERVISOR_DISCONNECTED) {
         transitionTo(SUPERVISOR_CONNECTING);
     }
@@ -171,13 +163,11 @@ void Supervisor::requestDisconnect() {
 }
 
 void Supervisor::requestReconnect() {
-    if (debugFlags & DBG_STATE) {
-        Serial.println("[Supervisor] Forced reconnect requested");
-    }
-    
+    LOG_INFO(TAG_SUPERVISOR, "Forced reconnect requested");
+
     // Request disconnect first
     _stopRequested = true;
-    
+
     // Connection will be re-initiated after disconnect completes
     _connectionRequested = true;
 }
@@ -197,12 +187,10 @@ void Supervisor::requestArm() {
 void Supervisor::requestDisarm() {
     if (_state == SUPERVISOR_ARMED || _state == SUPERVISOR_DRIVING) {
         sendStop();
-        _driveSessionActive  = false;
+        _driveSessionActive = false;
         _lastTelemetryPollMs = millis(); // defer first post-disarm poll by one interval
         transitionTo(SUPERVISOR_PAIRED);
-        if (debugFlags & DBG_STATE) {
-            Serial.println("[Supervisor] Disarmed -> PAIRED");
-        }
+        LOG_INFO(TAG_SUPERVISOR, "Disarmed -> PAIRED");
     }
 }
 
@@ -211,7 +199,7 @@ void Supervisor::requestDisarm() {
 // ---------------------------------------------------------------------------
 void Supervisor::processInput(const ControlState& control) {
     _lastInputTimeMs = millis();
-    
+
     // Different behavior depending on state
     if (_state == SUPERVISOR_ARMED) {
         if (control.deadman && !control.isNeutral()) {
@@ -221,9 +209,10 @@ void Supervisor::processInput(const ControlState& control) {
             // transitioning to DRIVING, so ADC noise at the boundary can't jiggle the state.
             if (_activateHoldStartMs == 0) {
                 _activateHoldStartMs = millis();
-            } else if (millis() - _activateHoldStartMs >= JS_ACTIVATE_HOLD_MS) {
+            }
+            else if (millis() - _activateHoldStartMs >= JS_ACTIVATE_HOLD_MS) {
                 _activateHoldStartMs = 0;
-                _idleHoldStartMs     = 0;
+                _idleHoldStartMs = 0;
                 transitionTo(SUPERVISOR_DRIVING);
             }
             // Not yet held long enough - send stop and wait
@@ -231,7 +220,8 @@ void Supervisor::processInput(const ControlState& control) {
                 sendStop();
                 _deadzoneStopLatched = true;
             }
-        } else {
+        }
+        else {
             // Back in deadzone: reset the activate timer
             _activateHoldStartMs = 0;
             if (!_deadzoneStopLatched) {
@@ -254,10 +244,8 @@ void Supervisor::processInput(const ControlState& control) {
                 _deadzoneStopLatched = true;
             }
             if (millis() - _idleHoldStartMs >= JS_IDLE_HOLD_MS) {
-                if (debugFlags & DBG_STATE) {
-                    Serial.println("[Supervisor] User released controls, returning to ARMED");
-                }
-                _idleHoldStartMs     = 0;
+                LOG_DEBUG(TAG_SUPERVISOR, "User released controls, returning to ARMED");
+                _idleHoldStartMs = 0;
                 _activateHoldStartMs = 0;
                 transitionTo(SUPERVISOR_ARMED);
             }
@@ -267,20 +255,18 @@ void Supervisor::processInput(const ControlState& control) {
         // Joystick still active: reset the idle timer
         _idleHoldStartMs = 0;
         _deadzoneStopLatched = false;
-        
+
         // Map to command
         CommandFrame cmd;
         bool valid = _mapper.map(control, cmd);
-        
+
         // Mapper enforces safety - check if command is valid
         if (!valid || !control.isSafe()) {
-            if (debugFlags & DBG_STATE) {
-                Serial.println("[Supervisor] Mapper rejected input (safety violation)");
-            }
+            LOG_WARN(TAG_SAFETY, "Mapper rejected input (safety violation)");
             sendStop();
             return;
         }
-        
+
         // Send command
         sendCommand(cmd);
     }
@@ -293,7 +279,7 @@ void Supervisor::processInput(const ControlState& control) {
 void Supervisor::updateVehicleState(const VehicleState& state) {
     _vehicleState = state;
     _vehicleState.timestamp = millis();
-    
+
     // Check for errors
     if (state.hasErrors) {
         enterFailsafe("Vehicle error detected");
@@ -332,15 +318,15 @@ void Supervisor::_connectTaskBody() {
         if (_wheelRetries[i] >= _config.maxReconnectAttempts)  continue;
 
         const char* wName = (i == WHEEL_LEFT) ? "left" : "right";
-        Serial.printf("[Supervisor] Connecting %s wheel (attempt %d/%d)\n",
-                      wName, _wheelRetries[i] + 1, _config.maxReconnectAttempts);
+        LOG_INFO(TAG_SUPERVISOR, "Connecting %s wheel (attempt %d/%d)",
+            wName, _wheelRetries[i] + 1, _config.maxReconnectAttempts);
 
         bool ok = bleConnectWheel(i);
 
         if (!ok) {
             _wheelRetries[i]++;
-            Serial.printf("[Supervisor] %s wheel failed (retry %d/%d)\n",
-                          wName, _wheelRetries[i], _config.maxReconnectAttempts);
+            LOG_WARN(TAG_SUPERVISOR, "%s wheel failed (retry %d/%d)",
+                wName, _wheelRetries[i], _config.maxReconnectAttempts);
             bleResetWheel(i);
         }
 
@@ -389,10 +375,10 @@ void Supervisor::handleConnecting() {
 
         // All budgets consumed (or all wheels connected). Decide outcome.
         if (bleAllConnected()) {
-            Serial.println("[Supervisor] Connected successfully (all wheels)");
+            LOG_INFO(TAG_SUPERVISOR, "Connected successfully (all wheels)");
             _partialReconnect = false;
             memset(_wheelRetries, 0, sizeof(_wheelRetries));
-            _lastLeftConnected  = bleIsConnected(WHEEL_LEFT);
+            _lastLeftConnected = bleIsConnected(WHEEL_LEFT);
             _lastRightConnected = bleIsConnected(WHEEL_RIGHT);
             transitionTo(SUPERVISOR_PAIRED);
             _lastLinkTimeMs = millis();
@@ -402,7 +388,7 @@ void Supervisor::handleConnecting() {
         if (_partialReconnect) {
             // The dropped wheel couldn't be recovered - escalate to a full
             // disconnect + reconnect of all wheels.
-            Serial.println("[Supervisor] Partial reconnect failed - doing full reconnect");
+            LOG_WARN(TAG_SUPERVISOR, "Partial reconnect failed - doing full reconnect");
             bleDisconnect();
             _partialReconnect = false;
             memset(_wheelRetries, 0, sizeof(_wheelRetries));
@@ -412,14 +398,15 @@ void Supervisor::handleConnecting() {
 
         // Not a partial reconnect - accept whatever we got
         if (bleAnyConnected()) {
-            Serial.println("[Supervisor] Connected successfully (partial)");
+            LOG_INFO(TAG_SUPERVISOR, "Connected successfully (partial)");
             memset(_wheelRetries, 0, sizeof(_wheelRetries));
-            _lastLeftConnected  = bleIsConnected(WHEEL_LEFT);
+            _lastLeftConnected = bleIsConnected(WHEEL_LEFT);
             _lastRightConnected = bleIsConnected(WHEEL_RIGHT);
             transitionTo(SUPERVISOR_PAIRED);
             _lastLinkTimeMs = millis();
-        } else {
-            Serial.println("[Supervisor] All per-wheel retry budgets exhausted - resetting BLE stack");
+        }
+        else {
+            LOG_ERROR(TAG_SUPERVISOR, "All per-wheel retry budgets exhausted - resetting BLE stack");
             memset(_wheelRetries, 0, sizeof(_wheelRetries));
             bleFullReset();
             transitionTo(SUPERVISOR_DISCONNECTED);
@@ -464,7 +451,8 @@ void Supervisor::handleConnecting() {
         if (anyConnected) {
             transitionTo(SUPERVISOR_PAIRED);
             _lastLinkTimeMs = millis();
-        } else {
+        }
+        else {
             transitionTo(SUPERVISOR_DISCONNECTED);
         }
         return;
@@ -478,16 +466,15 @@ void Supervisor::handleConnecting() {
     applyRuntimeWheelConfig();
 
     _connectAbort = false;
-    _connectDone  = false;
+    _connectDone = false;
     BaseType_t rc = xTaskCreatePinnedToCore(
         _sConnectTask, "ble_connect", 8192, this, 4, &_connectTask, 0);
     if (rc != pdPASS) {
-        Serial.println("[Supervisor] ERROR: failed to spawn connect task");
+        LOG_ERROR(TAG_SUPERVISOR, "failed to spawn connect task");
         _connectTask = nullptr;
-    } else {
-        if (debugFlags & DBG_BLE) {
-            Serial.println("[Supervisor] Connect task spawned on Core 0");
-        }
+    }
+    else {
+        LOG_DEBUG(TAG_SUPERVISOR, "Connect task spawned on Core 0");
     }
 }
 
@@ -500,31 +487,31 @@ void Supervisor::_triggerPartialReconnect() {
 
 void Supervisor::handlePaired() {
     // Monitor individual wheel connection state changes
-    bool leftConnected  = bleIsConnected(WHEEL_LEFT);
+    bool leftConnected = bleIsConnected(WHEEL_LEFT);
     bool rightConnected = bleIsConnected(WHEEL_RIGHT);
 
-    bool leftDrop  = _wheelActive(WHEEL_LEFT)  && _lastLeftConnected  && !leftConnected;
+    bool leftDrop = _wheelActive(WHEEL_LEFT) && _lastLeftConnected && !leftConnected;
     bool rightDrop = _wheelActive(WHEEL_RIGHT) && _lastRightConnected && !rightConnected;
 
     if (leftDrop || rightDrop) {
-        if (leftDrop)  Serial.println("[Supervisor] Left wheel dropped in PAIRED - reconnecting");
-        if (rightDrop) Serial.println("[Supervisor] Right wheel dropped in PAIRED - reconnecting");
+        if (leftDrop)  LOG_WARN(TAG_SUPERVISOR, "Left wheel dropped in PAIRED - reconnecting");
+        if (rightDrop) LOG_WARN(TAG_SUPERVISOR, "Right wheel dropped in PAIRED - reconnecting");
         _triggerPartialReconnect();
         return;
     }
 
     // Detect and log wheel reconnections
     if (!_lastLeftConnected && leftConnected)
-        Serial.println("[Supervisor] Left wheel reconnected in PAIRED state");
+        LOG_INFO(TAG_SUPERVISOR, "Left wheel reconnected in PAIRED state");
     if (!_lastRightConnected && rightConnected)
-        Serial.println("[Supervisor] Right wheel reconnected in PAIRED state");
+        LOG_INFO(TAG_SUPERVISOR, "Right wheel reconnected in PAIRED state");
 
-    _lastLeftConnected  = leftConnected;
+    _lastLeftConnected = leftConnected;
     _lastRightConnected = rightConnected;
 
     // Full loss (both gone) - reconnect covers this too but log it explicitly
     if (!bleAnyConnected()) {
-        Serial.println("[Supervisor] Lost all connections in PAIRED state");
+        LOG_WARN(TAG_SUPERVISOR, "Lost all connections in PAIRED state");
         _triggerPartialReconnect();
         return;
     }
@@ -537,11 +524,11 @@ void Supervisor::handlePaired() {
 
 void Supervisor::handleArmed() {
     // Per-wheel drop detection - reconnect the dropped wheel automatically
-    bool leftOk  = !_wheelActive(WHEEL_LEFT)  || bleIsConnected(WHEEL_LEFT);
+    bool leftOk = !_wheelActive(WHEEL_LEFT) || bleIsConnected(WHEEL_LEFT);
     bool rightOk = !_wheelActive(WHEEL_RIGHT) || bleIsConnected(WHEEL_RIGHT);
     if (!leftOk || !rightOk) {
-        if (!leftOk)  Serial.println("[Supervisor] Left wheel dropped in ARMED - reconnecting");
-        if (!rightOk) Serial.println("[Supervisor] Right wheel dropped in ARMED - reconnecting");
+        if (!leftOk)  LOG_WARN(TAG_SUPERVISOR, "Left wheel dropped in ARMED - reconnecting");
+        if (!rightOk) LOG_WARN(TAG_SUPERVISOR, "Right wheel dropped in ARMED - reconnecting");
         sendStop();
         _triggerPartialReconnect();
         return;
@@ -554,11 +541,11 @@ void Supervisor::handleArmed() {
 
 void Supervisor::handleDriving() {
     // Per-wheel drop detection - stop and reconnect the dropped wheel automatically
-    bool leftOk  = !_wheelActive(WHEEL_LEFT)  || bleIsConnected(WHEEL_LEFT);
+    bool leftOk = !_wheelActive(WHEEL_LEFT) || bleIsConnected(WHEEL_LEFT);
     bool rightOk = !_wheelActive(WHEEL_RIGHT) || bleIsConnected(WHEEL_RIGHT);
     if (!leftOk || !rightOk) {
-        if (!leftOk)  Serial.println("[Supervisor] Left wheel dropped while DRIVING - stopping and reconnecting");
-        if (!rightOk) Serial.println("[Supervisor] Right wheel dropped while DRIVING - stopping and reconnecting");
+        if (!leftOk)  LOG_WARN(TAG_SUPERVISOR, "Left wheel dropped while DRIVING - stopping and reconnecting");
+        if (!rightOk) LOG_WARN(TAG_SUPERVISOR, "Right wheel dropped while DRIVING - stopping and reconnecting");
         sendStop();
         _triggerPartialReconnect();
         return;
@@ -578,12 +565,12 @@ void Supervisor::handleFailsafe() {
 }
 
 void Supervisor::handleStopRequest() {
-    Serial.println("[Supervisor] Stop requested");
+    LOG_INFO(TAG_SUPERVISOR, "Stop requested");
     sendStop();
     bleDisconnect();
     transitionTo(SUPERVISOR_DISCONNECTED);
     _stopRequested = false;
-    
+
     // If reconnection was requested, initiate it now.
     // Settle delay: local Bluedroid and M25 wheels both need time after a hard
     // disconnect before the next GATT connect attempt can succeed.
@@ -609,7 +596,7 @@ void Supervisor::pollTelemetry() {
     bleRequestCruiseValues();
 
     // Pull whatever the cache already has into VehicleState
-    _vehicleState.batteryLeft  = bleGetBattery(WHEEL_LEFT);
+    _vehicleState.batteryLeft = bleGetBattery(WHEEL_LEFT);
     _vehicleState.batteryRight = bleGetBattery(WHEEL_RIGHT);
 
     float dist = bleGetDistanceKm(WHEEL_LEFT);
@@ -623,10 +610,11 @@ void Supervisor::pollTelemetry() {
     bool wasLow = _vehicleState.lowBattery;
     _vehicleState.lowBattery = (minBatt >= 0 && minBatt < (int)_config.lowBatteryThreshold);
     if (_vehicleState.lowBattery && !wasLow) {
-        Serial.printf("[Supervisor] LOW BATTERY WARNING: %d%% (threshold: %d%%)\n",
-                      minBatt, _config.lowBatteryThreshold);
-    } else if (!_vehicleState.lowBattery && wasLow) {
-        Serial.println("[Supervisor] Battery level restored above threshold.");
+        LOG_WARN(TAG_TELEMETRY, "LOW BATTERY WARNING: %d%% (threshold: %d%%)",
+            minBatt, _config.lowBatteryThreshold);
+    }
+    else if (!_vehicleState.lowBattery && wasLow) {
+        LOG_INFO(TAG_TELEMETRY, "Battery level restored above threshold");
     }
 }
 
@@ -655,7 +643,7 @@ void Supervisor::checkWatchdogs() {
             if (now - lastNfy > _config.notifyStaleTimeoutMs) {
                 const char* wname = (_wdi == 0) ? "Left" : "Right";
                 LOG_FATAL(TAG_WATCHDOG, "Stale-notify watchdog: %s wheel silent for %u ms",
-                              wname, (unsigned)(now - lastNfy));
+                    wname, (unsigned)(now - lastNfy));
                 enterFailsafe("Wheel not responding (BLE write lost)");
                 return;
             }
@@ -671,17 +659,18 @@ void Supervisor::checkWatchdogs() {
             enterFailsafe("Input timeout");
             return;
         }
-    } else if (_state == SUPERVISOR_ARMED) {
+    }
+    else if (_state == SUPERVISOR_ARMED) {
         // Use armIdleTimeoutMs measured from arm entry (or last input, whichever
         // is more recent) so the user can idle in ARMED intentionally.
         uint32_t idleRef = (_lastInputTimeMs > _armedEntryMs) ? _lastInputTimeMs : _armedEntryMs;
         if (now - idleRef > _config.armIdleTimeoutMs) {
-            Serial.println("[Supervisor] Arm idle timeout - disarming to PAIRED");
+            LOG_INFO(TAG_WATCHDOG, "Arm idle timeout - disarming to PAIRED");
             transitionTo(SUPERVISOR_PAIRED);
             return;
         }
     }
-    
+
     // Link watchdog - no successful command for too long
     if (_state == SUPERVISOR_DRIVING && _lastLinkTimeMs > 0) {
         if (now - _lastLinkTimeMs > _config.linkTimeoutMs) {
@@ -690,7 +679,7 @@ void Supervisor::checkWatchdogs() {
             return;
         }
     }
-    
+
     // Heartbeat - send periodic command even if no input change
     if (now - _lastHeartbeatMs > _config.heartbeatIntervalMs) {
         sendHeartbeat();
@@ -710,7 +699,8 @@ void Supervisor::sendHeartbeat() {
     CommandFrame cmd = _mapper.getLastCommand();
     if (cmd.isStop()) {
         sendStop();
-    } else {
+    }
+    else {
         sendCommand(cmd);
     }
     _lastHeartbeatMs = millis();
@@ -731,21 +721,19 @@ void Supervisor::transitionTo(SupervisorState newState) {
     if (newState == _state) {
         return;
     }
-    
+
     SupervisorState oldState = _state;
-    if (debugFlags & DBG_STATE) {
-        Serial.printf("[Supervisor] State transition: %s -> %s\n",
-                      supervisorStateToString(oldState),
-                      supervisorStateToString(newState));
-    }
-    
+    LOG_DEBUG(TAG_SUPERVISOR, "State transition: %s -> %s",
+        supervisorStateToString(oldState),
+        supervisorStateToString(newState));
+
     _state = newState;
-    
+
     // If we're leaving CONNECTING, signal any in-flight connect task to abort
     // and clear the done flag so stale results aren't processed later.
     if (oldState == SUPERVISOR_CONNECTING) {
         _connectAbort = true;
-        _connectDone  = false;
+        _connectDone = false;
         // _connectTask handle is cleared by the task itself before it deletes.
         // If it hasn't run yet it will see _connectAbort=true and skip all wheels.
     }
@@ -753,7 +741,7 @@ void Supervisor::transitionTo(SupervisorState newState) {
     // Reset mapper state on certain transitions
     if (newState == SUPERVISOR_DISCONNECTED || newState == SUPERVISOR_FAILSAFE) {
         _mapper.reset();
-        _driveSessionActive  = false;       // drive session over on full disconnect/failsafe
+        _driveSessionActive = false;       // drive session over on full disconnect/failsafe
         _lastTelemetryPollMs = millis();    // defer next telemetry poll by one interval
     }
 
@@ -761,7 +749,7 @@ void Supervisor::transitionTo(SupervisorState newState) {
     // PAIRED entry, not every loop tick as with the old handlePaired() approach).
     if (newState == SUPERVISOR_PAIRED) {
 #ifdef AUTO_ARM_ON_CONNECT
-        Serial.println("[Supervisor] AUTO_ARM_ON_CONNECT: arming automatically");
+        LOG_INFO(TAG_SUPERVISOR, "AUTO_ARM_ON_CONNECT: arming automatically");
         bleResetMotorWriteOk();
         transitionTo(SUPERVISOR_ARMED);
         return;  // transitionTo() will handle ARMED entry setup below
@@ -773,10 +761,10 @@ void Supervisor::transitionTo(SupervisorState newState) {
     // transition (e.g. after reconnect or reset).
     if (newState == SUPERVISOR_ARMED) {
         _activateHoldStartMs = 0;
-        _idleHoldStartMs     = 0;
-        _armedEntryMs        = millis();
+        _idleHoldStartMs = 0;
+        _armedEntryMs = millis();
         _deadzoneStopLatched = false;
-        _driveSessionActive  = true;        // suppress telemetry until explicit disarm
+        _driveSessionActive = true;        // suppress telemetry until explicit disarm
     }
 
     // On entry to DRIVING: reset per-wheel notify timestamps so the stale-notify
