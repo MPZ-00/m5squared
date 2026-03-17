@@ -2215,10 +2215,10 @@ static void _bleMotorTask(void* /*pv*/) {
         for (int i = 0; i < WHEEL_COUNT; i++) {
             if (!_wheelActive(i)) continue;
 
-            if (debugFlags & DBG_MOTOR) {
+            if (Logger::instance().isTagEnabled(TAG_MOTOR)) {
                 const char* wn = _wheels[i].name ? _wheels[i].name : "?";
                 if (!bleIsConnected(i)) {
-                    Serial.printf("[Motor] -> %s (not connected)\n", wn);
+                    LOG_DEBUG(TAG_MOTOR, "-> %s (not connected)", wn);
                 }
                 else if (cmd.isStop) {
                     if (_motorStopLogEnabled) {
@@ -2226,7 +2226,7 @@ static void _bleMotorTask(void* /*pv*/) {
                         uint16_t every = _motorStopLogEvery;
                         if (every == 0) every = 1;
                         if ((stopLogCounter[i] % every) == 0) {
-                            Serial.printf("[Motor] -> %s STOP (%lu)%s\n",
+                            LOG_DEBUG(TAG_MOTOR, "-> %s STOP (%lu)%s",
                                 wn,
                                 (unsigned long)stopLogCounter[i],
                                 (every > 1) ? " [throttled]" : "");
@@ -2235,7 +2235,7 @@ static void _bleMotorTask(void* /*pv*/) {
                 }
                 else {
                     float pct = (i == WHEEL_LEFT) ? -cmd.left : cmd.right;
-                    Serial.printf("[Motor] -> %s %.0f%%\n", wn, (double)pct);
+                    LOG_DEBUG(TAG_MOTOR, "-> %s %.0f%%", wn, (double)pct);
                 }
             }
 
@@ -2253,7 +2253,7 @@ static void _bleMotorTask(void* /*pv*/) {
                     modeGateFailStreak[i]++;
                     if (modeGateFailStreak[i] == 1 || (modeGateFailStreak[i] % 20) == 0) {
                         const char* wn = _wheels[i].name ? _wheels[i].name : "?";
-                        Serial.printf("[Motor] %s speed skipped: drive mode update failed (streak=%lu, mode=0x%02X)\n",
+                        LOG_WARN(TAG_MOTOR, "%s speed skipped: drive mode update failed (streak=%lu, mode=0x%02X)",
                             wn,
                             (unsigned long)modeGateFailStreak[i],
                             targetDriveMode);
@@ -2261,7 +2261,7 @@ static void _bleMotorTask(void* /*pv*/) {
                 }
                 else if (modeGateFailStreak[i] > 0) {
                     const char* wn = _wheels[i].name ? _wheels[i].name : "?";
-                    Serial.printf("[Motor] %s drive mode gate recovered after %lu skipped speed writes\n",
+                    LOG_INFO(TAG_MOTOR, "%s drive mode gate recovered after %lu skipped speed writes",
                         wn,
                         (unsigned long)modeGateFailStreak[i]);
                     modeGateFailStreak[i] = 0;
@@ -2282,15 +2282,15 @@ static void _bleMotorTask(void* /*pv*/) {
             }
 
             bool sent = _sendCommand(i, M25_SRV_APP_MGMT, M25_PARAM_WRITE_REMOTE_SPEED, spd, 2);
-            if (!sent && (debugFlags & DBG_BLE)) {
-                Serial.printf("[BLE] motor write failed on wheel %d\n", i);
+            if (!sent && Logger::instance().isTagEnabled(TAG_BLE)) {
+                LOG_WARN(TAG_BLE, "motor write failed on wheel %d", i);
             }
             ok &= sent;
 
             if (cmd.isStop && sent) {
                 bool modeOk = _writeDriveModeIfNeeded(i, targetDriveMode);
-                if (!modeOk && (debugFlags & DBG_BLE)) {
-                    Serial.printf("[BLE] stop drive mode restore failed on wheel %d\n", i);
+                if (!modeOk && Logger::instance().isTagEnabled(TAG_BLE)) {
+                    LOG_WARN(TAG_BLE, "stop drive mode restore failed on wheel %d", i);
                 }
                 ok &= modeOk;
             }
@@ -2300,12 +2300,12 @@ static void _bleMotorTask(void* /*pv*/) {
         if (!ok) {
             motorFailStreak++;
             if (motorFailStreak == 1 || (motorFailStreak % 20) == 0) {
-                Serial.printf("[Motor] write FAILED (streak: %u cycles @ 20 Hz)\n",
+                LOG_ERROR(TAG_MOTOR, "write FAILED (streak: %u cycles @ 20 Hz)",
                     (unsigned)motorFailStreak);
             }
         }
         else if (motorFailStreak > 0) {
-            Serial.printf("[Motor] write recovered after %u failed cycles\n",
+            LOG_INFO(TAG_MOTOR, "write recovered after %u failed cycles",
                 (unsigned)motorFailStreak);
             motorFailStreak = 0;
         }
@@ -2322,12 +2322,12 @@ void bleStartMotorTask() {
     // Queue of 1: xQueueOverwrite always keeps the newest command
     _motorQueue = xQueueCreate(1, sizeof(_MotorCmd));
     if (!_motorQueue) {
-        Serial.println("[BLE] ERROR: failed to create motor queue");
+        LOG_ERROR(TAG_BLE, "failed to create motor queue");
         return;
     }
     // Pin to Core 0 where the BLE stack lives; priority 5 matches BLE event task
     xTaskCreatePinnedToCore(_bleMotorTask, "ble_motor", 4096, nullptr, 5, nullptr, 0);
-    Serial.println("[BLE] Motor write task started on Core 0");
+    LOG_INFO(TAG_BLE, "Motor write task started on Core 0");
 }
 
 bool bleLastMotorWriteOk() {
@@ -2432,7 +2432,7 @@ void bleTick() {
     // Auto-stop record when its duration expires, then dump the log
     if (_recordActive && millis() >= _recordEndMs) {
         _recordActive = false;
-        Serial.printf("[Record] Auto-stopped - %d entries captured\n", (int)_recordCount);
+        LOG_INFO(TAG_RECORD, "Auto-stopped - %d entries captured", (int)_recordCount);
         bleRecordDump();
     }
 
