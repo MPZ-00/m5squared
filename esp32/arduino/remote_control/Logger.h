@@ -1,64 +1,64 @@
 #pragma once
 
 enum class LogLevel : uint8_t {
-	NONE = 0,
-	ERROR = 1,
-	WARN = 2,
-	INFO = 3,
-	DEBUG = 4,
-	VERBOSE = 5
+    NONE = 0,
+    ERROR = 1,
+    WARN = 2,
+    INFO = 3,
+    DEBUG = 4,
+    VERBOSE = 5
 };
 
 enum LogTag : uint32_t {
-	TAG_SYSTEM = (1 << 0),     // boot, reset, sleep, wake, etc
-	TAG_SUPERVISOR = (1 << 1), // main loop, watchdog, task watchdog, heap, uptime, etc
-	TAG_BLE = (1 << 2),        // GAP, GATT, connection events, RSSI, etc (separate concerns from RFCOMM/SPP)
-	TAG_MOTOR = (1 << 3),      // speed writes, stop, drive-mode gate, failure streaks
-	TAG_RFCOMM = (1 << 4),     // SPP/BT Classic transport (separate concerns from BLE)
-	TAG_AUTH = (1 << 5),       // GAP pairing events (PIN, passkey, AUTH_CMPL)
-	TAG_TX = (1 << 6),         // BLE TX details and stats
-	TAG_CONFIG = (1 << 7),     // NVS read/write, MAC/key/profile management
-	TAG_WATCHDOG = (1 << 8),   // input, link, stale-notify, arm-idle timeouts
-	TAG_SAFETY = (1 << 9),     // joystick centering check, emergency stop
-	TAG_BOOT = (1 << 10),      // startup banner, wake source, cold-boot vs deep-sleep
-	TAG_POWER = (1 << 11),     // deep sleep entry, power on/off
-	TAG_BUTTON = (1 << 12),    // button press events
-	TAG_JOYSTICK = (1 << 13),  // calibration, ADC snapshots
-	TAG_TELEMETRY = (1 << 14), // battery %, FW version, odometer from wheels
-	TAG_RECORD = (1 << 15),    // BLE packet capture/dump
-	TAG_BUZZER = (1 << 16),    // hardware init, pattern errors
-	TAG_CMD = (1 << 17),       // serial REPL command feedback
-	TAG_SYS = (1 << 18),       // chip info, heap, uptime, WiFi stats
-	TAG_CRYPTO = (1 << 19),    // encryption/decryption errors (BLE-ENC, BLE-DEC)
-	TAG_ALL = (1 << 32) - 1
+    TAG_SYSTEM = (1 << 0),     // boot, reset, sleep, wake, etc
+    TAG_SUPERVISOR = (1 << 1), // main loop, watchdog, task watchdog, heap, uptime, etc
+    TAG_BLE = (1 << 2),        // GAP, GATT, connection events, RSSI, etc (separate concerns from RFCOMM/SPP)
+    TAG_MOTOR = (1 << 3),      // speed writes, stop, drive-mode gate, failure streaks
+    TAG_RFCOMM = (1 << 4),     // SPP/BT Classic transport (separate concerns from BLE)
+    TAG_AUTH = (1 << 5),       // GAP pairing events (PIN, passkey, AUTH_CMPL)
+    TAG_TX = (1 << 6),         // BLE TX details and stats
+    TAG_CONFIG = (1 << 7),     // NVS read/write, MAC/key/profile management
+    TAG_WATCHDOG = (1 << 8),   // input, link, stale-notify, arm-idle timeouts
+    TAG_SAFETY = (1 << 9),     // joystick centering check, emergency stop
+    TAG_BOOT = (1 << 10),      // startup banner, wake source, cold-boot vs deep-sleep
+    TAG_POWER = (1 << 11),     // deep sleep entry, power on/off
+    TAG_BUTTON = (1 << 12),    // button press events
+    TAG_JOYSTICK = (1 << 13),  // calibration, ADC snapshots
+    TAG_TELEMETRY = (1 << 14), // battery %, FW version, odometer from wheels
+    TAG_RECORD = (1 << 15),    // BLE packet capture/dump
+    TAG_BUZZER = (1 << 16),    // hardware init, pattern errors
+    TAG_CMD = (1 << 17),       // serial REPL command feedback
+    TAG_SYS = (1 << 18),       // chip info, heap, uptime, WiFi stats
+    TAG_CRYPTO = (1 << 19),    // encryption/decryption errors (BLE-ENC, BLE-DEC)
+    TAG_ALL = (uint32_t)-1
 };
 
 class Logger {
-  public:
-	static Logger &instance();
+public:
+    static Logger& instance();
 
-	// Call once in setup() - loads level + tag mask from NVS
-	void begin(LogLevel defaultLevel = LogLevel::DEBUG,
-	           uint32_t defaultTagMask = TAG_ALL);
+    // Call once in setup() - loads level + tag mask from NVS
+    void begin(LogLevel defaultLevel = LogLevel::DEBUG,
+        uint32_t defaultTagMask = TAG_ALL);
 
-	// Runtime control (also persists to NVS)
-	void setLevel(LogLevel level, bool persist = true);
-	void setTagMask(uint32_t tagMask, bool persist = true);
+    // Runtime control (also persists to NVS)
+    void setLevel(LogLevel level, bool persist = true);
+    void setTagMask(uint32_t tagMask, bool persist = true);
 
-	LogLevel getLevel() const { return _level; }
-	uint32_t getTagMask() const { return _tagMask; }
+    LogLevel getLevel() const { return _level; }
+    uint32_t getTagMask() const { return _tagMask; }
 
-	// Core log - use the macros below instead of calling this directly
-	void log(LogLevel level, uint32_t tag, const char *file, int line, const char *fmt, ...)
-	    __attribute__((format(printf, 6, 7)));
+    // Core log - use the macros below instead of calling this directly
+    void log(LogLevel level, uint32_t tag, const char* file, int line, const char* fmt, ...)
+        __attribute__((format(printf, 6, 7)));
 
-  private:
-	Logger() = default;
-	void loadFromNVS();
-	void saveToNVS();
+private:
+    Logger() = default;
+    void loadFromNVS();
+    void saveToNVS();
 
-	LogLevel _level = LogLevel::DEBUG;
-	uint32_t _tagMask = TAG_ALL;
+    LogLevel _level = LogLevel::DEBUG;
+    uint32_t _tagMask = TAG_ALL;
 };
 
 // Macros
