@@ -1,5 +1,5 @@
 /*
- * serial_commands.h - Interactive serial command interface + debug output flags
+ * serial_commands.h - Interactive serial command interface + logger controls
  *
  * All commands are newline-terminated ASCII strings sent over UART
  * (USB-CDC, 115200 baud).  Call serialInit() in setup() and serialTick()
@@ -13,7 +13,7 @@
  *   log level <...>             Set logger level (none/error/warn/info/debug/verbose)
  *   log tag <name> <on|off>     Enable/disable one logger tag
  *   log all <on|off>            Enable/disable all logger tags
- *   debug ...                   Legacy alias to log controls
+ *   debug ...                   Compatibility alias to log controls
  *   js                          One-shot joystick snapshot (raw + normalized)
  *   ble                         BLE connection status for each wheel
  *   wheels                      Verbose per-wheel status + key
@@ -189,18 +189,18 @@ static void _scPrintHelp() {
     Serial.println(F("  help / ?                  This message"));
     Serial.println(F("  status                    Full system status (state, wheels, telemetry, watchdogs)"));
     Serial.println(F("  sysinfo                   Chip, heap, uptime, WiFi/BT status"));
-    Serial.println(F("--- Debug ---"));
+    Serial.println(F("--- Logging ---"));
     Serial.println(F("  log                       Show logger level and tags"));
     Serial.println(F("  log level <none|error|warn|info|debug|verbose>"));
     Serial.println(F("  log tag <name> <on|off>   names: joystick|motor|heartbeat|ble|button|state|telemetry|tx|auth"));
     Serial.println(F("  log all <on|off>          Enable/disable all tags"));
-    Serial.println(F("  debug ...                 Alias for legacy scripts (deprecated)"));
+    Serial.println(F("  debug ...                 Compatibility alias for existing scripts"));
     Serial.println(F("  txstats [reset]           Show/reset BLE TX command counters"));
-    Serial.println(F("  log stop <on|off>         Enable/disable STOP lines in motor debug"));
+    Serial.println(F("  log stop <on|off>         Enable/disable STOP lines in motor logs"));
     Serial.println(F("  log stop every <N>        Print every Nth STOP line (when enabled)"));
     Serial.println(F("  log show                  Show current log-filter settings"));
     Serial.println(F("  js                        One-shot joystick snapshot"));
-    Serial.println(F("  buttons                   Debug button hardware & state"));
+    Serial.println(F("  buttons                   Button hardware and state details"));
     Serial.println(F("  ble                       Quick BLE connection status"));
     Serial.println(F("  wheels                    Verbose per-wheel status + key"));
     Serial.println(F("  telemetry                 Request fresh telemetry from wheels + print cached values"));
@@ -554,7 +554,7 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
         return;
     }
 
-    // debug alias (deprecated)
+    // debug alias (compatibility)
     if (strncmp(cmd, "debug", 5) == 0) {
         const char* arg = cmd + 5;
         while (*arg == ' ') arg++;
@@ -565,18 +565,18 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
         }
         if (strcmp(arg, "off") == 0) {
             Logger::instance().setTagMask(0, true);
-            Serial.println(F("[Debug] Deprecated alias: use 'log all off'"));
+            Serial.println(F("[Log] alias 'debug off' applied (preferred: 'log all off')"));
             return;
         }
         if (strcmp(arg, "all") == 0) {
             Logger::instance().setTagMask(TAG_ALL, true);
-            Serial.println(F("[Debug] Deprecated alias: use 'log all on'"));
+            Serial.println(F("[Log] alias 'debug all' applied (preferred: 'log all on')"));
             return;
         }
 
         uint32_t tag = 0;
         if (!_scTryGetTagByName(arg, &tag)) {
-            // legacy alias map
+            // compatibility alias map
             if (strcmp(arg, "js") == 0) tag = TAG_JOYSTICK;
             else if (strcmp(arg, "buttons") == 0) tag = TAG_BUTTON;
             else if (strcmp(arg, "proto") == 0) tag = TAG_TX;
@@ -588,14 +588,14 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
         }
 
         if (tag == 0) {
-            Serial.printf("[Debug] Unknown flag: '%s'\n", arg);
-            Serial.println(F("[Debug] Use 'log' to list supported tag names."));
+            Serial.printf("[Log] unknown alias tag: '%s'\n", arg);
+            Serial.println(F("[Log] Use 'log' to list supported tag names."));
             return;
         }
 
         bool currentlyEnabled = Logger::instance().isTagEnabled(tag);
         Logger::instance().setTagEnabled(tag, !currentlyEnabled, true);
-        Serial.println(F("[Debug] Deprecated alias: use 'log tag <name> <on|off>'"));
+        Serial.println(F("[Log] alias toggled tag (preferred: 'log tag <name> <on|off>')"));
         return;
     }
 
