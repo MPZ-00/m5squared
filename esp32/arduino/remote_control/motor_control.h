@@ -28,10 +28,11 @@
 #include <Arduino.h>
 #include "device_config.h"
 #include "joystick.h"
+#include "Logger.h"
 
-// ---------------------------------------------------------------------------
-// Assist level configuration table
-// ---------------------------------------------------------------------------
+ // ---------------------------------------------------------------------------
+ // Assist level configuration table
+ // ---------------------------------------------------------------------------
 struct AssistConfig {
     const char* name;
     int         vmaxForward;   // 0-100 percent
@@ -40,11 +41,11 @@ struct AssistConfig {
 
 static const AssistConfig assistConfigs[ASSIST_COUNT] = {
     /* ASSIST_INDOOR   */ { "Indoor",   VMAX_INDOOR,
-                            (int)(VMAX_INDOOR  * VMAX_REVERSE_RATIO) },
-    /* ASSIST_OUTDOOR  */ { "Outdoor",  VMAX_OUTDOOR,
-                            (int)(VMAX_OUTDOOR * VMAX_REVERSE_RATIO) },
-    /* ASSIST_LEARNING */ { "Learning", VMAX_LEARNING,
-                            (int)(VMAX_LEARNING * VMAX_REVERSE_RATIO) },
+                            (int)(VMAX_INDOOR * VMAX_REVERSE_RATIO) },
+                            /* ASSIST_OUTDOOR  */ { "Outdoor",  VMAX_OUTDOOR,
+                                                    (int)(VMAX_OUTDOOR * VMAX_REVERSE_RATIO) },
+                                                    /* ASSIST_LEARNING */ { "Learning", VMAX_LEARNING,
+                                                                            (int)(VMAX_LEARNING * VMAX_REVERSE_RATIO) },
 };
 
 // ---------------------------------------------------------------------------
@@ -64,7 +65,7 @@ struct MotorCommand {
 //  assistLevel: ASSIST_INDOOR / ASSIST_OUTDOOR / ASSIST_LEARNING
 // ---------------------------------------------------------------------------
 inline MotorCommand calculateMotorCommand(float x_norm, float y_norm,
-                                          uint8_t assistLevel) {
+    uint8_t assistLevel) {
     MotorCommand cmd = { 0.0f, 0.0f, true };
 
     if (y_norm == 0.0f && x_norm == 0.0f) {
@@ -72,12 +73,12 @@ inline MotorCommand calculateMotorCommand(float x_norm, float y_norm,
         return cmd;
     }
 
-    const AssistConfig &cfg = assistConfigs[assistLevel];
+    const AssistConfig& cfg = assistConfigs[assistLevel];
 
     // Signed base speed for both wheels
     float baseSigned = y_norm * ((y_norm >= 0.0f)
-                                 ? (float)cfg.vmaxForward
-                                 : (float)cfg.vmaxReverse);
+        ? (float)cfg.vmaxForward
+        : (float)cfg.vmaxReverse);
 
     // Differential mixing: the inner wheel of the turn is slowed down.
     //   x > 0 (right turn): right wheel is inner -> right_factor < 1
@@ -85,18 +86,19 @@ inline MotorCommand calculateMotorCommand(float x_norm, float y_norm,
     float xAbs = (x_norm > 0.0f) ? x_norm : -x_norm;
     float reduction = xAbs * TURN_REDUCTION;
 
-    float leftFactor  = 1.0f;
+    float leftFactor = 1.0f;
     float rightFactor = 1.0f;
 
     if (x_norm > 0.0f) {
         // Turning right: slow down right wheel
         rightFactor = 1.0f - reduction;
-    } else if (x_norm < 0.0f) {
+    }
+    else if (x_norm < 0.0f) {
         // Turning left: slow down left wheel
         leftFactor = 1.0f - reduction;
     }
 
-    cmd.leftSpeed  = baseSigned * leftFactor;
+    cmd.leftSpeed = baseSigned * leftFactor;
     cmd.rightSpeed = baseSigned * rightFactor;
 
     // If the calculation produces zero on both axes (e.g. Y=0 with X-only input)
@@ -106,12 +108,12 @@ inline MotorCommand calculateMotorCommand(float x_norm, float y_norm,
         cmd.isStop = true;
         return cmd;
     }
-    cmd.isStop     = false;
+    cmd.isStop = false;
 
     // Safety clamp to [-100, +100]
-    if (cmd.leftSpeed  >  100.0f) cmd.leftSpeed  =  100.0f;
-    if (cmd.leftSpeed  < -100.0f) cmd.leftSpeed  = -100.0f;
-    if (cmd.rightSpeed >  100.0f) cmd.rightSpeed =  100.0f;
+    if (cmd.leftSpeed > 100.0f) cmd.leftSpeed = 100.0f;
+    if (cmd.leftSpeed < -100.0f) cmd.leftSpeed = -100.0f;
+    if (cmd.rightSpeed > 100.0f) cmd.rightSpeed = 100.0f;
     if (cmd.rightSpeed < -100.0f) cmd.rightSpeed = -100.0f;
 
     return cmd;
@@ -120,20 +122,20 @@ inline MotorCommand calculateMotorCommand(float x_norm, float y_norm,
 // ---------------------------------------------------------------------------
 // Convenience wrapper using JoystickNorm struct
 // ---------------------------------------------------------------------------
-inline MotorCommand joystickToMotorCommand(const JoystickNorm &js,
-                                           uint8_t assistLevel) {
+inline MotorCommand joystickToMotorCommand(const JoystickNorm& js,
+    uint8_t assistLevel) {
     return calculateMotorCommand(js.x, js.y, assistLevel);
 }
 
 // ---------------------------------------------------------------------------
 // Debug print helper
 // ---------------------------------------------------------------------------
-inline void printMotorCommand(const MotorCommand &cmd) {
+inline void printMotorCommand(const MotorCommand& cmd) {
     if (cmd.isStop) {
-        Serial.println("[Motor] STOP");
-    } else {
-        Serial.printf("[Motor] L=%+6.1f%%  R=%+6.1f%%\n",
-                      cmd.leftSpeed, cmd.rightSpeed);
+        LOG_INFO(TAG_MOTOR, "STOP");
+    }
+    else {
+        LOG_INFO(TAG_MOTOR, "L=%+6.1f%%  R=%+6.1f%%", cmd.leftSpeed, cmd.rightSpeed);
     }
 }
 

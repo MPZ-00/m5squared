@@ -32,13 +32,14 @@
 #include <Preferences.h>
 #include "device_config.h"
 #include "m25_ble.h"   // WHEEL_LEFT / WHEEL_RIGHT
+#include "Logger.h"
 
 #define NVS_NAMESPACE "m25cfg"
 
-// ---------------------------------------------------------------------------
-// Compiled-in fallbacks (from device_config.h, possibly overridden by build
-// flags injected by load_env.py)
-// ---------------------------------------------------------------------------
+ // ---------------------------------------------------------------------------
+ // Compiled-in fallbacks (from device_config.h, possibly overridden by build
+ // flags injected by load_env.py)
+ // ---------------------------------------------------------------------------
 static const char    _nvsDfltLMac[] = LEFT_WHEEL_MAC;
 static const char    _nvsDfltRMac[] = RIGHT_WHEEL_MAC;
 static const uint8_t _nvsDfltLKey[] = ENCRYPTION_KEY_LEFT;
@@ -78,7 +79,7 @@ inline bool nvsLoadKey(int idx, uint8_t* dest) {
         return false;
     }
     const char* nvKey = (idx == WHEEL_LEFT) ? "lkey" : "rkey";
-    size_t n   = p.getBytesLength(nvKey);
+    size_t n = p.getBytesLength(nvKey);
     bool found = (n == 16) && (p.getBytes(nvKey, dest, 16) == 16);
     p.end();
     if (!found) {
@@ -127,25 +128,25 @@ inline void nvsClearAll() {
 inline void nvsPrintAll() {
     char    lmac[18], rmac[18];
     uint8_t lkey[16], rkey[16];
-    bool lmacNvs = nvsLoadMac(WHEEL_LEFT,  lmac, sizeof(lmac));
+    bool lmacNvs = nvsLoadMac(WHEEL_LEFT, lmac, sizeof(lmac));
     bool rmacNvs = nvsLoadMac(WHEEL_RIGHT, rmac, sizeof(rmac));
-    bool lkeyNvs = nvsLoadKey(WHEEL_LEFT,  lkey);
+    bool lkeyNvs = nvsLoadKey(WHEEL_LEFT, lkey);
     bool rkeyNvs = nvsLoadKey(WHEEL_RIGHT, rkey);
 
-    Serial.println(F("[Config] --- Wheel Configuration ---"));
-    Serial.printf("[Config] Left  MAC : %s  (%s)\n", lmac, lmacNvs ? "NVS" : "build default");
-    Serial.printf("[Config] Right MAC : %s  (%s)\n", rmac, rmacNvs ? "NVS" : "build default");
+    char lkeyHex[33];
+    char rkeyHex[33];
+    for (int i = 0; i < 16; i++) {
+        snprintf(&lkeyHex[i * 2], 3, "%02x", lkey[i]);
+        snprintf(&rkeyHex[i * 2], 3, "%02x", rkey[i]);
+    }
 
-    Serial.print(F("[Config] Left  Key : "));
-    for (int i = 0; i < 16; i++) Serial.printf("%02x", lkey[i]);
-    Serial.printf("  (%s)\n", lkeyNvs ? "NVS" : "build default");
-
-    Serial.print(F("[Config] Right Key : "));
-    for (int i = 0; i < 16; i++) Serial.printf("%02x", rkey[i]);
-    Serial.printf("  (%s)\n", rkeyNvs ? "NVS" : "build default");
-
-    Serial.println(F("[Config] Changes take effect immediately AND survive reboot."));
-    Serial.println(F("[Config] 'config reset' clears NVS; build defaults restored on next boot."));
+    LOG_INFO(TAG_CONFIG, "--- Wheel Configuration ---");
+    LOG_INFO(TAG_CONFIG, "Left  MAC : %s  (%s)", lmac, lmacNvs ? "NVS" : "build default");
+    LOG_INFO(TAG_CONFIG, "Right MAC : %s  (%s)", rmac, rmacNvs ? "NVS" : "build default");
+    LOG_INFO(TAG_CONFIG, "Left  Key : %s  (%s)", lkeyHex, lkeyNvs ? "NVS" : "build default");
+    LOG_INFO(TAG_CONFIG, "Right Key : %s  (%s)", rkeyHex, rkeyNvs ? "NVS" : "build default");
+    LOG_INFO(TAG_CONFIG, "Changes take effect immediately and survive reboot");
+    LOG_INFO(TAG_CONFIG, "'config reset' clears NVS; build defaults restored on next boot");
 }
 
 #endif // NVS_CONFIG_H

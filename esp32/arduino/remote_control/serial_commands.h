@@ -182,73 +182,76 @@ static const char _scProfileDefaultRightMac[] = RIGHT_WHEEL_MAC;
 static const uint8_t _scProfileDefaultLeftKey[16] = ENCRYPTION_KEY_LEFT;
 static const uint8_t _scProfileDefaultRightKey[16] = ENCRYPTION_KEY_RIGHT;
 
+static void _scCmdOut(const char* msg);
+static void _scCmdOutf(const char* fmt, ...);
+
 // ---------------------------------------------------------------------------
 // Internal print helpers
 // ---------------------------------------------------------------------------
 static void _scPrintHelp() {
-    Serial.println(F("--- Commands ---"));
-    Serial.println(F("  help / ?                  This message"));
-    Serial.println(F("  status                    Full system status (state, wheels, telemetry, watchdogs)"));
-    Serial.println(F("  sysinfo                   Chip, heap, uptime, WiFi/BT status"));
-    Serial.println(F("--- Logging ---"));
-    Serial.println(F("  log                       Show logger level and tags"));
-    Serial.println(F("  log level <none|error|warn|info|debug|verbose>"));
-    Serial.println(F("  log tag <name> <on|off>   names: joystick|motor|heartbeat|ble|button|state|telemetry|tx|auth"));
-    Serial.println(F("  log all <on|off>          Enable/disable all tags"));
-    Serial.println(F("  debug ...                 Compatibility alias for existing scripts"));
-    Serial.println(F("  txstats [reset]           Show/reset BLE TX command counters"));
-    Serial.println(F("  log stop <on|off>         Enable/disable STOP lines in motor logs"));
-    Serial.println(F("  log stop every <N>        Print every Nth STOP line (when enabled)"));
-    Serial.println(F("  log show                  Show current log-filter settings"));
-    Serial.println(F("  js                        One-shot joystick snapshot"));
-    Serial.println(F("  buttons                   Button hardware and state details"));
-    Serial.println(F("  ble                       Quick BLE connection status"));
-    Serial.println(F("  wheels                    Verbose per-wheel status + key"));
-    Serial.println(F("  telemetry                 Request fresh telemetry from wheels + print cached values"));
-    Serial.println(F("--- Recording ---"));
-    Serial.println(F("  record start [N]          Record BLE traffic for N seconds (default 10)"));
-    Serial.println(F("  record stop               Stop recording early"));
-    Serial.println(F("  record dump               Print captured traffic log"));
-    Serial.println(F("--- Connection ---"));
-    Serial.println(F("  autoreconnect <on|off>    Enable/disable auto-reconnect"));
-    Serial.println(F("  disconnect                Force-disconnect all wheels"));
-    Serial.println(F("  reconnect                 Force BLE reconnect"));
-    Serial.println(F("  setmac <left|right> <MAC> Change wheel MAC (disconnects)"));
-    Serial.println(F("  setkey <left|right> <hex> Change AES key (32 hex chars)"));
-    Serial.println(F("--- Control ---"));
-    Serial.println(F("  assist <0|1|2>            Set assist level  0=indoor  1=outdoor  2=learning"));
-    Serial.println(F("  hillhold <on|off>         Toggle hill hold"));
-    Serial.println(F("  recal                     Recalibrate joystick center"));
-    Serial.println(F("  arm                       Arm motors (PAIRED -> ARMED)"));
-    Serial.println(F("  disarm                    Disarm motors (ARMED/DRIVING -> PAIRED)"));
-    Serial.println(F("  stop                      Software emergency stop (-> FAILSAFE)"));
-    Serial.println(F("  reset                     Clear FAILSAFE state -> reconnect"));
-    Serial.println(F("--- Config (NVS) ---"));
-    Serial.println(F("  config show               Print MACs and keys (NVS vs build default)"));
-    Serial.println(F("  config reset              Clear NVS; build defaults on next boot"));
-    Serial.println(F("  config profile <env|default> Persist+apply profile now, then reconnect"));
-    Serial.println(F("                               env requires build-time .env values"));
-    Serial.println(F("--- System ---"));
-    Serial.println(F("  power off                 Turn device off (enter deep sleep)"));
-    Serial.println(F("  restart                   Restart the ESP32"));
+    _scCmdOut("--- Commands ---");
+    _scCmdOut("  help / ?                  This message");
+    _scCmdOut("  status                    Full system status (state, wheels, telemetry, watchdogs)");
+    _scCmdOut("  sysinfo                   Chip, heap, uptime, WiFi/BT status");
+    _scCmdOut("--- Logging ---");
+    _scCmdOut("  log                       Show logger level and tags");
+    _scCmdOut("  log level <none|error|warn|info|debug|verbose>");
+    _scCmdOut("  log tag <name> <on|off>   names: joystick|motor|heartbeat|ble|button|state|telemetry|tx|auth");
+    _scCmdOut("  log all <on|off>          Enable/disable all tags");
+    _scCmdOut("  debug ...                 Compatibility alias for existing scripts");
+    _scCmdOut("  txstats [reset]           Show/reset BLE TX command counters");
+    _scCmdOut("  log stop <on|off>         Enable/disable STOP lines in motor logs");
+    _scCmdOut("  log stop every <N>        Print every Nth STOP line (when enabled)");
+    _scCmdOut("  log show                  Show current log-filter settings");
+    _scCmdOut("  js                        One-shot joystick snapshot");
+    _scCmdOut("  buttons                   Button hardware and state details");
+    _scCmdOut("  ble                       Quick BLE connection status");
+    _scCmdOut("  wheels                    Verbose per-wheel status + key");
+    _scCmdOut("  telemetry                 Request fresh telemetry from wheels + print cached values");
+    _scCmdOut("--- Recording ---");
+    _scCmdOut("  record start [N]          Record BLE traffic for N seconds (default 10)");
+    _scCmdOut("  record stop               Stop recording early");
+    _scCmdOut("  record dump               Print captured traffic log");
+    _scCmdOut("--- Connection ---");
+    _scCmdOut("  autoreconnect <on|off>    Enable/disable auto-reconnect");
+    _scCmdOut("  disconnect                Force-disconnect all wheels");
+    _scCmdOut("  reconnect                 Force BLE reconnect");
+    _scCmdOut("  setmac <left|right> <MAC> Change wheel MAC (disconnects)");
+    _scCmdOut("  setkey <left|right> <hex> Change AES key (32 hex chars)");
+    _scCmdOut("--- Control ---");
+    _scCmdOut("  assist <0|1|2>            Set assist level  0=indoor  1=outdoor  2=learning");
+    _scCmdOut("  hillhold <on|off>         Toggle hill hold");
+    _scCmdOut("  recal                     Recalibrate joystick center");
+    _scCmdOut("  arm                       Arm motors (PAIRED -> ARMED)");
+    _scCmdOut("  disarm                    Disarm motors (ARMED/DRIVING -> PAIRED)");
+    _scCmdOut("  stop                      Software emergency stop (-> FAILSAFE)");
+    _scCmdOut("  reset                     Clear FAILSAFE state -> reconnect");
+    _scCmdOut("--- Config (NVS) ---");
+    _scCmdOut("  config show               Print MACs and keys (NVS vs build default)");
+    _scCmdOut("  config reset              Clear NVS; build defaults on next boot");
+    _scCmdOut("  config profile <env|default> Persist+apply profile now, then reconnect");
+    _scCmdOut("                               env requires build-time .env values");
+    _scCmdOut("--- System ---");
+    _scCmdOut("  power off                 Turn device off (enter deep sleep)");
+    _scCmdOut("  restart                   Restart the ESP32");
 #ifdef ENABLE_BATTERY_MONITOR
-    Serial.println(F("  battery                   Print battery %"));
+    _scCmdOut("  battery                   Print battery %");
 #endif
-    Serial.println(F("----------------"));
+    _scCmdOut("----------------");
 }
 
 static void _scPrintLoggerSettings() {
     Logger& logger = Logger::instance();
     uint32_t tagMask = logger.getTagMask();
 
-    Serial.println(F("--- Logger Settings ---"));
-    Serial.printf("Level: %s\n", _scLevelName(logger.getLevel()));
-    Serial.printf("Tag mask: 0x%08lX\n", (unsigned long)tagMask);
-    Serial.println(F("Tag         Status  Description"));
-    Serial.println(F("----------  ------  ----------------------------------"));
+    _scCmdOut("--- Logger Settings ---");
+    _scCmdOutf("Level: %s", _scLevelName(logger.getLevel()));
+    _scCmdOutf("Tag mask: 0x%08lX", (unsigned long)tagMask);
+    _scCmdOut("Tag         Status  Description");
+    _scCmdOut("----------  ------  ----------------------------------");
     for (uint8_t i = 0; i < _logTagCount; i++) {
         bool enabled = (tagMask & _logTagTable[i].tag) != 0;
-        Serial.printf("%-10s  %-6s  %s\n",
+        _scCmdOutf("%-10s  %-6s  %s",
             _logTagTable[i].name,
             enabled ? "ON" : "off",
             _logTagTable[i].description);
@@ -256,39 +259,42 @@ static void _scPrintLoggerSettings() {
 }
 
 static void _scPrintStatus(const SerialContext& ctx) {
-    Serial.println(F("=== Remote Control Status ==="));
+    _scCmdOut("=== Remote Control Status ===");
 
     // --- Supervisor state ---
     if (ctx.supervisor) {
         SupervisorState supState = ctx.supervisor->getState();
         const char* stateName = supervisorStateToString(supState);
-        Serial.printf("[State]    %s", stateName);
+        char stateLine[160];
+        snprintf(stateLine, sizeof(stateLine), "[State]    %s", stateName);
         if (supState == SUPERVISOR_ARMED) {
             uint32_t remMs = ctx.supervisor->getArmedIdleRemainingMs();
             uint32_t armMs = ctx.supervisor->getConfig().armIdleTimeoutMs;
             uint32_t usedMs = armMs - remMs;
-            Serial.printf("  (idle %.1f s / %.0f s before auto-disarm)",
+            char suffix[96];
+            snprintf(suffix, sizeof(suffix), "  (idle %.1f s / %.0f s before auto-disarm)",
                 usedMs / 1000.0f, armMs / 1000.0f);
+            strlcat(stateLine, suffix, sizeof(stateLine));
         }
-        Serial.println();
+        _scCmdOut(stateLine);
 
         // Reconnect info
         uint8_t retries = ctx.supervisor->getReconnectAttempts();
         uint8_t maxRet = ctx.supervisor->getConfig().maxReconnectAttempts;
         if (retries > 0 || supState == SUPERVISOR_CONNECTING) {
-            Serial.printf("[Reconnect] %d / %d attempts\n", retries, maxRet);
+            _scCmdOutf("[Reconnect] %d / %d attempts", retries, maxRet);
         }
     }
     else {
         uint8_t si = (uint8_t)*ctx.state;
         const char* sname = (si < 6) ? _stateNames[si] : "?";
-        Serial.printf("[State]    %s\n", sname);
+        _scCmdOutf("[State]    %s", sname);
     }
 
     // --- BLE connection ---
     bool leftConn = bleIsConnected(WHEEL_LEFT);
     bool rightConn = bleIsConnected(WHEEL_RIGHT);
-    Serial.printf("[BLE]      Left=%-5s  Right=%-5s  autoReconn=%s\n",
+    _scCmdOutf("[BLE]      Left=%-5s  Right=%-5s  autoReconn=%s",
         leftConn ? "OK" : "disc",
         rightConn ? "OK" : "disc",
         bleGetAutoReconnect() ? "ON" : "off");
@@ -296,23 +302,41 @@ static void _scPrintStatus(const SerialContext& ctx) {
     // --- Per-wheel telemetry ---
     {
         auto printWheel = [](const char* label, int idx, bool conn) {
-            Serial.printf("[Wheel %s]", label);
+            char line[192];
+            snprintf(line, sizeof(line), "[Wheel %s]", label);
             if (!conn) {
-                Serial.println(F("  not connected"));
+                strlcat(line, "  not connected", sizeof(line));
+                _scCmdOut(line);
                 return;
             }
             int8_t batt = bleGetBattery(idx);
-            if (batt >= 0) Serial.printf("  battery=%d%%", batt);
-            else           Serial.printf("  battery=--");
+            if (batt >= 0) {
+                char seg[32];
+                snprintf(seg, sizeof(seg), "  battery=%d%%", batt);
+                strlcat(line, seg, sizeof(line));
+            }
+            else {
+                strlcat(line, "  battery=--", sizeof(line));
+            }
             uint8_t maj = 0, min = 0, patch = 0;
-            if (bleGetFirmwareVersion(idx, maj, min, patch))
-                Serial.printf("  FW=%d.%d.%d", maj, min, patch);
-            else
-                Serial.printf("  FW=--");
+            if (bleGetFirmwareVersion(idx, maj, min, patch)) {
+                char seg[32];
+                snprintf(seg, sizeof(seg), "  FW=%d.%d.%d", maj, min, patch);
+                strlcat(line, seg, sizeof(line));
+            }
+            else {
+                strlcat(line, "  FW=--", sizeof(line));
+            }
             float dist = bleGetDistanceKm(idx);
-            if (dist >= 0.0f) Serial.printf("  dist=%.2f km", dist);
-            else              Serial.printf("  dist=--");
-            Serial.println();
+            if (dist >= 0.0f) {
+                char seg[32];
+                snprintf(seg, sizeof(seg), "  dist=%.2f km", dist);
+                strlcat(line, seg, sizeof(line));
+            }
+            else {
+                strlcat(line, "  dist=--", sizeof(line));
+            }
+            _scCmdOut(line);
             };
         printWheel("Left ", WHEEL_LEFT, leftConn);
         printWheel("Right", WHEEL_RIGHT, rightConn);
@@ -325,7 +349,7 @@ static void _scPrintStatus(const SerialContext& ctx) {
             const SupervisorConfig& cfg = ctx.supervisor->getConfig();
             uint32_t sinceInput = ctx.supervisor->getTimeSinceLastInput();
             uint32_t sinceLink = ctx.supervisor->getTimeSinceLastLink();
-            Serial.printf("[Watchdog] input=%.2f s (limit %.1f s)  link=%.2f s (limit %.1f s)%s\n",
+            _scCmdOutf("[Watchdog] input=%.2f s (limit %.1f s)  link=%.2f s (limit %.1f s)%s",
                 sinceInput / 1000.0f, cfg.inputTimeoutMs / 1000.0f,
                 sinceLink / 1000.0f, cfg.linkTimeoutMs / 1000.0f,
                 ctx.supervisor->isInputTimeout() || ctx.supervisor->isLinkTimeout() ? "  *** TIMEOUT ***" : "");
@@ -333,49 +357,49 @@ static void _scPrintStatus(const SerialContext& ctx) {
     }
 
     // --- Assist / hill hold ---
-    Serial.printf("[Assist]   %s  HillHold=%s\n",
+    _scCmdOutf("[Assist]   %s  HillHold=%s",
         assistConfigs[*ctx.assistLevel].name,
         *ctx.hillHoldOn ? "ON" : "off");
 
 #ifdef ENABLE_BATTERY_MONITOR
     if (ctx.batteryPct) {
-        Serial.printf("[Battery]  %d %%\n", *ctx.batteryPct);
+        _scCmdOutf("[Battery]  %d %%", *ctx.batteryPct);
     }
 #endif
 
     // --- Logger status ---
     Logger& logger = Logger::instance();
     uint32_t tagMask = logger.getTagMask();
-    Serial.printf("[Log]      level=%s  tags=0x%08lX\n",
+    _scCmdOutf("[Log]      level=%s  tags=0x%08lX",
         _scLevelName(logger.getLevel()),
         (unsigned long)tagMask);
 
     // --- Record status ---
     if (bleRecordIsActive()) {
-        Serial.printf("[Record]   ACTIVE  (%d entries so far)\n",
+        _scCmdOutf("[Record]   ACTIVE  (%d entries so far)",
             (int)bleRecordEntryCount());
     }
     else {
         uint32_t cnt = bleRecordEntryCount();
         if (cnt > 0) {
-            Serial.printf("[Record]   idle  (last capture: %d entries - use 'record dump')\n", (int)cnt);
+            _scCmdOutf("[Record]   idle  (last capture: %d entries - use 'record dump')", (int)cnt);
         }
         else {
-            Serial.println(F("[Record]   idle  (use 'record start [s]' to capture)"));
+            _scCmdOut("[Record]   idle  (use 'record start [s]' to capture)");
         }
     }
 
-    Serial.println(F("============================="));
+    _scCmdOut("=============================");
 }
 
 static void _scPrintBle() {
-    Serial.printf("[BLE] Left  (%s): %s\n",
+    _scCmdOutf("[BLE] Left  (%s): %s",
         LEFT_WHEEL_MAC,
         bleIsConnected(WHEEL_LEFT) ? "connected" : "disconnected");
-    Serial.printf("[BLE] Right (%s): %s\n",
+    _scCmdOutf("[BLE] Right (%s): %s",
         RIGHT_WHEEL_MAC,
         bleIsConnected(WHEEL_RIGHT) ? "connected" : "disconnected");
-    Serial.printf("[BLE] allConnected=%s  anyConnected=%s\n",
+    _scCmdOutf("[BLE] allConnected=%s  anyConnected=%s",
         bleAllConnected() ? "YES" : "no",
         bleAnyConnected() ? "yes" : "NO");
 }
@@ -389,7 +413,7 @@ static void _scPrintJs() {
     n.x = joystickNormalizeAxis(raw.x, _jsXCenter);
     n.y = joystickNormalizeAxis(raw.y, _jsYCenter);
     n.inDeadzone = (n.x == 0.0f && n.y == 0.0f);
-    Serial.printf("[JS] raw X=%-5d Y=%-5d  ctr X=%-5d Y=%-5d  norm X=%+.3f Y=%+.3f  dz=%s\n",
+    _scCmdOutf("[JS] raw X=%-5d Y=%-5d  ctr X=%-5d Y=%-5d  norm X=%+.3f Y=%+.3f  dz=%s",
         raw.x, raw.y, _jsXCenter, _jsYCenter, n.x, n.y, n.inDeadzone ? "yes" : "no");
 }
 
@@ -401,21 +425,21 @@ static void _scPrintSysInfo() {
     // Chip
     esp_chip_info_t chip;
     esp_chip_info(&chip);
-    Serial.printf("[SYS] Chip    : %s  cores=%d  rev=%d\n",
+    _scCmdOutf("[SYS] Chip    : %s  cores=%d  rev=%d",
         ESP.getChipModel(), chip.cores, chip.revision);
-    Serial.printf("[SYS] CPU     : %d MHz\n", ESP.getCpuFreqMHz());
-    Serial.printf("[SYS] Flash   : %u kB  %s\n",
+    _scCmdOutf("[SYS] CPU     : %d MHz", ESP.getCpuFreqMHz());
+    _scCmdOutf("[SYS] Flash   : %u kB  %s",
         (unsigned)(ESP.getFlashChipSize() / 1024),
         (chip.features & CHIP_FEATURE_EMB_FLASH) ? "embedded" : "external");
-    Serial.printf("[SYS] Heap    : free=%u B  min-free=%u B\n",
+    _scCmdOutf("[SYS] Heap    : free=%u B  min-free=%u B",
         ESP.getFreeHeap(), ESP.getMinFreeHeap());
     uint32_t up = millis() / 1000;
-    Serial.printf("[SYS] Uptime  : %02u:%02u:%02u\n",
+    _scCmdOutf("[SYS] Uptime  : %02u:%02u:%02u",
         up / 3600, (up % 3600) / 60, up % 60);
     // BT / BLE
-    Serial.printf("[BT]  MAC     : %s\n",
+    _scCmdOutf("[BT]  MAC     : %s",
         BLEDevice::getAddress().toString().c_str());
-    Serial.printf("[BLE] autoRec : %s\n",
+    _scCmdOutf("[BLE] autoRec : %s",
         bleGetAutoReconnect() ? "ON" : "off");
     // WiFi (only when ENABLE_WIFI is defined in device_config.h)
 #ifdef ENABLE_WIFI
@@ -425,14 +449,14 @@ static void _scPrintSysInfo() {
         wmode == WIFI_MODE_STA ? "STA" :
         wmode == WIFI_MODE_AP ? "AP" :
         wmode == WIFI_MODE_APSTA ? "AP+STA" : "?";
-    Serial.printf("[WiFi] mode   : %s\n", modeStr);
+    _scCmdOutf("[WiFi] mode   : %s", modeStr);
     if (wmode == WIFI_MODE_STA || wmode == WIFI_MODE_APSTA) {
-        Serial.printf("[WiFi] SSID   : %s\n", WiFi.SSID().c_str());
-        Serial.printf("[WiFi] IP     : %s\n", WiFi.localIP().toString().c_str());
-        Serial.printf("[WiFi] RSSI   : %d dBm\n", WiFi.RSSI());
+        _scCmdOutf("[WiFi] SSID   : %s", WiFi.SSID().c_str());
+        _scCmdOutf("[WiFi] IP     : %s", WiFi.localIP().toString().c_str());
+        _scCmdOutf("[WiFi] RSSI   : %d dBm", WiFi.RSSI());
     }
 #else
-    Serial.println(F("[WiFi] disabled (ENABLE_WIFI not set)"));
+    _scCmdOut("[WiFi] disabled (ENABLE_WIFI not set)");
 #endif
 }
 
@@ -854,7 +878,7 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
     // telemetry - request fresh data from all connected wheels + print cached values
     if (strcmp(cmd, "telemetry") == 0) {
         if (!bleAnyConnected()) {
-            Serial.println(F("[Telemetry] No wheels connected"));
+            _scCmdOut("[Telemetry] No wheels connected");
             return;
         }
         bool requestAllowed = true;
@@ -862,7 +886,7 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
             SupervisorState supState = ctx.supervisor->getState();
             if (supState == SUPERVISOR_ARMED || supState == SUPERVISOR_DRIVING) {
                 requestAllowed = false;
-                Serial.printf("[Telemetry] Live request blocked in %s state (to avoid BLE write contention)\n",
+                _scCmdOutf("[Telemetry] Live request blocked in %s state (to avoid BLE write contention)",
                     supervisorStateToString(supState));
             }
         }
@@ -872,40 +896,58 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
             bool sentSoc = bleRequestSOC();
             bool sentFw = bleRequestFirmwareVersion();
             bool sentOdo = bleRequestCruiseValues();
-            Serial.printf("[Telemetry] Requests sent  SOC=%s  FW=%s  Odometer=%s\n",
+            _scCmdOutf("[Telemetry] Requests sent  SOC=%s  FW=%s  Odometer=%s",
                 sentSoc ? "ok" : "fail",
                 sentFw ? "ok" : "fail",
                 sentOdo ? "ok" : "fail");
         }
         // Print whatever is currently in the cache
-        Serial.println(F("[Telemetry] --- Cached values (from last poll) ---"));
+        _scCmdOut("[Telemetry] --- Cached values (from last poll) ---");
         for (int _ti = 0; _ti < WHEEL_COUNT; _ti++) {
             if (!_wheelActive(_ti)) continue;
             const char* label = (_ti == WHEEL_LEFT) ? "Left " : "Right";
             bool conn = bleIsConnected(_ti);
-            Serial.printf("[Telemetry]   %s: ", label);
+            char line[192];
+            snprintf(line, sizeof(line), "[Telemetry]   %s: ", label);
             if (!conn) {
-                Serial.println(F("not connected"));
+                strlcat(line, "not connected", sizeof(line));
+                _scCmdOut(line);
                 continue;
             }
             int8_t batt = bleGetBattery(_ti);
-            if (batt >= 0) Serial.printf("battery=%3d%%  ", batt);
-            else           Serial.printf("battery= --   ");
+            if (batt >= 0) {
+                char seg[32];
+                snprintf(seg, sizeof(seg), "battery=%3d%%  ", batt);
+                strlcat(line, seg, sizeof(line));
+            }
+            else {
+                strlcat(line, "battery= --   ", sizeof(line));
+            }
             uint8_t maj = 0, min = 0, patch = 0;
-            if (bleGetFirmwareVersion(_ti, maj, min, patch))
-                Serial.printf("FW=%d.%d.%d  ", maj, min, patch);
-            else
-                Serial.printf("FW=--        ");
+            if (bleGetFirmwareVersion(_ti, maj, min, patch)) {
+                char seg[32];
+                snprintf(seg, sizeof(seg), "FW=%d.%d.%d  ", maj, min, patch);
+                strlcat(line, seg, sizeof(line));
+            }
+            else {
+                strlcat(line, "FW=--        ", sizeof(line));
+            }
             float dist = bleGetDistanceKm(_ti);
-            if (dist >= 0.0f) Serial.printf("dist=%.3f km", dist);
-            else              Serial.printf("dist=--");
-            Serial.println();
+            if (dist >= 0.0f) {
+                char seg[32];
+                snprintf(seg, sizeof(seg), "dist=%.3f km", dist);
+                strlcat(line, seg, sizeof(line));
+            }
+            else {
+                strlcat(line, "dist=--", sizeof(line));
+            }
+            _scCmdOut(line);
         }
         if (requestAllowed) {
-            Serial.println(F("[Telemetry] Fresh values arrive via BLE notify - run 'telemetry' again or use 'log tag telemetry on'"));
+            _scCmdOut("[Telemetry] Fresh values arrive via BLE notify - run 'telemetry' again or use 'log tag telemetry on'");
         }
         else {
-            Serial.println(F("[Telemetry] Cached-only output in ARMED/DRIVING. Use telemetry in PAIRED for live requests."));
+            _scCmdOut("[Telemetry] Cached-only output in ARMED/DRIVING. Use telemetry in PAIRED for live requests.");
         }
         return;
     }

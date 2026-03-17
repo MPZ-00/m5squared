@@ -16,10 +16,11 @@
 
 #include <Arduino.h>
 #include "device_config.h"
+#include "Logger.h"
 
-// ---------------------------------------------------------------------------
-// Single-button state machine
-// ---------------------------------------------------------------------------
+ // ---------------------------------------------------------------------------
+ // Single-button state machine
+ // ---------------------------------------------------------------------------
 struct Button {
     uint8_t  pin;
     bool     lastStableState;  // true = released (HIGH)
@@ -31,13 +32,13 @@ struct Button {
     void init() {
         pinMode(pin, INPUT_PULLUP);
         delay(10);  // Allow pull-up to settle
-        
+
         // Read actual initial state instead of assuming released
         bool initialState = (digitalRead(pin) == HIGH);
-        lastStableState    = initialState;
-        currentReading     = initialState;
-        readingChangeTime  = 0;
-        pressedEvent       = false;
+        lastStableState = initialState;
+        currentReading = initialState;
+        readingChangeTime = 0;
+        pressedEvent = false;
     }
 
     // Call every loop iteration; updates internal state
@@ -47,7 +48,7 @@ struct Button {
 
         if (reading != currentReading) {
             // Input changed - restart debounce window
-            currentReading    = reading;
+            currentReading = reading;
             readingChangeTime = now;
         }
 
@@ -81,10 +82,10 @@ struct Button {
 // ---------------------------------------------------------------------------
 // Button instances (global, accessed from main sketch)
 // ---------------------------------------------------------------------------
-Button btnEstop     = { BTN_ESTOP_PIN };
-Button btnHillHold  = { BTN_HILL_HOLD_PIN };
-Button btnAssist    = { BTN_ASSIST_PIN };
-Button btnPower     = { BTN_POWER_PIN };
+Button btnEstop = { BTN_ESTOP_PIN };
+Button btnHillHold = { BTN_HILL_HOLD_PIN };
+Button btnAssist = { BTN_ASSIST_PIN };
+Button btnPower = { BTN_POWER_PIN };
 
 // ---------------------------------------------------------------------------
 // Convenience functions
@@ -94,21 +95,21 @@ inline void buttonsInit() {
     btnHillHold.init();
     btnAssist.init();
     btnPower.init();
-    
+
     // Diagnostic: check if all buttons are stuck LOW (wiring problem)
     delay(50);  // Extra settle time
     int e = digitalRead(BTN_ESTOP_PIN);
     int h = digitalRead(BTN_HILL_HOLD_PIN);
     int a = digitalRead(BTN_ASSIST_PIN);
     int p = digitalRead(BTN_POWER_PIN);
-    
+
     if (e == LOW && h == LOW && a == LOW && p == LOW) {
-        Serial.println("[Button] WARNING: All buttons read LOW at startup!");
-        Serial.println("[Button] Check wiring:");
-        Serial.println("[Button]   - Pins 14,25,26 should connect to button terminals");
-        Serial.println("[Button]   - Other button terminals should connect to GND");
-        Serial.println("[Button]   - Use normally-open (NO) buttons, not normally-closed (NC)");
-        Serial.println("[Button]   - Check for shorts to GND on breadboard");
+        LOG_WARN(TAG_BUTTON, "All buttons read LOW at startup");
+        LOG_WARN(TAG_BUTTON, "Check wiring");
+        LOG_WARN(TAG_BUTTON, "- Pins 14,25,26 should connect to button terminals");
+        LOG_WARN(TAG_BUTTON, "- Other button terminals should connect to GND");
+        LOG_WARN(TAG_BUTTON, "- Use normally-open (NO) buttons, not normally-closed (NC)");
+        LOG_WARN(TAG_BUTTON, "- Check for shorts to GND on breadboard");
     }
 }
 
@@ -122,16 +123,16 @@ inline void buttonsTick() {
 // Debug: print raw button pin states (call from serial command)
 inline void buttonsPrintDebug() {
     int estop = digitalRead(BTN_ESTOP_PIN);
-    int hill  = digitalRead(BTN_HILL_HOLD_PIN);
+    int hill = digitalRead(BTN_HILL_HOLD_PIN);
     int assist = digitalRead(BTN_ASSIST_PIN);
     int power = digitalRead(BTN_POWER_PIN);
-    Serial.printf("[Button-Debug] RAW pins: E-Stop=%d  HillHold=%d  Assist=%d  Power=%d  (LOW=pressed)\n",
-                  estop, hill, assist, power);
-    Serial.printf("[Button-Debug] Debounced: E-Stop=%s  HillHold=%s  Assist=%s  Power=%s\n",
-                  btnEstop.isHeld() ? "HELD" : "released",
-                  btnHillHold.isHeld() ? "HELD" : "released",
-                  btnAssist.isHeld() ? "HELD" : "released",
-                  btnPower.isHeld() ? "HELD" : "released");
+    LOG_INFO(TAG_BUTTON, "RAW pins: E-Stop=%d HillHold=%d Assist=%d Power=%d (LOW=pressed)",
+        estop, hill, assist, power);
+    LOG_INFO(TAG_BUTTON, "Debounced: E-Stop=%s HillHold=%s Assist=%s Power=%s",
+        btnEstop.isHeld() ? "HELD" : "released",
+        btnHillHold.isHeld() ? "HELD" : "released",
+        btnAssist.isHeld() ? "HELD" : "released",
+        btnPower.isHeld() ? "HELD" : "released");
 }
 
 #endif // BUTTON_H

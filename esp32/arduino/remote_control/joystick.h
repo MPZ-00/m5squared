@@ -14,24 +14,25 @@
 
 #include <Arduino.h>
 #include "device_config.h"
+#include "Logger.h"
 
 #ifdef NO_JOYSTICK
-// ---------------------------------------------------------------------------
-// Stub implementation: no hardware joystick connected.
-// All reads return a perfectly centered, in-deadzone state.
-// ---------------------------------------------------------------------------
-inline void joystickInit()        { Serial.println("[Joystick] NO_JOYSTICK defined - ADC disabled"); }
-inline void joystickRecalibrate() { Serial.println("[Joystick] NO_JOYSTICK - recal skipped"); }
+ // ---------------------------------------------------------------------------
+ // Stub implementation: no hardware joystick connected.
+ // All reads return a perfectly centered, in-deadzone state.
+ // ---------------------------------------------------------------------------
+inline void joystickInit() { LOG_INFO(TAG_JOYSTICK, "NO_JOYSTICK defined - ADC disabled"); }
+inline void joystickRecalibrate() { LOG_INFO(TAG_JOYSTICK, "NO_JOYSTICK - recal skipped"); }
 inline int  joystickReadRawAxis(uint8_t) { return JOYSTICK_CENTER; }
-struct JoystickRaw  { int x = JOYSTICK_CENTER; int y = JOYSTICK_CENTER; };
+struct JoystickRaw { int x = JOYSTICK_CENTER; int y = JOYSTICK_CENTER; };
 struct JoystickNorm { float x = 0.0f; float y = 0.0f; bool inDeadzone = true; };
 inline JoystickRaw  joystickReadRaw() { return { JOYSTICK_CENTER, JOYSTICK_CENTER }; }
-inline JoystickNorm joystickRead()    { return { 0.0f, 0.0f, true }; }
+inline JoystickNorm joystickRead() { return { 0.0f, 0.0f, true }; }
 #else // real joystick below
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+ // ---------------------------------------------------------------------------
+ // Types
+ // ---------------------------------------------------------------------------
 struct JoystickRaw {
     int x;   // ADC counts 0-4095
     int y;
@@ -63,8 +64,7 @@ inline void joystickInit() {
     }
     _jsXCenter = (int)(sumX / 32);
     _jsYCenter = (int)(sumY / 32);
-    Serial.printf("[Joystick] Center calibrated: X=%d  Y=%d\n",
-                  _jsXCenter, _jsYCenter);
+    LOG_INFO(TAG_JOYSTICK, "Center calibrated: X=%d Y=%d", _jsXCenter, _jsYCenter);
 }
 
 // ---------------------------------------------------------------------------
@@ -98,20 +98,21 @@ inline float joystickNormalizeAxis(int raw, int center) {
     float usable;
     if (offset > 0) {
         // Positive side: deadzone edge to ADC_MAX
-        int edgePos    = center + JOYSTICK_DEADZONE;
-        int rangePos   = JOYSTICK_ADC_MAX - edgePos;
+        int edgePos = center + JOYSTICK_DEADZONE;
+        int rangePos = JOYSTICK_ADC_MAX - edgePos;
         if (rangePos <= 0) return 1.0f;
         usable = (float)(raw - edgePos) / (float)rangePos;
-    } else {
+    }
+    else {
         // Negative side: ADC_MIN to deadzone edge
-        int edgeNeg    = center - JOYSTICK_DEADZONE;
-        int rangeNeg   = edgeNeg - JOYSTICK_ADC_MIN;
+        int edgeNeg = center - JOYSTICK_DEADZONE;
+        int rangeNeg = edgeNeg - JOYSTICK_ADC_MIN;
         if (rangeNeg <= 0) return -1.0f;
         usable = -((float)(edgeNeg - raw) / (float)rangeNeg);
     }
 
     // Clamp to [-1, +1] to guard against ADC noise at extremes
-    if (usable >  1.0f) usable =  1.0f;
+    if (usable > 1.0f) usable = 1.0f;
     if (usable < -1.0f) usable = -1.0f;
     return usable;
 }
