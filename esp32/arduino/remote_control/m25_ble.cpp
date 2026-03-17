@@ -38,7 +38,7 @@ static bool _bleAutoReconnectFlag = true;
 // Every _sendCommand() caller must hold this before touching the BLE stack.
 static SemaphoreHandle_t _bleTxMutex = nullptr;
 
-// Motor STOP debug log filter (used only when DBG_MOTOR is enabled).
+// Motor STOP log filter (used with TAG_MOTOR logging).
 static volatile bool _motorStopLogEnabled = true;
 static volatile uint16_t _motorStopLogEvery = 20;
 
@@ -1356,7 +1356,7 @@ void _notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size_t leng
             // Update notify timestamp so the stale-notify watchdog knows this wheel is alive
             _wheels[i].lastNotifyMs = millis();
 
-            // Raw hex dump (DBG_PROTO: low-level frame debugging)
+            // Raw hex dump (TAG_TX: low-level frame debugging)
             if (Logger::instance().isTagEnabled(TAG_TX)) {
                 char rawHex[192];
                 _hexSnippet(pData, length, rawHex, sizeof(rawHex), 48);
@@ -2295,7 +2295,7 @@ static void _bleMotorTask(void* /*pv*/) {
                 ok &= modeOk;
             }
         }
-        // Log write failures unconditionally (not behind DBG_BLE):
+        // Log write failures unconditionally (not behind tag checks):
         // first failure is always printed; then every 20 cycles (~1 s at 20 Hz).
         if (!ok) {
             motorFailStreak++;
@@ -2444,16 +2444,17 @@ void bleTick() {
         if (!w.connected) {
             if (now - w.lastConnectAttemptMs >= BLE_RECONNECT_DELAY_MS) {
                 w.lastConnectAttemptMs = now;
-                if (debugFlags & DBG_BLE) {
-                    Serial.printf("[BLE] Attempting reconnect to %s wheel... (attempt %u/%u)\n",
-                        w.name, (unsigned)(w.consecutiveFails + 1),
+                if (Logger::instance().isTagEnabled(TAG_BLE)) {
+                    LOG_DEBUG(TAG_BLE, "Attempting reconnect to %s wheel... (attempt %u/%u)",
+                        w.name,
+                        (unsigned)(w.consecutiveFails + 1),
                         (unsigned)BLE_MAX_RECONNECT_FAILS);
                 }
                 _connectWheel(i);
                 if (w.consecutiveFails >= BLE_MAX_RECONNECT_FAILS) {
-                    Serial.printf("[BLE] %s wheel: %u consecutive failures - "
-                        "disabling auto-reconnect. Use 'autoreconnect on' to retry.\n",
-                        w.name, (unsigned)w.consecutiveFails);
+                    LOG_ERROR(TAG_BLE, "%s wheel: %u consecutive failures - disabling auto-reconnect. Use 'autoreconnect on' to retry.",
+                        w.name,
+                        (unsigned)w.consecutiveFails);
                     _bleAutoReconnect = false;
                     return;
                 }
@@ -2470,7 +2471,7 @@ void bleSetAutoReconnect(bool enable) {
             _wheels[i].consecutiveFails = 0;
         }
     }
-    Serial.printf("[BLE] Auto-reconnect: %s\n", enable ? "ON" : "off");
+    LOG_INFO(TAG_BLE, "Auto-reconnect: %s", enable ? "ON" : "off");
 }
 
 bool bleGetAutoReconnect() {
@@ -2499,22 +2500,22 @@ void blePrintTxStats() {
     s = _txStats;
     portEXIT_CRITICAL(&_txStatsMux);
 
-    Serial.println("[TX] --- Command TX Stats ---");
-    Serial.printf("[TX] total attempts=%lu  success=%lu  fail=%lu\n",
+    LOG_INFO(TAG_TX, "--- Command TX Stats ---");
+    LOG_INFO(TAG_TX, "total attempts=%lu  success=%lu  fail=%lu",
         (unsigned long)s.totalAttempts,
         (unsigned long)s.totalSuccess,
         (unsigned long)s.totalFail);
-    Serial.printf("[TX] WRITE_REMOTE_SPEED=%lu  stop=%lu  motion=%lu\n",
+    LOG_INFO(TAG_TX, "WRITE_REMOTE_SPEED=%lu  stop=%lu  motion=%lu",
         (unsigned long)s.remoteSpeed,
         (unsigned long)s.remoteSpeedStop,
         (unsigned long)s.remoteSpeedMotion);
-    Serial.printf("[TX] WRITE_DRIVE_MODE=%lu  WRITE_ASSIST_LEVEL=%lu\n",
+    LOG_INFO(TAG_TX, "WRITE_DRIVE_MODE=%lu  WRITE_ASSIST_LEVEL=%lu",
         (unsigned long)s.driveMode,
         (unsigned long)s.assistLevel);
-    Serial.printf("[TX] drive_mode_write_fail=%lu  speed_skipped_due_mode=%lu\n",
+    LOG_INFO(TAG_TX, "drive_mode_write_fail=%lu  speed_skipped_due_mode=%lu",
         (unsigned long)s.driveModeWriteFail,
         (unsigned long)s.speedSkippedDueToMode);
-    Serial.printf("[TX] READ_SOC=%lu  READ_SW_VERSION=%lu  READ_CRUISE_VALUES=%lu  other=%lu\n",
+    LOG_INFO(TAG_TX, "READ_SOC=%lu  READ_SW_VERSION=%lu  READ_CRUISE_VALUES=%lu  other=%lu",
         (unsigned long)s.readSoc,
         (unsigned long)s.readFw,
         (unsigned long)s.readCruise,
@@ -2530,46 +2531,46 @@ void bleResetTxStats() {
 void bleSetMac(int idx, const char* mac) {
     if (idx < 0 || idx >= WHEEL_COUNT) return;
     if (!_wheelActive(idx)) {
-        if (debugFlags & DBG_BLE) {
-            Serial.printf("[BLE] bleSetMac: Skipping inactive wheel %d\n", idx);
+        if (Logger::instance().isTagEnabled(TAG_BLE)) {
+            LOG_DEBUG(TAG_BLE, "bleSetMac: Skipping inactive wheel %d", idx);
         }
         return;
     }
     if (!mac) {
-        Serial.println("[BLE] ERROR: NULL MAC address provided");
+        LOG_ERROR(TAG_BLE, "NULL MAC address provided");
         return;
     }
-    if (debugFlags & DBG_BLE) {
-        Serial.printf("[BLE] bleSetMac(%d, %s)\n", idx, mac);
+    if (Logger::instance().isTagEnabled(TAG_BLE)) {
+        LOG_DEBUG(TAG_BLE, "bleSetMac(%d, %s)", idx, mac);
     }
 
     WheelConnState_t& w = _wheels[idx];
     if (strncmp(w.mac, mac, 17) == 0) {
-        if (debugFlags & DBG_BLE) {
-            Serial.printf("[BLE] %s wheel MAC unchanged (%s)\n",
+        if (Logger::instance().isTagEnabled(TAG_BLE)) {
+            LOG_DEBUG(TAG_BLE, "%s wheel MAC unchanged (%s)",
                 w.name ? w.name : "Unknown",
                 mac);
         }
         return;
     }
 
-    if (debugFlags & DBG_BLE) {
-        Serial.printf("[BLE] Got reference to wheel struct (name=%s)\n", w.name ? w.name : "NULL");
+    if (Logger::instance().isTagEnabled(TAG_BLE)) {
+        LOG_DEBUG(TAG_BLE, "Got reference to wheel struct (name=%s)", w.name ? w.name : "NULL");
     }
 
     // Safely check and disconnect existing client
-    if (debugFlags & DBG_BLE) {
-        Serial.println("[BLE] Checking existing transport link state...");
+    if (Logger::instance().isTagEnabled(TAG_BLE)) {
+        LOG_DEBUG(TAG_BLE, "Checking existing transport link state...");
     }
     if (_transportHasOpenLink(w)) {
-        if (debugFlags & DBG_BLE) {
-            Serial.println("[BLE] Disconnecting existing link...");
+        if (Logger::instance().isTagEnabled(TAG_BLE)) {
+            LOG_DEBUG(TAG_BLE, "Disconnecting existing link...");
         }
         _transportDisconnectLink(w);
     }
     _transportClearLinkState(w, idx);
-    if (debugFlags & DBG_BLE) {
-        Serial.println("[BLE] Updating wheel state...");
+    if (Logger::instance().isTagEnabled(TAG_BLE)) {
+        LOG_DEBUG(TAG_BLE, "Updating wheel state...");
     }
     w.connected = false;
     w.protocolReady = false;
@@ -2578,55 +2579,55 @@ void bleSetMac(int idx, const char* mac) {
     w.lastTxFailMs = 0;
     strncpy(w.mac, mac, 17);
     w.mac[17] = '\0';
-    Serial.printf("[BLE] %s wheel MAC -> %s  (reconnect required)\n",
+    LOG_INFO(TAG_BLE, "%s wheel MAC -> %s  (reconnect required)",
         w.name ? w.name : "Unknown", w.mac);
 }
 
 void bleSetKey(int idx, const uint8_t* newKey) {
     if (idx < 0 || idx >= WHEEL_COUNT) return;
     if (!_wheelActive(idx)) {
-        if (debugFlags & DBG_BLE) {
-            Serial.printf("[BLE] bleSetKey: Skipping inactive wheel %d\n", idx);
+        if (Logger::instance().isTagEnabled(TAG_BLE)) {
+            LOG_DEBUG(TAG_BLE, "bleSetKey: Skipping inactive wheel %d", idx);
         }
         return;
     }
     if (!newKey) {
-        Serial.println("[BLE] ERROR: NULL key provided");
+        LOG_ERROR(TAG_BLE, "NULL key provided");
         return;
     }
-    if (debugFlags & DBG_BLE) {
-        Serial.printf("[BLE] bleSetKey(%d, [key data])\n", idx);
+    if (Logger::instance().isTagEnabled(TAG_BLE)) {
+        LOG_DEBUG(TAG_BLE, "bleSetKey(%d, [key data])", idx);
     }
 
     WheelConnState_t& w = _wheels[idx];
     if (memcmp(w.key, newKey, 16) == 0) {
-        if (debugFlags & DBG_BLE) {
-            Serial.printf("[BLE] %s wheel key unchanged\n", w.name ? w.name : "Unknown");
+        if (Logger::instance().isTagEnabled(TAG_BLE)) {
+            LOG_DEBUG(TAG_BLE, "%s wheel key unchanged", w.name ? w.name : "Unknown");
         }
         return;
     }
 
-    if (debugFlags & DBG_BLE) {
-        Serial.printf("[BLE] _wheels[%d].key address: %p\n", idx, (void*)w.key);
-        Serial.printf("[BLE] _wheels[%d].mac address: %p\n", idx, (void*)w.mac);
-        Serial.printf("[BLE] _wheels[%d].name before: %s\n", idx, w.name ? w.name : "NULL");
-        Serial.printf("[BLE] _wheels[%d].mac before: '%s' (len=%d)\n", idx, w.mac, (int)strlen(w.mac));
+    if (Logger::instance().isTagEnabled(TAG_BLE)) {
+        LOG_DEBUG(TAG_BLE, "_wheels[%d].key address: %p", idx, (void*)w.key);
+        LOG_DEBUG(TAG_BLE, "_wheels[%d].mac address: %p", idx, (void*)w.mac);
+        LOG_DEBUG(TAG_BLE, "_wheels[%d].name before: %s", idx, w.name ? w.name : "NULL");
+        LOG_DEBUG(TAG_BLE, "_wheels[%d].mac before: '%s' (len=%d)", idx, w.mac, (int)strlen(w.mac));
     }
 
     memcpy(w.key, newKey, 16);
     w.txFailStreak = 0;
     w.lastTxFailMs = 0;
 
-    if (debugFlags & DBG_BLE) {
-        Serial.printf("[BLE] _wheels[%d].name after: %s\n", idx, w.name ? w.name : "NULL");
-        Serial.printf("[BLE] _wheels[%d].mac after: '%s' (len=%d)\n", idx, w.mac, (int)strlen(w.mac));
+    if (Logger::instance().isTagEnabled(TAG_BLE)) {
+        LOG_DEBUG(TAG_BLE, "_wheels[%d].name after: %s", idx, w.name ? w.name : "NULL");
+        LOG_DEBUG(TAG_BLE, "_wheels[%d].mac after: '%s' (len=%d)", idx, w.mac, (int)strlen(w.mac));
     }
 
     if (w.name) {
-        Serial.printf("[BLE] %s wheel key updated  (reconnect required)\n", w.name);
+        LOG_INFO(TAG_BLE, "%s wheel key updated  (reconnect required)", w.name);
     }
     else {
-        Serial.printf("[BLE] Wheel %d key updated  (reconnect required)\n", idx);
+        LOG_INFO(TAG_BLE, "Wheel %d key updated  (reconnect required)", idx);
     }
 }
 
@@ -2688,48 +2689,51 @@ float bleGetDistanceKm(int idx) {
 }
 
 void blePrintWheelDetails() {
-    Serial.printf("[BLE] Wheel mode    : %s\n", WHEEL_MODE_NAME);
+    LOG_INFO(TAG_BLE, "Wheel mode    : %s", WHEEL_MODE_NAME);
     for (int i = 0; i < WHEEL_COUNT; i++) {
         WheelConnState_t& w = _wheels[i];
         if (!_wheelActive(i)) {
-            Serial.printf("[Wheel %s] INACTIVE (WHEEL_MODE = %s)\n",
-                w.name, WHEEL_MODE_NAME);
+            LOG_INFO(TAG_BLE, "[Wheel %s] INACTIVE (WHEEL_MODE = %s)",
+                w.name ? w.name : "?", WHEEL_MODE_NAME);
             continue;
         }
-        Serial.printf("[Wheel %s]\n", w.name);
-        Serial.printf("  MAC          : %s\n", w.mac);
-        Serial.printf("  Key (hex)    : ");
-        for (int b = 0; b < 16; b++) {
-            Serial.printf("%02X", w.key[b]);
-            if (b < 15) Serial.print(' ');
+        LOG_INFO(TAG_BLE, "[Wheel %s]", w.name ? w.name : "?");
+        LOG_INFO(TAG_BLE, "  MAC          : %s", w.mac);
+
+        char keyHex[3 * 16];
+        size_t off = 0;
+        for (int b = 0; b < 16 && off < sizeof(keyHex); b++) {
+            off += (size_t)snprintf(keyHex + off, sizeof(keyHex) - off,
+                (b < 15) ? "%02X " : "%02X", w.key[b]);
         }
-        Serial.println();
-        Serial.printf("  connected    : %s\n", w.connected ? "yes" : "no");
-        Serial.printf("  protocolRdy  : %s\n", w.protocolReady ? "yes" : "no");
-        Serial.printf("  failCount    : %u / %u\n", (unsigned)w.consecutiveFails,
+        LOG_INFO(TAG_BLE, "  Key (hex)    : %s", keyHex);
+
+        LOG_INFO(TAG_BLE, "  connected    : %s", w.connected ? "yes" : "no");
+        LOG_INFO(TAG_BLE, "  protocolRdy  : %s", w.protocolReady ? "yes" : "no");
+        LOG_INFO(TAG_BLE, "  failCount    : %u / %u", (unsigned)w.consecutiveFails,
             (unsigned)BLE_MAX_RECONNECT_FAILS);
-        Serial.printf("  txFailStreak : %u\n", (unsigned)w.txFailStreak);
-        Serial.printf("  driveMode    : 0x%02X\n", w.driveModeBits);
-        Serial.printf("  telegramId   : %u\n", (unsigned)w.telegramId);
+        LOG_INFO(TAG_BLE, "  txFailStreak : %u", (unsigned)w.txFailStreak);
+        LOG_INFO(TAG_BLE, "  driveMode    : 0x%02X", w.driveModeBits);
+        LOG_INFO(TAG_BLE, "  telegramId   : %u", (unsigned)w.telegramId);
         // Cached telemetry
         if (w.batteryValid) {
-            Serial.printf("  battery      : %d%%\n", (int)w.batteryPct);
+            LOG_INFO(TAG_BLE, "  battery      : %d%%", (int)w.batteryPct);
         }
         else {
-            Serial.printf("  battery      : (not yet received)\n");
+            LOG_INFO(TAG_BLE, "  battery      : (not yet received)");
         }
         if (w.fwValid) {
-            Serial.printf("  firmware     : %d.%d.%d\n", w.fwMajor, w.fwMinor, w.fwPatch);
+            LOG_INFO(TAG_BLE, "  firmware     : %d.%d.%d", w.fwMajor, w.fwMinor, w.fwPatch);
         }
         else {
-            Serial.printf("  firmware     : (not yet received)\n");
+            LOG_INFO(TAG_BLE, "  firmware     : (not yet received)");
         }
         if (w.distanceValid) {
-            Serial.printf("  distance     : %.3f km\n", w.distanceKm);
+            LOG_INFO(TAG_BLE, "  distance     : %.3f km", w.distanceKm);
         }
         else {
-            Serial.printf("  distance     : (not yet received)\n");
+            LOG_INFO(TAG_BLE, "  distance     : (not yet received)");
         }
     }
-    Serial.printf("[BLE] autoReconnect: %s\n", _bleAutoReconnect ? "ON" : "off");
+    LOG_INFO(TAG_BLE, "autoReconnect: %s", _bleAutoReconnect ? "ON" : "off");
 }
