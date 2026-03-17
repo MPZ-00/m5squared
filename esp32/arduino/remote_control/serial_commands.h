@@ -61,6 +61,7 @@
 #include "Logger.h"
 #include <esp_chip_info.h>
 #include <BLEDevice.h>
+#include <stdarg.h>
  // Note: WiFi.h is NOT included here - the WiFi stack adds ~500 kB to the binary.
  // Define ENABLE_WIFI in device_config.h and add #include <WiFi.h> in sketch
  // if WiFi status is needed in sysinfo.
@@ -468,6 +469,63 @@ static void _scApplyProfile(const char* lmac, const char* rmac,
     }
 }
 
+// Command feedback has priority: always print to serial, and mirror with a prefix-specific tag.
+static uint32_t _scCmdTagFromMsg(const char* msg) {
+    if (!msg || msg[0] != '[') return TAG_CMD;
+
+    if (strncmp(msg, "[Config]", 8) == 0) return TAG_CONFIG;
+    if (strncmp(msg, "[TX]", 4) == 0) return TAG_TX;
+    if (strncmp(msg, "[Record]", 8) == 0) return TAG_RECORD;
+    if (strncmp(msg, "[Telemetry]", 11) == 0) return TAG_TELEMETRY;
+    if (strncmp(msg, "[Battery]", 9) == 0) return TAG_TELEMETRY;
+    if (strncmp(msg, "[Sys]", 5) == 0 || strncmp(msg, "[WiFi]", 6) == 0) return TAG_SYS;
+    if (strncmp(msg, "[Log]", 5) == 0 || strncmp(msg, "[Serial]", 8) == 0) return TAG_CMD;
+    if (strncmp(msg, "[CMD]", 5) == 0) return TAG_CMD;
+
+    return TAG_CMD;
+}
+
+static void _scCmdDecorateMsg(const char* msg, char* out, size_t outSize) {
+    if (!out || outSize == 0) return;
+    if (!msg) {
+        out[0] = '\0';
+        return;
+    }
+
+    if (strncmp(msg, "[CMD]", 5) == 0) {
+        snprintf(out, outSize, "%s", msg);
+        return;
+    }
+
+    if (msg[0] == '[') {
+        snprintf(out, outSize, "[CMD]%s", msg);
+        return;
+    }
+
+    snprintf(out, outSize, "[CMD] %s", msg);
+}
+
+static void _scCmdOut(const char* msg) {
+    if (!msg) return;
+    char outBuf[320];
+    _scCmdDecorateMsg(msg, outBuf, sizeof(outBuf));
+    Serial.println(outBuf);
+    Logger::instance().logForced(LogLevel::INFO, _scCmdTagFromMsg(msg), __FILE__, __LINE__, "%s", outBuf);
+}
+
+static void _scCmdOutf(const char* fmt, ...) {
+    if (!fmt) return;
+    char buf[256];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    char outBuf[320];
+    _scCmdDecorateMsg(buf, outBuf, sizeof(outBuf));
+    Serial.println(outBuf);
+    Logger::instance().logForced(LogLevel::INFO, _scCmdTagFromMsg(buf), __FILE__, __LINE__, "%s", outBuf);
+}
+
 // ---------------------------------------------------------------------------
 // Command dispatcher
 // ---------------------------------------------------------------------------
@@ -498,11 +556,11 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
         if (strncmp(arg, "level ", 6) == 0) {
             LogLevel lvl;
             if (!_scTryParseLevel(arg + 6, &lvl)) {
-                Serial.println(F("[Log] level: use none|error|warn|info|debug|verbose"));
+                _scCmdOut("[Log] level: use none|error|warn|info|debug|verbose");
                 return;
             }
             Logger::instance().setLevel(lvl, true);
-            Serial.printf("[Log] level -> %s\n", _scLevelName(lvl));
+            _scCmdOutf("[Log] level -> %s", _scLevelName(lvl));
             return;
         }
 
@@ -515,7 +573,7 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
                 Logger::instance().setTagMask(0, true);
             }
             else {
-                Serial.println(F("[Log] all: use 'on' or 'off'"));
+                _scCmdOut("[Log] all: use 'on' or 'off'");
                 return;
             }
             _scPrintLoggerSettings();
@@ -533,7 +591,7 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
 
             uint32_t tag = 0;
             if (!_scTryGetTagByName(tagName, &tag)) {
-                Serial.printf("[Log] unknown tag: '%s'\n", tagName);
+                _scCmdOutf("[Log] unknown tag: '%s'", tagName);
                 return;
             }
             if (strcmp(p, "on") == 0) {
@@ -543,14 +601,14 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
                 Logger::instance().setTagEnabled(tag, false, true);
             }
             else {
-                Serial.println(F("[Log] tag: use 'log tag <name> <on|off>'"));
+                _scCmdOut("[Log] tag: use 'log tag <name> <on|off>'");
                 return;
             }
-            Serial.printf("[Log] tag %s -> %s\n", tagName, p);
+            _scCmdOutf("[Log] tag %s -> %s", tagName, p);
             return;
         }
 
-        Serial.println(F("[Log] usage: 'log', 'log level <...>', 'log tag <name> <on|off>', 'log all <on|off>'"));
+        _scCmdOut("[Log] usage: 'log', 'log level <...>', 'log tag <name> <on|off>', 'log all <on|off>'");
         return;
     }
 
@@ -565,12 +623,12 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
         }
         if (strcmp(arg, "off") == 0) {
             Logger::instance().setTagMask(0, true);
-            Serial.println(F("[Log] alias 'debug off' applied (preferred: 'log all off')"));
+            _scCmdOut("[Log] alias 'debug off' applied (preferred: 'log all off')");
             return;
         }
         if (strcmp(arg, "all") == 0) {
             Logger::instance().setTagMask(TAG_ALL, true);
-            Serial.println(F("[Log] alias 'debug all' applied (preferred: 'log all on')"));
+            _scCmdOut("[Log] alias 'debug all' applied (preferred: 'log all on')");
             return;
         }
 
@@ -588,14 +646,14 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
         }
 
         if (tag == 0) {
-            Serial.printf("[Log] unknown alias tag: '%s'\n", arg);
-            Serial.println(F("[Log] Use 'log' to list supported tag names."));
+            _scCmdOutf("[Log] unknown alias tag: '%s'", arg);
+            _scCmdOut("[Log] Use 'log' to list supported tag names.");
             return;
         }
 
         bool currentlyEnabled = Logger::instance().isTagEnabled(tag);
         Logger::instance().setTagEnabled(tag, !currentlyEnabled, true);
-        Serial.println(F("[Log] alias toggled tag (preferred: 'log tag <name> <on|off>')"));
+        _scCmdOut("[Log] alias toggled tag (preferred: 'log tag <name> <on|off>')");
         return;
     }
 
@@ -606,13 +664,13 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
     }
     if (strcmp(cmd, "txstats reset") == 0) {
         bleResetTxStats();
-        Serial.println(F("[TX] Counters reset"));
+        _scCmdOut("[TX] Counters reset");
         return;
     }
 
     // log show | log stop <on|off> | log stop every <N>
     if (strcmp(cmd, "log show") == 0) {
-        Serial.printf("[Log] stop=%s every=%u\n",
+        _scCmdOutf("[Log] stop=%s every=%u",
             bleGetMotorStopLogEnabled() ? "ON" : "off",
             (unsigned)bleGetMotorStopLogEvery());
         return;
@@ -621,23 +679,23 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
         const char* arg = cmd + 9;
         if (strcmp(arg, "on") == 0) {
             bleSetMotorStopLogEnabled(true);
-            Serial.printf("[Log] STOP lines enabled (every=%u)\n",
+            _scCmdOutf("[Log] STOP lines enabled (every=%u)",
                 (unsigned)bleGetMotorStopLogEvery());
             return;
         }
         if (strcmp(arg, "off") == 0) {
             bleSetMotorStopLogEnabled(false);
-            Serial.println(F("[Log] STOP lines disabled"));
+            _scCmdOut("[Log] STOP lines disabled");
             return;
         }
         if (strncmp(arg, "every ", 6) == 0) {
             int n = atoi(arg + 6);
             if (n <= 0) n = 1;
             bleSetMotorStopLogEvery((uint16_t)n);
-            Serial.printf("[Log] STOP throttle -> every %u line(s)\n", (unsigned)bleGetMotorStopLogEvery());
+            _scCmdOutf("[Log] STOP throttle -> every %u line(s)", (unsigned)bleGetMotorStopLogEvery());
             return;
         }
-        Serial.println(F("[CMD] log stop: use 'on', 'off', or 'every <N>'"));
+        _scCmdOut("[CMD] log stop: use 'on', 'off', or 'every <N>'");
         return;
     }
 
@@ -663,24 +721,24 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
     if (strncmp(cmd, "assist ", 7) == 0) {
         int lvl = atoi(cmd + 7);
         if (lvl < 0 || lvl >= ASSIST_COUNT) {
-            Serial.println(F("[CMD] assist: invalid level  0=indoor  1=outdoor  2=learning"));
+            _scCmdOut("[CMD] assist: invalid level  0=indoor  1=outdoor  2=learning");
             return;
         }
         if (*ctx.state == STATE_OPERATING) {
-            Serial.println(F("[CMD] assist: ignored - motors active, stop first"));
+            _scCmdOut("[CMD] assist: ignored - motors active, stop first");
             return;
         }
         *ctx.assistLevel = (uint8_t)lvl;
         ledSetAssistLevel(*ctx.assistLevel);
         bleSendAssistLevel(*ctx.assistLevel);
-        Serial.printf("[CMD] Assist -> %s\n", assistConfigs[*ctx.assistLevel].name);
+        _scCmdOutf("[CMD] Assist -> %s", assistConfigs[*ctx.assistLevel].name);
         return;
     }
 
     // hillhold <on|off>
     if (strncmp(cmd, "hillhold ", 9) == 0) {
         if (*ctx.state == STATE_OPERATING) {
-            Serial.println(F("[CMD] hillhold: ignored - motors active"));
+            _scCmdOut("[CMD] hillhold: ignored - motors active");
             return;
         }
         const char* arg = cmd + 9;
@@ -691,22 +749,22 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
             *ctx.hillHoldOn = false;
         }
         else {
-            Serial.println(F("[CMD] hillhold: use 'on' or 'off'"));
+            _scCmdOut("[CMD] hillhold: use 'on' or 'off'");
             return;
         }
         ledSetHillHold(*ctx.hillHoldOn);
         bleSendHillHold(*ctx.hillHoldOn);
-        Serial.printf("[CMD] HillHold -> %s\n", *ctx.hillHoldOn ? "ON" : "OFF");
+        _scCmdOutf("[CMD] HillHold -> %s", *ctx.hillHoldOn ? "ON" : "OFF");
         return;
     }
 
     // recal
     if (strcmp(cmd, "recal") == 0) {
         if (*ctx.state == STATE_OPERATING) {
-            Serial.println(F("[CMD] recal: release joystick to center before recalibrating"));
+            _scCmdOut("[CMD] recal: release joystick to center before recalibrating");
             return;
         }
-        Serial.println(F("[CMD] Recalibrating joystick center - keep joystick at rest..."));
+        _scCmdOut("[CMD] Recalibrating joystick center - keep joystick at rest...");
         ctx.fnRecalibrate();
         return;
     }
@@ -714,45 +772,45 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
     // arm - transition PAIRED -> ARMED
     if (strcmp(cmd, "arm") == 0) {
         if (!ctx.supervisor) {
-            Serial.println(F("[CMD] ERROR: supervisor not available"));
+            _scCmdOut("[CMD] ERROR: supervisor not available");
             return;
         }
         SupervisorState supState = ctx.supervisor->getState();
         if (supState != SUPERVISOR_PAIRED) {
-            Serial.printf("[CMD] arm: must be in PAIRED state (currently %s)\n",
+            _scCmdOutf("[CMD] arm: must be in PAIRED state (currently %s)",
                 supervisorStateToString(supState));
             return;
         }
         ctx.supervisor->requestArm();
-        Serial.println(F("[CMD] Armed - joystick + deadman to drive"));
+        _scCmdOut("[CMD] Armed - joystick + deadman to drive");
         return;
     }
 
     // disarm - transition ARMED/DRIVING -> PAIRED (safe stop first)
     if (strcmp(cmd, "disarm") == 0) {
         if (!ctx.supervisor) {
-            Serial.println(F("[CMD] ERROR: supervisor not available"));
+            _scCmdOut("[CMD] ERROR: supervisor not available");
             return;
         }
         SupervisorState supState = ctx.supervisor->getState();
         if (supState != SUPERVISOR_ARMED && supState != SUPERVISOR_DRIVING) {
-            Serial.printf("[CMD] disarm: must be ARMED or DRIVING (currently %s)\n",
+            _scCmdOutf("[CMD] disarm: must be ARMED or DRIVING (currently %s)",
                 supervisorStateToString(supState));
             return;
         }
         ctx.supervisor->requestDisarm();
-        Serial.println(F("[CMD] Disarmed -> PAIRED"));
+        _scCmdOut("[CMD] Disarmed -> PAIRED");
         return;
     }
 
     // stop (software e-stop -> FAILSAFE state)
     if (strcmp(cmd, "stop") == 0) {
         if (ctx.supervisor) {
-            Serial.println(F("[CMD] Emergency stop"));
+            _scCmdOut("[CMD] Emergency stop");
             ctx.supervisor->requestEmergencyStop("serial stop command");
         }
         else {
-            Serial.println(F("[CMD] ERROR: supervisor not available"));
+            _scCmdOut("[CMD] ERROR: supervisor not available");
         }
         return;
     }
@@ -760,15 +818,15 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
     // reset - exit FAILSAFE state back to CONNECTING
     if (strcmp(cmd, "reset") == 0) {
         if (!ctx.supervisor) {
-            Serial.println(F("[CMD] ERROR: supervisor not available"));
+            _scCmdOut("[CMD] ERROR: supervisor not available");
             return;
         }
         SupervisorState supState = ctx.supervisor->getState();
         if (supState != SUPERVISOR_FAILSAFE && supState != SUPERVISOR_DISCONNECTED) {
-            Serial.println(F("[CMD] reset: must be in FAILSAFE or DISCONNECTED state"));
+            _scCmdOut("[CMD] reset: must be in FAILSAFE or DISCONNECTED state");
             return;
         }
-        Serial.println(F("[CMD] Clearing failsafe, reconnecting..."));
+        _scCmdOut("[CMD] Clearing failsafe, reconnecting...");
         ctx.supervisor->requestReconnect();
         return;
     }
@@ -776,19 +834,19 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
     // reconnect - force BLE reconnect
     if (strcmp(cmd, "reconnect") == 0) {
         if (!ctx.supervisor) {
-            Serial.println(F("[CMD] ERROR: supervisor not available"));
+            _scCmdOut("[CMD] ERROR: supervisor not available");
             return;
         }
         SupervisorState supState = ctx.supervisor->getState();
         if (supState == SUPERVISOR_DRIVING) {
-            Serial.println(F("[CMD] reconnect: stop motors first"));
+            _scCmdOut("[CMD] reconnect: stop motors first");
             return;
         }
         if (*ctx.state == STATE_OFF) {
-            Serial.println(F("[CMD] reconnect: device is OFF, use 'power on' first"));
+            _scCmdOut("[CMD] reconnect: device is OFF, use 'power on' first");
             return;
         }
-        Serial.println(F("[CMD] Forcing reconnect..."));
+        _scCmdOut("[CMD] Forcing reconnect...");
         ctx.supervisor->requestReconnect();
         return;
     }
@@ -855,15 +913,15 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
     // disconnect - force-disconnect all wheels
     if (strcmp(cmd, "disconnect") == 0) {
         if (!ctx.supervisor) {
-            Serial.println(F("[CMD] ERROR: supervisor not available"));
+            _scCmdOut("[CMD] ERROR: supervisor not available");
             return;
         }
         SupervisorState supState = ctx.supervisor->getState();
         if (supState == SUPERVISOR_DRIVING) {
-            Serial.println(F("[CMD] disconnect: stop motors first ('stop' or release joystick)"));
+            _scCmdOut("[CMD] disconnect: stop motors first ('stop' or release joystick)");
             return;
         }
-        Serial.println(F("[CMD] Disconnecting all wheels..."));
+        _scCmdOut("[CMD] Disconnecting all wheels...");
         ctx.supervisor->requestDisconnect();
         return;
     }
@@ -875,7 +933,7 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
 
         if (strcmp(arg, "stop") == 0) {
             if (!bleRecordIsActive()) {
-                Serial.println(F("[CMD] record: not currently recording"));
+                _scCmdOut("[CMD] record: not currently recording");
             }
             else {
                 bleRecordStop();
@@ -900,16 +958,16 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
 
         // No sub-command: show record status
         if (bleRecordIsActive()) {
-            Serial.printf("[Record] ACTIVE  (%d entries so far, max %d)\n",
+            _scCmdOutf("[Record] ACTIVE  (%d entries so far, max %d)",
                 (int)bleRecordEntryCount(), BLE_RECORD_MAX);
         }
         else {
-            Serial.printf("[Record] idle  (%d entries captured)\n",
+            _scCmdOutf("[Record] idle  (%d entries captured)",
                 (int)bleRecordEntryCount());
-            Serial.println(F("[Record] Usage:"));
-            Serial.println(F("  record start [N]  start recording for N seconds (default 10)"));
-            Serial.println(F("  record stop       stop early"));
-            Serial.println(F("  record dump       print captured log"));
+            _scCmdOut("[Record] Usage:");
+            _scCmdOut("  record start [N]  start recording for N seconds (default 10)");
+            _scCmdOut("  record stop       stop early");
+            _scCmdOut("  record dump       print captured log");
         }
         return;
     }
@@ -919,24 +977,24 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
         const char* arg = cmd + 6;
         if (strcmp(arg, "off") == 0) {
             if (*ctx.state == STATE_OFF) {
-                Serial.println(F("[CMD] power: already off"));
+                _scCmdOut("[CMD] power: already off");
                 return;
             }
-            Serial.println(F("[CMD] Turning OFF (entering deep sleep)..."));
+            _scCmdOut("[CMD] Turning OFF (entering deep sleep)...");
             ctx.fnEnterOff();  // Never returns - enters deep sleep
         }
         else if (strcmp(arg, "on") == 0) {
             // Deep sleep means device reboots on wake, so this command only
             // makes sense during development/testing when deep sleep is disabled
             if (*ctx.state != STATE_OFF) {
-                Serial.println(F("[CMD] power: already on"));
+                _scCmdOut("[CMD] power: already on");
                 return;
             }
-            Serial.println(F("[CMD] Note: Device uses deep sleep. Power button causes reboot."));
-            Serial.println(F("[CMD] This command only works if deep sleep is disabled."));
+            _scCmdOut("[CMD] Note: Device uses deep sleep. Power button causes reboot.");
+            _scCmdOut("[CMD] This command only works if deep sleep is disabled.");
         }
         else {
-            Serial.println(F("[CMD] power: use 'on' or 'off'"));
+            _scCmdOut("[CMD] power: use 'on' or 'off'");
         }
         return;
     }
@@ -945,7 +1003,7 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
     // battery
     if (strcmp(cmd, "battery") == 0) {
         if (ctx.batteryPct) {
-            Serial.printf("[Battery] %d %%\n", *ctx.batteryPct);
+            _scCmdOutf("[Battery] %d %%", *ctx.batteryPct);
         }
         return;
     }
@@ -973,7 +1031,7 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
             bleSetAutoReconnect(false);
         }
         else {
-            Serial.println(F("[CMD] autoreconnect: use 'on' or 'off'"));
+            _scCmdOut("[CMD] autoreconnect: use 'on' or 'off'");
         }
         return;
     }
@@ -985,23 +1043,23 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
         if (strncmp(rest, "left ", 5) == 0) { idx = WHEEL_LEFT;  rest += 5; }
         else if (strncmp(rest, "right ", 6) == 0) { idx = WHEEL_RIGHT; rest += 6; }
         if (idx < 0) {
-            Serial.println(F("[CMD] setmac: setmac left <MAC>  or  setmac right <MAC>"));
+            _scCmdOut("[CMD] setmac: setmac left <MAC>  or  setmac right <MAC>");
             return;
         }
         if (strlen(rest) != 17) {
-            Serial.println(F("[CMD] setmac: MAC must be XX:XX:XX:XX:XX:XX (17 chars)"));
+            _scCmdOut("[CMD] setmac: MAC must be XX:XX:XX:XX:XX:XX (17 chars)");
             return;
         }
         if (*ctx.state == STATE_OPERATING) {
-            Serial.println(F("[CMD] setmac: stop motors first"));
+            _scCmdOut("[CMD] setmac: stop motors first");
             return;
         }
         bleSetMac(idx, rest);
         if (nvsSaveMac(idx, rest)) {
-            Serial.println(F("[CMD] setmac: saved to NVS (survives reboot)"));
+            _scCmdOut("[CMD] setmac: saved to NVS (survives reboot)");
         }
         else {
-            Serial.println(F("[CMD] setmac: WARNING - NVS save failed; change is runtime-only"));
+            _scCmdOut("[CMD] setmac: WARNING - NVS save failed; change is runtime-only");
         }
         return;
     }
@@ -1013,20 +1071,20 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
         if (strncmp(rest, "left ", 5) == 0) { idx = WHEEL_LEFT;  rest += 5; }
         else if (strncmp(rest, "right ", 6) == 0) { idx = WHEEL_RIGHT; rest += 6; }
         if (idx < 0) {
-            Serial.println(F("[CMD] setkey: setkey left <32hex>  or  setkey right <32hex>"));
+            _scCmdOut("[CMD] setkey: setkey left <32hex>  or  setkey right <32hex>");
             return;
         }
         uint8_t newKey[16];
         if (!_scParseHex16(rest, newKey)) {
-            Serial.println(F("[CMD] setkey: key must be exactly 32 hex chars, no spaces/colons"));
+            _scCmdOut("[CMD] setkey: key must be exactly 32 hex chars, no spaces/colons");
             return;
         }
         bleSetKey(idx, newKey);
         if (nvsSaveKey(idx, newKey)) {
-            Serial.println(F("[CMD] setkey: saved to NVS (survives reboot)"));
+            _scCmdOut("[CMD] setkey: saved to NVS (survives reboot)");
         }
         else {
-            Serial.println(F("[CMD] setkey: WARNING - NVS save failed; change is runtime-only"));
+            _scCmdOut("[CMD] setkey: WARNING - NVS save failed; change is runtime-only");
         }
         return;
     }
@@ -1037,7 +1095,7 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
         while (*arg == ' ') arg++;
         if (strcmp(arg, "show") == 0 || *arg == '\0') {
             nvsPrintAll();
-            Serial.printf("[Config] Profile availability: env=%s, default=YES\n",
+            _scCmdOutf("[Config] Profile availability: env=%s, default=YES",
                 _scProfileEnvAvailable ? "YES" : "no");
         }
         else if (strncmp(arg, "profile ", 8) == 0) {
@@ -1045,14 +1103,14 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
             while (*profile == ' ') profile++;
 
             if (*ctx.state == STATE_OPERATING) {
-                Serial.println(F("[Config] profile: stop motors first"));
+                _scCmdOut("[Config] profile: stop motors first");
                 return;
             }
 
             if (strcmp(profile, "env") == 0) {
                 if (!_scProfileEnvAvailable) {
-                    Serial.println(F("[Config] Profile 'env' is not available in this build."));
-                    Serial.println(F("[Config] Provide M25_* values in .env and rebuild."));
+                    _scCmdOut("[Config] Profile 'env' is not available in this build.");
+                    _scCmdOut("[Config] Provide M25_* values in .env and rebuild.");
                     return;
                 }
 
@@ -1069,12 +1127,12 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
                 );
 
                 if (ok) {
-                    Serial.println(F("[Config] Profile 'env': saved to NVS and applied."));
+                    _scCmdOut("[Config] Profile 'env': saved to NVS and applied.");
                 }
                 else {
-                    Serial.println(F("[Config] Profile 'env': applied, but NVS save failed (runtime-only)."));
+                    _scCmdOut("[Config] Profile 'env': applied, but NVS save failed (runtime-only).");
                 }
-                Serial.println(F("[Config] Reconnect requested."));
+                _scCmdOut("[Config] Reconnect requested.");
             }
             else if (strcmp(profile, "default") == 0) {
                 nvsClearAll();
@@ -1083,33 +1141,33 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
                     _scProfileDefaultLeftKey, _scProfileDefaultRightKey,
                     ctx
                 );
-                Serial.println(F("[Config] Profile 'default': NVS cleared, build defaults applied."));
-                Serial.println(F("[Config] Reconnect requested."));
+                _scCmdOut("[Config] Profile 'default': NVS cleared, build defaults applied.");
+                _scCmdOut("[Config] Reconnect requested.");
             }
             else {
-                Serial.println(F("[CMD] config profile: use 'env' or 'default'"));
+                _scCmdOut("[CMD] config profile: use 'env' or 'default'");
             }
         }
         else if (strcmp(arg, "reset") == 0) {
             nvsClearAll();
-            Serial.println(F("[Config] NVS cleared. Build defaults active on next boot."));
-            Serial.println(F("[Config] Restart to apply ('restart' command)."));
+            _scCmdOut("[Config] NVS cleared. Build defaults active on next boot.");
+            _scCmdOut("[Config] Restart to apply ('restart' command).");
         }
         else {
-            Serial.println(F("[CMD] config: use 'config show', 'config reset', or 'config profile <env|default>'"));
+            _scCmdOut("[CMD] config: use 'config show', 'config reset', or 'config profile <env|default>'");
         }
         return;
     }
 
     // restart
     if (strcmp(cmd, "restart") == 0) {
-        Serial.println(F("[CMD] Restarting ESP32..."));
+        _scCmdOut("[CMD] Restarting ESP32...");
         delay(200);
         ESP.restart();
         return;
     }
 
-    Serial.printf("[CMD] Unknown: '%s'  (type 'help')\n", cmd);
+    _scCmdOutf("[CMD] Unknown: '%s'  (type 'help')", cmd);
 }
 
 // ---------------------------------------------------------------------------
@@ -1125,7 +1183,7 @@ static uint32_t _scLastJsMs = 0;
 /*  Call once at the end of setup().  Prints the ready banner. */
 inline void serialInit(const SerialContext& ctx) {
     (void)ctx;
-    Serial.println(F("[Serial] Ready - type 'help' for commands"));
+    _scCmdOut("[Serial] Ready - type 'help' for commands");
 }
 
 /*  Call every loop() iteration.  Handles input parsing and live output. */
@@ -1150,7 +1208,7 @@ inline void serialTick(const SerialContext& ctx) {
                 }
 
                 if (*start != '\0') {
-                    Serial.printf("> %s\n", start);   // echo
+                    _scCmdOutf("> %s", start);   // echo
                     _scDispatch(start, ctx);
                 }
                 _scBufLen = 0;
