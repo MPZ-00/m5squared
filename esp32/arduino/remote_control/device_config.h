@@ -237,23 +237,6 @@ enum SystemState : uint8_t {
 };
 
 // ---------------------------------------------------------------------------
-// Debug output flags (check these before printing debug information)
-// Defined here for use throughout the codebase, actual variable in serial_commands.h
-// ---------------------------------------------------------------------------
-#define DBG_JS         0x01   // live joystick stream (~5 Hz)
-#define DBG_MOTOR      0x02   // motor command on every 20 Hz tick
-#define DBG_HEARTBEAT  0x04   // loop heartbeat every 5 seconds
-#define DBG_BLE        0x08   // BLE connection events and errors
-#define DBG_BUTTONS    0x10   // button press/release events
-#define DBG_STATE      0x20   // state transitions (already logged, adds detail)
-#define DBG_TELEMETRY  0x40   // BLE telemetry responses (battery, firmware, odometer)
-#define DBG_PROTO      0x80   // raw BLE frames as hex (verbose, lowest-level debug)
-#define DBG_BT_AUTH    0x100  // RFCOMM/BT Classic auth and pairing events
-
-// Global debug flags variable (defined in serial_commands.h)
-extern volatile uint16_t debugFlags;
-
-// ---------------------------------------------------------------------------
 // Arm mode
 // When AUTO_ARM_ON_CONNECT is defined, the supervisor transitions from PAIRED
 // to ARMED automatically as soon as BLE connection is established.

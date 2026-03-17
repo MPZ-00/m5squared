@@ -44,9 +44,6 @@
 #include <esp_system.h>     // esp_fill_random()
 #include <stddef.h>         // offsetof()
 
-// External debug flags (defined in serial_commands.h)
-extern volatile uint16_t debugFlags;
-
 // ---------------------------------------------------------------------------
 // M25 SPP Service / Characteristic UUIDs (m25_bluetooth.py)
 // ---------------------------------------------------------------------------
@@ -445,7 +442,7 @@ bool bleSendStop();
 bool bleSendMotorCommand(float leftPercent, float rightPercent);
 
 // Motor debug-log filtering for STOP spam control.
-// When enabled, STOP logs are emitted every Nth STOP per wheel while DBG_MOTOR is on.
+// When enabled, STOP logs are emitted every Nth STOP per wheel while motor logging is enabled.
 void bleSetMotorStopLogEnabled(bool enable);
 bool bleGetMotorStopLogEnabled();
 void bleSetMotorStopLogEvery(uint16_t every);

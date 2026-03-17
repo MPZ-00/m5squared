@@ -37,10 +37,10 @@ static SystemState sysState = STATE_BOOT;
 // ---------------------------------------------------------------------------
 // Persistent control state
 // ---------------------------------------------------------------------------
-static uint8_t assistLevel  = ASSIST_INDOOR;   // boot default: indoor
-static bool    hillHoldOn   = false;
+static uint8_t assistLevel = ASSIST_INDOOR;   // boot default: indoor
+static bool    hillHoldOn = false;
 #ifdef ENABLE_BATTERY_MONITOR
-static int     batteryPct   = 100;
+static int     batteryPct = 100;
 #endif
 
 static uint32_t lastBleTickMs = 0;
@@ -66,54 +66,56 @@ void supervisorNotifyConnectionChange() {
 }
 
 static void onSupervisorStateChange(SupervisorState oldState, SupervisorState newState) {
-    if (debugFlags & DBG_STATE) {
-        const char* newName = (newState == SUPERVISOR_DISCONNECTED) ? "DISCONNECTED" :
-                              (newState == SUPERVISOR_CONNECTING) ? "CONNECTING" :
-                              (newState == SUPERVISOR_PAIRED) ? "PAIRED" :
-                              (newState == SUPERVISOR_ARMED) ? "ARMED" :
-                              (newState == SUPERVISOR_DRIVING) ? "DRIVING" :
-                              (newState == SUPERVISOR_FAILSAFE) ? "FAILSAFE" : "?";
-        Serial.printf("[Supervisor] State change: %s\n", newName);
-    }
-    
+    (void)oldState;
+    const char* newName = (newState == SUPERVISOR_DISCONNECTED) ? "DISCONNECTED" :
+        (newState == SUPERVISOR_CONNECTING) ? "CONNECTING" :
+        (newState == SUPERVISOR_PAIRED) ? "PAIRED" :
+        (newState == SUPERVISOR_ARMED) ? "ARMED" :
+        (newState == SUPERVISOR_DRIVING) ? "DRIVING" :
+        (newState == SUPERVISOR_FAILSAFE) ? "FAILSAFE" : "?";
+    LOG_DEBUG(TAG_SUPERVISOR, "State change: %s", newName);
+
     // Update legacy sysState for serial commands compatibility
     if (newState == SUPERVISOR_DISCONNECTED || newState == SUPERVISOR_CONNECTING) {
         sysState = STATE_CONNECTING;
-    } else if (newState == SUPERVISOR_PAIRED) {
+    }
+    else if (newState == SUPERVISOR_PAIRED) {
         sysState = STATE_READY;
-    } else if (newState == SUPERVISOR_ARMED || newState == SUPERVISOR_DRIVING) {
+    }
+    else if (newState == SUPERVISOR_ARMED || newState == SUPERVISOR_DRIVING) {
         sysState = STATE_OPERATING;
-    } else if (newState == SUPERVISOR_FAILSAFE) {
+    }
+    else if (newState == SUPERVISOR_FAILSAFE) {
         sysState = STATE_ERROR;
     }
-    
+
     // LED and buzzer feedback for state transitions
     switch (newState) {
-        case SUPERVISOR_DISCONNECTED:
-            ledSetStatus(LED_OFF);
-            break;
-            
-        case SUPERVISOR_CONNECTING:
-            ledSetStatus(LED_BLINK_SLOW);
-            break;
-            
-        case SUPERVISOR_PAIRED:
-            ledSetStatus(LED_OFF);
-            buzzerPlay(BUZZ_CONFIRM);
-            break;
-            
-        case SUPERVISOR_ARMED:
-            ledSetStatus(LED_OFF);
-            break;
-            
-        case SUPERVISOR_DRIVING:
-            ledSetStatus(LED_OFF);
-            break;
-            
-        case SUPERVISOR_FAILSAFE:
-            ledSetStatus(LED_BLINK_FAST);
-            buzzerPlay(BUZZ_ERROR);
-            break;
+    case SUPERVISOR_DISCONNECTED:
+        ledSetStatus(LED_OFF);
+        break;
+
+    case SUPERVISOR_CONNECTING:
+        ledSetStatus(LED_BLINK_SLOW);
+        break;
+
+    case SUPERVISOR_PAIRED:
+        ledSetStatus(LED_OFF);
+        buzzerPlay(BUZZ_CONFIRM);
+        break;
+
+    case SUPERVISOR_ARMED:
+        ledSetStatus(LED_OFF);
+        break;
+
+    case SUPERVISOR_DRIVING:
+        ledSetStatus(LED_OFF);
+        break;
+
+    case SUPERVISOR_FAILSAFE:
+        ledSetStatus(LED_BLINK_FAST);
+        buzzerPlay(BUZZ_ERROR);
+        break;
     }
 }
 
@@ -125,7 +127,7 @@ static int readBatteryPct() {
     int pct = (int)(
         (float)(raw - BATT_ADC_EMPTY) * 100.0f
         / (float)(BATT_ADC_FULL - BATT_ADC_EMPTY)
-    );
+        );
     if (pct < 0)   pct = 0;
     if (pct > 100) pct = 100;
     return pct;
@@ -138,7 +140,7 @@ static void enterOff() {
     sysState = STATE_OFF;
     supervisor.requestDisconnect();
     buzzerPlay(BUZZ_POWER_OFF);
-    
+
     // Turn off all LEDs
     ledSetStatus(LED_OFF);
     ledSetBleMode(LED_OFF);
@@ -146,40 +148,40 @@ static void enterOff() {
     ledSetHillHold(false);
     ledSetAssistLevel(ASSIST_INDOOR);  // shows off
     ledTick();  // Apply LED changes immediately
-    
-    Serial.println("[State] -> OFF  (entering deep sleep)");
-    Serial.println("[Power] Press power button to wake up");
+
+    LOG_INFO(TAG_POWER, "-> OFF (entering deep sleep)");
+    LOG_INFO(TAG_POWER, "Press power button to wake up");
     Serial.flush();  // Wait for serial output to complete
-    
+
     // Wait for buzzer pattern to complete before sleep
     while (buzzerIsActive()) {
         buzzerTick();
         delay(10);
     }
-    
+
     delay(100);
-    
+
     esp_sleep_enable_ext0_wakeup((gpio_num_t)BTN_POWER_PIN, 0);
-    
-    Serial.println("[Power] Entering deep sleep...");
+
+    LOG_INFO(TAG_POWER, "Entering deep sleep...");
     Serial.flush();
     delay(50);
-    
+
     esp_deep_sleep_start();
 }
 
 static bool powerOnSafetyCheck() {
 #ifdef NO_JOYSTICK
-    Serial.println("[Safety] NO_JOYSTICK: press E-stop to confirm, or send 'confirm' via serial");
+    LOG_INFO(TAG_SAFETY, "NO_JOYSTICK: press E-stop to confirm, or send 'confirm' via serial");
 #else
-    Serial.println("[Safety] Power-on check: center joystick and hold for 5 seconds");
-    Serial.println("[Safety] (Send 'confirm' via serial or press E-stop to skip)");
+    LOG_INFO(TAG_SAFETY, "Power-on check: center joystick and hold for 5 seconds");
+    LOG_INFO(TAG_SAFETY, "(Send 'confirm' via serial or press E-stop to skip)");
 #endif
 
     uint32_t centeredSince = 0;
-    bool     centered      = false;
+    bool     centered = false;
     char     scBuf[16];
-    uint8_t  scLen         = 0;
+    uint8_t  scLen = 0;
 
     while (true) {
         buttonsTick();
@@ -191,11 +193,12 @@ static bool powerOnSafetyCheck() {
             if (c == '\n') {
                 scBuf[scLen] = '\0';
                 if (strcmp(scBuf, "confirm") == 0 || strcmp(scBuf, "skip") == 0) {
-                    Serial.println("[Safety] Check BYPASSED via serial");
+                    LOG_WARN(TAG_SAFETY, "Check BYPASSED via serial");
                     return true;
                 }
                 scLen = 0;
-            } else if (scLen < (uint8_t)(sizeof(scBuf) - 1)) {
+            }
+            else if (scLen < (uint8_t)(sizeof(scBuf) - 1)) {
                 scBuf[scLen++] = c;
             }
         }
@@ -203,29 +206,30 @@ static bool powerOnSafetyCheck() {
 #ifndef NO_JOYSTICK
         if (js.inDeadzone) {
             if (!centered) {
-                centered      = true;
+                centered = true;
                 centeredSince = millis();
-                Serial.println("[Safety] Joystick centered - hold for 5 seconds");
+                LOG_INFO(TAG_SAFETY, "Joystick centered - hold for 5 seconds");
             }
-        } else {
+        }
+        else {
             if (centered) {
                 centered = false;
-                Serial.println("[Safety] Joystick off-center, re-center and hold");
+                LOG_WARN(TAG_SAFETY, "Joystick off-center, re-center and hold");
             }
         }
-        
+
         if (centered && ((millis() - centeredSince) >= 5000)) {
-            Serial.println("[Safety] Check PASSED (auto-confirmed)");
+            LOG_INFO(TAG_SAFETY, "Check PASSED (auto-confirmed)");
             return true;
         }
-        
+
         if (btnEstop.wasPressed()) {
-            Serial.println("[Safety] Check PASSED (E-stop pressed)");
+            LOG_INFO(TAG_SAFETY, "Check PASSED (E-stop pressed)");
             return true;
         }
 #else
         if (btnEstop.wasPressed()) {
-            Serial.println("[Safety] Check PASSED (no-joystick mode)");
+            LOG_INFO(TAG_SAFETY, "Check PASSED (no-joystick mode)");
             return true;
         }
 #endif
@@ -245,7 +249,7 @@ static SerialContext _serialCtx = {
     enterOff,
     joystickRecalibrate,
 #ifdef ENABLE_BATTERY_MONITOR
-    &batteryPct,
+    & batteryPct,
 #endif
 };
 
@@ -253,24 +257,24 @@ void setup() {
     Serial.begin(115200);
     delay(200);
     Logger::instance().begin(LogLevel::DEBUG, TAG_ALL);
-    Serial.println("\n\n[Boot] M25 Remote Control starting...");
-    
+    LOG_INFO(TAG_BOOT, "M25 Remote Control starting...");
+
     // Check wake-up reason
     esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
-    switch(wakeup_reason) {
-        case ESP_SLEEP_WAKEUP_EXT0:
-            Serial.println("[Boot] Wake-up from deep sleep via power button");
-            break;
-        case ESP_SLEEP_WAKEUP_UNDEFINED:
-        default:
-            Serial.println("[Boot] Cold boot or reset");
-            break;
+    switch (wakeup_reason) {
+    case ESP_SLEEP_WAKEUP_EXT0:
+        LOG_INFO(TAG_BOOT, "Wake-up from deep sleep via power button");
+        break;
+    case ESP_SLEEP_WAKEUP_UNDEFINED:
+    default:
+        LOG_INFO(TAG_BOOT, "Cold boot or reset");
+        break;
     }
 
     // Peripheral init
     ledInit();
     ledStartupTest();
-    
+
     buzzerInit();
     buzzerPlay(BUZZ_POWER_ON);
 
@@ -281,7 +285,7 @@ void setup() {
     analogSetPinAttenuation(BATTERY_ADC_PIN, ADC_11db);
     batteryPct = readBatteryPct();
     ledSetBattery(batteryPct);
-    Serial.printf("[Boot] Battery: %d %%\n", batteryPct);
+    LOG_INFO(TAG_BOOT, "Battery: %d %%", batteryPct);
 #endif
 
     sysState = STATE_BOOT;
@@ -294,35 +298,35 @@ void setup() {
 
     char    leftMac[18], rightMac[18];
     uint8_t leftKey[16], rightKey[16];
-    nvsLoadMac(WHEEL_LEFT,  leftMac,  sizeof(leftMac));
+    nvsLoadMac(WHEEL_LEFT, leftMac, sizeof(leftMac));
     nvsLoadMac(WHEEL_RIGHT, rightMac, sizeof(rightMac));
-    nvsLoadKey(WHEEL_LEFT,  leftKey);
+    nvsLoadKey(WHEEL_LEFT, leftKey);
     nvsLoadKey(WHEEL_RIGHT, rightKey);
-    Serial.printf("[Boot] Left  wheel: %s\n", leftMac);
-    Serial.printf("[Boot] Right wheel: %s\n", rightMac);
+    LOG_INFO(TAG_BOOT, "Left  wheel: %s", leftMac);
+    LOG_INFO(TAG_BOOT, "Right wheel: %s", rightMac);
     supervisor.begin();
     supervisor.addStateCallback(onSupervisorStateChange);
     supervisor.requestConnect(leftMac, rightMac, leftKey, rightKey);
-    
+
     serialInit(_serialCtx);
 }
 
 void loop() {
     uint32_t now = millis();
     loopCounter++;
-    
-    SupervisorState supState = supervisor.getState();
-    
-    const char* stateName = (sysState == STATE_BOOT) ? "BOOT" :
-                       (sysState == STATE_CONNECTING) ? "CONNECTING" :
-                       (sysState == STATE_READY) ? "READY" :
-                       (sysState == STATE_OPERATING) ? "OPERATING" :
-                       (sysState == STATE_ERROR) ? "ERROR" :
-                       (sysState == STATE_OFF) ? "OFF" : "?";
 
-    if (now - lastHeartbeatMs >= 5000 && debugFlags & DBG_HEARTBEAT) {
+    SupervisorState supState = supervisor.getState();
+
+    const char* stateName = (sysState == STATE_BOOT) ? "BOOT" :
+        (sysState == STATE_CONNECTING) ? "CONNECTING" :
+        (sysState == STATE_READY) ? "READY" :
+        (sysState == STATE_OPERATING) ? "OPERATING" :
+        (sysState == STATE_ERROR) ? "ERROR" :
+        (sysState == STATE_OFF) ? "OFF" : "?";
+
+    if (now - lastHeartbeatMs >= 5000) {
         lastHeartbeatMs = now;
-        Serial.printf("[Heartbeat] loop running, count=%u  state=%s\n", loopCounter, stateName);
+        LOG_DEBUG(TAG_SUPERVISOR, "loop heartbeat count=%u state=%s", loopCounter, stateName);
     }
 
     serialTick(_serialCtx);
@@ -340,45 +344,44 @@ void loop() {
 #endif
     control.mode = js.inDeadzone ? DRIVE_MODE_STOP : DRIVE_MODE_NORMAL;
     control.timestamp = now;
-    
-    bool estopPressed    = btnEstop.wasPressed();
-    bool hillHoldPressed = btnHillHold.wasPressed();
-    bool assistPressed   = btnAssist.wasPressed();
-    bool powerPressed    = btnPower.wasPressed();
 
-    if (debugFlags & DBG_BUTTONS) {
-        if (estopPressed) {
-            Serial.printf("[Button] E-STOP pressed  (state=%s)\n", stateName);
-        }
-        if (hillHoldPressed) {
-            Serial.printf("[Button] HILL-HOLD pressed  (state=%s)\n", stateName);
-        }
-        if (assistPressed) {
-            Serial.printf("[Button] ASSIST pressed  (state=%s)\n", stateName);
-        }
-        if (powerPressed) {
-            Serial.printf("[Button] POWER pressed  (state=%s)\n", stateName);
-        }
+    bool estopPressed = btnEstop.wasPressed();
+    bool hillHoldPressed = btnHillHold.wasPressed();
+    bool assistPressed = btnAssist.wasPressed();
+    bool powerPressed = btnPower.wasPressed();
+
+    if (estopPressed) {
+        LOG_DEBUG(TAG_BUTTON, "E-STOP pressed (state=%s)", stateName);
+    }
+    if (hillHoldPressed) {
+        LOG_DEBUG(TAG_BUTTON, "HILL-HOLD pressed (state=%s)", stateName);
+    }
+    if (assistPressed) {
+        LOG_DEBUG(TAG_BUTTON, "ASSIST pressed (state=%s)", stateName);
+    }
+    if (powerPressed) {
+        LOG_DEBUG(TAG_BUTTON, "POWER pressed (state=%s)", stateName);
     }
 
     if (powerPressed && sysState != STATE_BOOT) {
         if (sysState == STATE_OFF) {
-            Serial.println("[Power] Turning ON...");
+            LOG_INFO(TAG_POWER, "Turning ON...");
             char    leftMac[18], rightMac[18];
             uint8_t leftKey[16], rightKey[16];
-            nvsLoadMac(WHEEL_LEFT,  leftMac,  sizeof(leftMac));
+            nvsLoadMac(WHEEL_LEFT, leftMac, sizeof(leftMac));
             nvsLoadMac(WHEEL_RIGHT, rightMac, sizeof(rightMac));
-            nvsLoadKey(WHEEL_LEFT,  leftKey);
+            nvsLoadKey(WHEEL_LEFT, leftKey);
             nvsLoadKey(WHEEL_RIGHT, rightKey);
             bleInit("M25-Remote");
             ledSetAssistLevel(assistLevel);
             ledSetHillHold(hillHoldOn);
-            #ifdef ENABLE_BATTERY_MONITOR
+#ifdef ENABLE_BATTERY_MONITOR
             ledSetBattery(batteryPct);
-            #endif
+#endif
             supervisor.requestConnect(leftMac, rightMac, leftKey, rightKey);
-        } else {
-            Serial.println("[Power] Turning OFF...");
+        }
+        else {
+            LOG_INFO(TAG_POWER, "Turning OFF...");
             enterOff();
         }
         ledTick();
@@ -387,39 +390,36 @@ void loop() {
 
     if (estopPressed) {
         if (supState == SUPERVISOR_FAILSAFE) {
-            if (debugFlags & DBG_STATE) {
-                Serial.println("[E-Stop] Reset: requesting reconnect...");
-            }
+            LOG_WARN(TAG_SAFETY, "E-Stop reset: requesting reconnect...");
             supervisor.requestReconnect();
-        } else {
-            if (debugFlags & DBG_STATE) {
-                Serial.println("[E-Stop] Emergency stop");
-            }
+        }
+        else {
+            LOG_FATAL(TAG_SAFETY, "E-Stop emergency stop");
             supervisor.requestEmergencyStop("E-Stop button pressed");
         }
     }
 
     if (hillHoldPressed && assistPressed) {
-        if (debugFlags & DBG_BUTTONS) {
-            Serial.println("[Button] Dual press: forcing reconnect...");
-        }
+        LOG_WARN(TAG_BUTTON, "Dual press: forcing reconnect...");
         supervisor.requestReconnect();
         ledTick();
         return;
     }
-    
+
     if (hillHoldPressed) {
         if (supState == SUPERVISOR_PAIRED || supState == SUPERVISOR_ARMED) {
             hillHoldOn = !hillHoldOn;
             ledSetHillHold(hillHoldOn);
             buzzerPlay(BUZZ_BUTTON);
             bleSendHillHold(hillHoldOn);
-            Serial.printf("[HillHold] %s\n", hillHoldOn ? "ON" : "OFF");
-        } else if (supState == SUPERVISOR_DRIVING) {
+            LOG_INFO(TAG_BUTTON, "HillHold %s", hillHoldOn ? "ON" : "OFF");
+        }
+        else if (supState == SUPERVISOR_DRIVING) {
             buzzerPlay(BUZZ_WARNING);
-            Serial.println("[HillHold] Ignored - motors active");
-        } else {
-            Serial.println("[HillHold] Ignored - not connected");
+            LOG_WARN(TAG_BUTTON, "HillHold ignored - motors active");
+        }
+        else {
+            LOG_WARN(TAG_BUTTON, "HillHold ignored - not connected");
         }
     }
 
@@ -429,14 +429,16 @@ void loop() {
             ledSetAssistLevel(assistLevel);
             buzzerPlay(BUZZ_CONFIRM);
             bleSendAssistLevel(assistLevel);
-            Serial.printf("[Assist] -> %s  (Vmax fwd %d %%)\n",
-                          assistConfigs[assistLevel].name,
-                          assistConfigs[assistLevel].vmaxForward);
-        } else if (supState == SUPERVISOR_DRIVING) {
+            LOG_INFO(TAG_BUTTON, "Assist -> %s (Vmax fwd %d %%)",
+                assistConfigs[assistLevel].name,
+                assistConfigs[assistLevel].vmaxForward);
+        }
+        else if (supState == SUPERVISOR_DRIVING) {
             buzzerPlay(BUZZ_WARNING);
-            Serial.println("[Assist] Ignored - motors active, stop first");
-        } else {
-            Serial.println("[Assist] Ignored - not connected");
+            LOG_WARN(TAG_BUTTON, "Assist ignored - motors active, stop first");
+        }
+        else {
+            LOG_WARN(TAG_BUTTON, "Assist ignored - not connected");
         }
     }
 
@@ -446,12 +448,12 @@ void loop() {
 #ifdef ENABLE_BATTERY_MONITOR
     if (now - lastBatteryMs >= BATTERY_READ_INTERVAL_MS && sysState != STATE_OFF) {
         lastBatteryMs = now;
-        batteryPct    = readBatteryPct();
+        batteryPct = readBatteryPct();
         ledSetBattery(batteryPct);
-        Serial.printf("[Battery] %d %%\n", batteryPct);
-        
+        LOG_INFO(TAG_TELEMETRY, "Battery %d %%", batteryPct);
+
         if (batteryPct <= BATT_AUTO_OFF_PCT && sysState != STATE_ERROR && sysState != STATE_OFF) {
-            Serial.println("[Battery] CRITICAL - forcing disconnect");
+            LOG_FATAL(TAG_POWER, "Battery critical - forcing disconnect");
             supervisor.requestDisconnect();
             buzzerPlay(BUZZ_ERROR);
         }

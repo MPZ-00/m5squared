@@ -37,7 +37,6 @@
  * Logger tag controls
  * -------------------
  *   joystick, motor, heartbeat, ble, button, state, telemetry, tx, auth
- *   debugFlags remains as a temporary compatibility mirror for non-migrated code.
  *
  * Integration in remote_control.ino
  * ----------------------------------
@@ -86,45 +85,24 @@
 #define ENV_ENCRYPTION_KEY_RIGHT ENCRYPTION_KEY_RIGHT
 #endif
 
-// ---------------------------------------------------------------------------
-// Legacy debug flag bridge (temporary while non-migrated modules still read debugFlags)
-// ---------------------------------------------------------------------------
-// volatile: read/written from two cores (Core1 = serial handler, Core0 = motor task).
-volatile uint16_t debugFlags = 0;
-
 struct LogTagInfo {
     uint32_t    tag;
-    uint16_t    legacyMask;
     const char* name;
     const char* description;
 };
 
 static const LogTagInfo _logTagTable[] = {
-    { TAG_JOYSTICK,  DBG_JS,        "joystick",  "Joystick values (~5 Hz)" },
-    { TAG_MOTOR,     DBG_MOTOR,     "motor",     "Motor commands (20 Hz)" },
-    { TAG_SUPERVISOR,DBG_HEARTBEAT, "heartbeat", "Loop/supervisor heartbeat" },
-    { TAG_BLE,       DBG_BLE,       "ble",       "BLE events & errors" },
-    { TAG_BUTTON,    DBG_BUTTONS,   "button",    "Button press events" },
-    { TAG_SUPERVISOR,DBG_STATE,     "state",     "State transition details" },
-    { TAG_TELEMETRY, DBG_TELEMETRY, "telemetry", "BLE telemetry responses" },
-    { TAG_TX,        DBG_PROTO,     "tx",        "Raw BLE TX/RX hex dumps" },
-    { TAG_AUTH,      DBG_BT_AUTH,   "auth",      "RFCOMM auth/pairing and SPP events" },
+    { TAG_JOYSTICK,   "joystick",  "Joystick values (~5 Hz)" },
+    { TAG_MOTOR,      "motor",     "Motor commands (20 Hz)" },
+    { TAG_SUPERVISOR, "heartbeat", "Loop/supervisor heartbeat" },
+    { TAG_BLE,        "ble",       "BLE events & errors" },
+    { TAG_BUTTON,     "button",    "Button press events" },
+    { TAG_SUPERVISOR, "state",     "State transition details" },
+    { TAG_TELEMETRY,  "telemetry", "BLE telemetry responses" },
+    { TAG_TX,         "tx",        "Raw BLE TX/RX hex dumps" },
+    { TAG_AUTH,       "auth",      "RFCOMM auth/pairing and SPP events" },
 };
 static const uint8_t _logTagCount = sizeof(_logTagTable) / sizeof(_logTagTable[0]);
-
-static uint16_t _scBuildLegacyFlagsFromTagMask(uint32_t tagMask) {
-    uint16_t flags = 0;
-    for (uint8_t i = 0; i < _logTagCount; i++) {
-        if ((tagMask & _logTagTable[i].tag) != 0) {
-            flags |= _logTagTable[i].legacyMask;
-        }
-    }
-    return flags;
-}
-
-static void _scSyncLegacyDebugFlagsFromLogger() {
-    debugFlags = _scBuildLegacyFlagsFromTagMask(Logger::instance().getTagMask());
-}
 
 static bool _scTryGetTagByName(const char* name, uint32_t* outTag) {
     if (!name || !outTag) return false;
@@ -261,7 +239,6 @@ static void _scPrintHelp() {
 static void _scPrintLoggerSettings() {
     Logger& logger = Logger::instance();
     uint32_t tagMask = logger.getTagMask();
-    _scSyncLegacyDebugFlagsFromLogger();
 
     Serial.println(F("--- Logger Settings ---"));
     Serial.printf("Level: %s\n", _scLevelName(logger.getLevel()));
@@ -275,8 +252,6 @@ static void _scPrintLoggerSettings() {
             enabled ? "ON" : "off",
             _logTagTable[i].description);
     }
-    Serial.println(F("\nLegacy bridge:"));
-    Serial.printf("debugFlags mirror: 0x%04X\n", debugFlags);
 }
 
 static void _scPrintStatus(const SerialContext& ctx) {
@@ -527,7 +502,6 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
                 return;
             }
             Logger::instance().setLevel(lvl, true);
-            _scSyncLegacyDebugFlagsFromLogger();
             Serial.printf("[Log] level -> %s\n", _scLevelName(lvl));
             return;
         }
@@ -544,7 +518,6 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
                 Serial.println(F("[Log] all: use 'on' or 'off'"));
                 return;
             }
-            _scSyncLegacyDebugFlagsFromLogger();
             _scPrintLoggerSettings();
             return;
         }
@@ -573,7 +546,6 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
                 Serial.println(F("[Log] tag: use 'log tag <name> <on|off>'"));
                 return;
             }
-            _scSyncLegacyDebugFlagsFromLogger();
             Serial.printf("[Log] tag %s -> %s\n", tagName, p);
             return;
         }
@@ -593,13 +565,11 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
         }
         if (strcmp(arg, "off") == 0) {
             Logger::instance().setTagMask(0, true);
-            _scSyncLegacyDebugFlagsFromLogger();
             Serial.println(F("[Debug] Deprecated alias: use 'log all off'"));
             return;
         }
         if (strcmp(arg, "all") == 0) {
             Logger::instance().setTagMask(TAG_ALL, true);
-            _scSyncLegacyDebugFlagsFromLogger();
             Serial.println(F("[Debug] Deprecated alias: use 'log all on'"));
             return;
         }
@@ -625,7 +595,6 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
 
         bool currentlyEnabled = Logger::instance().isTagEnabled(tag);
         Logger::instance().setTagEnabled(tag, !currentlyEnabled, true);
-        _scSyncLegacyDebugFlagsFromLogger();
         Serial.println(F("[Debug] Deprecated alias: use 'log tag <name> <on|off>'"));
         return;
     }
@@ -1156,7 +1125,6 @@ static uint32_t _scLastJsMs = 0;
 /*  Call once at the end of setup().  Prints the ready banner. */
 inline void serialInit(const SerialContext& ctx) {
     (void)ctx;
-    _scSyncLegacyDebugFlagsFromLogger();
     Serial.println(F("[Serial] Ready - type 'help' for commands"));
 }
 
@@ -1197,7 +1165,7 @@ inline void serialTick(const SerialContext& ctx) {
     }
 
     // --- Live joystick stream (logger tag) ---
-    if (Logger::instance().isTagEnabled(TAG_JOYSTICK) &&
+    if (LOG_SHOULD_LOG(LogLevel::DEBUG, TAG_JOYSTICK) &&
         (millis() - _scLastJsMs >= SC_JS_INTERVAL_MS)) {
         _scLastJsMs = millis();
         _scPrintJs();
