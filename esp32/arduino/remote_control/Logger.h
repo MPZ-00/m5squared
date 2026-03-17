@@ -59,6 +59,10 @@ public:
     void log(LogLevel level, uint32_t tag, const char* file, int line, const char* fmt, ...)
         __attribute__((format(printf, 6, 7)));
 
+    // Mandatory log path for safety-critical events (bypasses runtime level/tag gating)
+    void logForced(LogLevel level, uint32_t tag, const char* file, int line, const char* fmt, ...)
+        __attribute__((format(printf, 6, 7)));
+
     static const char* levelString(LogLevel level);
     static const char* tagString(uint32_t tag);
 
@@ -88,6 +92,7 @@ private:
 #define LOG_INFO(tag, fmt, ...) do { Logger& _logger = Logger::instance(); if (_logger.shouldLog(LogLevel::INFO, (tag))) _logger.log(LogLevel::INFO, (tag), __FILE__, __LINE__, (fmt), ##__VA_ARGS__); } while (0)
 #define LOG_DEBUG(tag, fmt, ...) do { Logger& _logger = Logger::instance(); if (_logger.shouldLog(LogLevel::DEBUG, (tag))) _logger.log(LogLevel::DEBUG, (tag), __FILE__, __LINE__, (fmt), ##__VA_ARGS__); } while (0)
 #define LOG_VERBOSE(tag, fmt, ...) do { Logger& _logger = Logger::instance(); if (_logger.shouldLog(LogLevel::VERBOSE, (tag))) _logger.log(LogLevel::VERBOSE, (tag), __FILE__, __LINE__, (fmt), ##__VA_ARGS__); } while (0)
+#define LOG_FATAL(tag, fmt, ...) do { Logger::instance().logForced(LogLevel::ERROR, (tag), __FILE__, __LINE__, "FATAL: " fmt, ##__VA_ARGS__); } while (0)
 #else
 
 // Compile-time elimination - zero overhead in production
@@ -97,4 +102,5 @@ private:
 #define LOG_INFO(tag, fmt, ...) ((void)0)
 #define LOG_DEBUG(tag, fmt, ...) ((void)0)
 #define LOG_VERBOSE(tag, fmt, ...) ((void)0)
+#define LOG_FATAL(tag, fmt, ...) ((void)0)
 #endif

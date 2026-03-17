@@ -9,6 +9,7 @@
 
 #include "supervisor.h"
 #include "m25_ble.h"
+#include "Logger.h"
 
 // External debug flags (defined in serial_commands.h)
 extern volatile uint16_t debugFlags;
@@ -182,9 +183,7 @@ void Supervisor::requestReconnect() {
 }
 
 void Supervisor::requestEmergencyStop(const char* reason) {
-    if (debugFlags & DBG_STATE) {
-        Serial.printf("[Supervisor] Emergency stop requested: %s\n", reason);
-    }
+    LOG_FATAL(TAG_SAFETY, "Emergency stop requested: %s", reason ? reason : "unknown");
     enterFailsafe(reason);
 }
 
@@ -641,7 +640,7 @@ void Supervisor::checkWatchdogs() {
     // Only check in DRIVING state - spurious failures during arm transition
     // should not immediately trigger failsafe.
     if (_state == SUPERVISOR_DRIVING && !bleLastMotorWriteOk()) {
-        Serial.println("[Supervisor] Motor write failure detected by watchdog");
+        LOG_FATAL(TAG_WATCHDOG, "Motor write failure detected by watchdog");
         enterFailsafe("BLE write error");
         return;
     }
@@ -655,7 +654,7 @@ void Supervisor::checkWatchdogs() {
             if (lastNfy <= _driveEntryMs + 100) continue;  // not yet armed
             if (now - lastNfy > _config.notifyStaleTimeoutMs) {
                 const char* wname = (_wdi == 0) ? "Left" : "Right";
-                Serial.printf("[Supervisor] Stale-notify watchdog: %s wheel silent for %u ms\n",
+                LOG_FATAL(TAG_WATCHDOG, "Stale-notify watchdog: %s wheel silent for %u ms",
                               wname, (unsigned)(now - lastNfy));
                 enterFailsafe("Wheel not responding (BLE write lost)");
                 return;
@@ -668,7 +667,7 @@ void Supervisor::checkWatchdogs() {
     //   ARMED:   graceful disarm to PAIRED after armIdleTimeoutMs of total idle
     if (_state == SUPERVISOR_DRIVING) {
         if (_lastInputTimeMs > 0 && now - _lastInputTimeMs > _config.inputTimeoutMs) {
-            Serial.println("[Supervisor] Input watchdog timeout while DRIVING");
+            LOG_FATAL(TAG_WATCHDOG, "Input watchdog timeout while DRIVING");
             enterFailsafe("Input timeout");
             return;
         }
@@ -686,7 +685,7 @@ void Supervisor::checkWatchdogs() {
     // Link watchdog - no successful command for too long
     if (_state == SUPERVISOR_DRIVING && _lastLinkTimeMs > 0) {
         if (now - _lastLinkTimeMs > _config.linkTimeoutMs) {
-            Serial.println("[Supervisor] Link watchdog timeout");
+            LOG_FATAL(TAG_WATCHDOG, "Link watchdog timeout");
             enterFailsafe("Link timeout");
             return;
         }
@@ -795,7 +794,7 @@ void Supervisor::transitionTo(SupervisorState newState) {
 }
 
 void Supervisor::enterFailsafe(const char* reason) {
-    Serial.printf("[Supervisor] Entering FAILSAFE: %s\n", reason);
+    LOG_FATAL(TAG_SAFETY, "Entering FAILSAFE: %s", reason ? reason : "unknown");
     // Only attempt a stop write if we actually have a connection - avoids
     // blocking/re-entering on a dead BLE link that just caused the failsafe.
     if (bleAnyConnected()) {
@@ -853,7 +852,7 @@ void Supervisor::notifyConnectionChange() {
     // Only failsafe if ALL wheels disconnect (partial connectivity supported)
     if (_state == SUPERVISOR_PAIRED || _state == SUPERVISOR_ARMED || _state == SUPERVISOR_DRIVING) {
         if (!bleAnyConnected()) {
-            Serial.println("[Supervisor] All connections lost, entering failsafe");
+            LOG_FATAL(TAG_WATCHDOG, "All connections lost, entering failsafe");
             enterFailsafe("All wheels disconnected");
         }
     }

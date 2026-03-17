@@ -111,6 +111,21 @@ void Logger::log(LogLevel level, uint32_t tag, const char* file, int line, const
 #endif
 }
 
+void Logger::logForced(LogLevel level, uint32_t tag, const char* file, int line, const char* fmt, ...) {
+    // Mandatory path: always emit when LOGGING_ENABLED is on.
+    char msgBuf[256];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(msgBuf, sizeof(msgBuf), fmt, args);
+    va_end(args);
+
+#if LOG_FORMAT_DETAILED
+    Serial.printf("[%s][%s][%s:%d] %s\n", levelString(level), tagString(tag), filename(file), line, msgBuf);
+#else
+    Serial.printf("[%s][%s] %s\n", levelString(level), tagString(tag), msgBuf);
+#endif
+}
+
 void Logger::loadFromNVS() {
     Preferences prefs;
     if (!prefs.begin(NVS_NS, /*readOnly=*/true)) return;
