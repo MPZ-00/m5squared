@@ -22,6 +22,7 @@
 #endif
 #include <esp_bt.h>
 #include <esp_bt_main.h>
+#include "Logger.h"
 
 // ---------------------------------------------------------------------------
 // Internal static storage (single instance across translation units)
@@ -108,15 +109,15 @@ void bleRecordStart(uint32_t durationMs) {
     _recordActive = true;
     _recordEndMs  = millis() + durationMs;
     portEXIT_CRITICAL(&_recordMux);
-    Serial.printf("[Record] Started - %.1f s / %d entries max\n",
-                  durationMs / 1000.0f, BLE_RECORD_MAX);
+    LOG_INFO(TAG_RECORD, "Started - %.1f s / %d entries max",
+             durationMs / 1000.0f, BLE_RECORD_MAX);
 }
 
 void bleRecordStop() {
     portENTER_CRITICAL(&_recordMux);
     _recordActive = false;
     portEXIT_CRITICAL(&_recordMux);
-    Serial.printf("[Record] Stopped - %d entries captured\n", (int)_recordCount);
+    LOG_INFO(TAG_RECORD, "Stopped - %d entries captured", (int)_recordCount);
 }
 
 bool bleRecordIsActive() {
@@ -130,30 +131,33 @@ uint32_t bleRecordEntryCount() {
 void bleRecordDump() {
     uint16_t count = _recordCount;
     if (count == 0) {
-        Serial.println("[Record] No entries captured");
+        LOG_INFO(TAG_RECORD, "No entries captured");
         return;
     }
     uint32_t t0 = _recordBuf[0].ms;
-    Serial.printf("[Record] %d entries captured (t0=%u ms since boot)\n", (int)count, t0);
-    Serial.println("[Record]  idx   +ms     dir  wheel  len  data");
-    Serial.println("[Record] ----  ------   ---  -----  ---  ----");
+    LOG_INFO(TAG_RECORD, "%d entries captured (t0=%u ms since boot)", (int)count, t0);
+    LOG_INFO(TAG_RECORD, " idx   +ms     dir  wheel  len  data");
+    LOG_INFO(TAG_RECORD, "----  ------   ---  -----  ---  ----");
     for (uint16_t i = 0; i < count; i++) {
         const BleRecordEntry& e = _recordBuf[i];
         const char* dir   = (e.direction == BLE_REC_TX) ? "TX>" : "<RX";
         const char* wheel = (e.wheel == WHEEL_LEFT)  ? "Left " :
                             (e.wheel == WHEEL_RIGHT) ? "Right" : "?    ";
-        Serial.printf("[Record] %-4u  +%-6u  %s  %s  %-3d  ",
-                      i, (uint32_t)(e.ms - t0), dir, wheel, e.rawLen);
+        char lineBuf[240];
+        int offset = snprintf(lineBuf, sizeof(lineBuf), "%-4u  +%-6u  %s  %s  %-3d  ",
+                              i, (uint32_t)(e.ms - t0), dir, wheel, e.rawLen);
         size_t show = (e.rawLen < BLE_RECORD_PAYLOAD) ? e.rawLen : BLE_RECORD_PAYLOAD;
         for (size_t j = 0; j < show; j++) {
-            Serial.printf("%02X ", e.data[j]);
+            if (offset < (int)sizeof(lineBuf) - 4) {
+                offset += snprintf(lineBuf + offset, sizeof(lineBuf) - (size_t)offset, "%02X ", e.data[j]);
+            }
         }
         if (e.rawLen > BLE_RECORD_PAYLOAD) {
-            Serial.printf("... (+%d)", e.rawLen - BLE_RECORD_PAYLOAD);
+            snprintf(lineBuf + offset, sizeof(lineBuf) - (size_t)offset, "... (+%d)", e.rawLen - BLE_RECORD_PAYLOAD);
         }
-        Serial.println();
+        LOG_INFO(TAG_RECORD, "%s", lineBuf);
     }
-    Serial.println("[Record] --- end of record ---");
+    LOG_INFO(TAG_RECORD, "--- end of record ---");
 }
 
 // ---------------------------------------------------------------------------
@@ -327,30 +331,30 @@ static const char* _sppEvtName(esp_spp_cb_event_t ev) {
 }
 
 static void _rfcommGapCb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t* param) {
-    if (!(debugFlags & DBG_BT_AUTH)) return;
+    if (!Logger::instance().isTagEnabled(TAG_AUTH)) return;
     switch (event) {
         case ESP_BT_GAP_AUTH_CMPL_EVT:
-            Serial.printf("[AUTH] AUTH_CMPL status=%d addr=%02X:%02X:%02X:%02X:%02X:%02X name=%s\n",
-                          param->auth_cmpl.stat,
-                          param->auth_cmpl.bda[0], param->auth_cmpl.bda[1],
-                          param->auth_cmpl.bda[2], param->auth_cmpl.bda[3],
-                          param->auth_cmpl.bda[4], param->auth_cmpl.bda[5],
-                          (const char*)param->auth_cmpl.device_name);
+            LOG_DEBUG(TAG_AUTH, "AUTH_CMPL status=%d addr=%02X:%02X:%02X:%02X:%02X:%02X name=%s",
+                      param->auth_cmpl.stat,
+                      param->auth_cmpl.bda[0], param->auth_cmpl.bda[1],
+                      param->auth_cmpl.bda[2], param->auth_cmpl.bda[3],
+                      param->auth_cmpl.bda[4], param->auth_cmpl.bda[5],
+                      (const char*)param->auth_cmpl.device_name);
             break;
         case ESP_BT_GAP_PIN_REQ_EVT:
-            Serial.printf("[AUTH] PIN_REQ min16=%d\n", param->pin_req.min_16_digit);
+            LOG_DEBUG(TAG_AUTH, "PIN_REQ min16=%d", param->pin_req.min_16_digit);
             break;
         case ESP_BT_GAP_CFM_REQ_EVT:
-            Serial.printf("[AUTH] CFM_REQ num=%lu\n", (unsigned long)param->cfm_req.num_val);
+            LOG_DEBUG(TAG_AUTH, "CFM_REQ num=%lu", (unsigned long)param->cfm_req.num_val);
             break;
         case ESP_BT_GAP_KEY_NOTIF_EVT:
-            Serial.printf("[AUTH] KEY_NOTIF passkey=%lu\n", (unsigned long)param->key_notif.passkey);
+            LOG_DEBUG(TAG_AUTH, "KEY_NOTIF passkey=%lu", (unsigned long)param->key_notif.passkey);
             break;
         case ESP_BT_GAP_KEY_REQ_EVT:
-            Serial.println("[AUTH] KEY_REQ");
+            LOG_DEBUG(TAG_AUTH, "KEY_REQ");
             break;
         default:
-            Serial.printf("[AUTH] GAP event=%d\n", (int)event);
+            LOG_DEBUG(TAG_AUTH, "GAP event=%d", (int)event);
             break;
     }
 }
@@ -414,13 +418,13 @@ static void _rfcommConsumeBuffered(int idx) {
         if (_m25Decrypt(_wheels[idx].key, unstuffed, uPos, sppPacket, &sppLen)) {
             if (!_wheels[idx].receivedFirstAck) {
                 _wheels[idx].receivedFirstAck = true;
-                Serial.printf("[RFCOMM] %s wheel: First response received (%zu bytes)\n",
-                              _wheels[idx].name ? _wheels[idx].name : "Unknown", sPos);
+                LOG_INFO(TAG_RFCOMM, "%s wheel: First response received (%zu bytes)",
+                         _wheels[idx].name ? _wheels[idx].name : "Unknown", sPos);
             }
             _parseSppPacket(sppPacket, sppLen, idx);
-        } else if (debugFlags & DBG_BLE) {
-            Serial.printf("[RFCOMM] %s wheel: Decryption failed\n",
-                          _wheels[idx].name ? _wheels[idx].name : "Unknown");
+        } else if (Logger::instance().isTagEnabled(TAG_CRYPTO)) {
+            LOG_WARN(TAG_CRYPTO, "%s wheel: Decryption failed",
+                     _wheels[idx].name ? _wheels[idx].name : "Unknown");
         }
 
         memmove(_rfRxBuf[idx], _rfRxBuf[idx] + sPos, _rfRxLen[idx] - sPos);
@@ -430,16 +434,16 @@ static void _rfcommConsumeBuffered(int idx) {
 
 static void _rfcommSppCb(esp_spp_cb_event_t event, esp_spp_cb_param_t* param) {
     if (!param) return;
-    if (debugFlags & DBG_BT_AUTH) {
-        Serial.printf("[AUTH] SPP event=%s(%d)\n", _sppEvtName(event), (int)event);
+    if (Logger::instance().isTagEnabled(TAG_AUTH)) {
+        LOG_DEBUG(TAG_AUTH, "SPP event=%s(%d)", _sppEvtName(event), (int)event);
     }
     switch (event) {
         case ESP_SPP_INIT_EVT:
             if (param->init.status == ESP_SPP_SUCCESS) {
                 _rfcommReady = true;
-                Serial.println("[RFCOMM] SPP stack ready");
+                LOG_INFO(TAG_RFCOMM, "SPP stack ready");
             } else {
-                Serial.printf("[RFCOMM] SPP init failed: status=%d\n", (int)param->init.status);
+                LOG_ERROR(TAG_RFCOMM, "SPP init failed: status=%d", (int)param->init.status);
             }
             break;
         case ESP_SPP_OPEN_EVT: {
@@ -453,10 +457,10 @@ static void _rfcommSppCb(esp_spp_cb_event_t event, esp_spp_cb_param_t* param) {
                 _rfcommOpenStatus[idx] = param->open.status;
                 _rfcommOpenEvt[idx] = true;
                 _rfcommPendingIdx = -1;
-                Serial.printf("[RFCOMM] %s wheel link open (status=%d, handle=%u)\n",
-                              _wheels[idx].name ? _wheels[idx].name : "?",
-                              (int)param->open.status,
-                              (unsigned)param->open.handle);
+                LOG_INFO(TAG_RFCOMM, "%s wheel link open (status=%d, handle=%u)",
+                         _wheels[idx].name ? _wheels[idx].name : "?",
+                         (int)param->open.status,
+                         (unsigned)param->open.handle);
             }
             break;
         }
@@ -469,8 +473,8 @@ static void _rfcommSppCb(esp_spp_cb_event_t event, esp_spp_cb_param_t* param) {
                 _wheels[idx].sppHandle = 0;
                 _rfRxLen[idx] = 0;
                 _rfcommCloseEvt[idx] = true;
-                Serial.printf("[RFCOMM] %s wheel disconnected\n",
-                              _wheels[idx].name ? _wheels[idx].name : "?");
+                LOG_WARN(TAG_RFCOMM, "%s wheel disconnected",
+                         _wheels[idx].name ? _wheels[idx].name : "?");
             }
             break;
         }
@@ -586,7 +590,7 @@ static bool _transportIsProtocolConnected(const WheelConnState_t& w) {
 bool _m25Encrypt(const uint8_t* key, const uint8_t* spp, uint8_t sppLen,
                  uint8_t* out, size_t* outLen) {
     if (!key || !spp || !out || !outLen) {
-        Serial.println("[BLE-ENC] ERROR: NULL parameter provided");
+        LOG_ERROR(TAG_CRYPTO, "BLE-ENC: NULL parameter provided");
         return false;
     }
     
@@ -611,7 +615,7 @@ bool _m25Encrypt(const uint8_t* key, const uint8_t* spp, uint8_t sppLen,
         }
     }
     if (allZeros) {
-        Serial.println("[BLE-ENC] WARNING: RNG returned all zeros, retrying...");
+        LOG_WARN(TAG_CRYPTO, "BLE-ENC: RNG returned all zeros, retrying...");
         delay(50);
         esp_fill_random(iv, sizeof(iv));
     }
@@ -670,7 +674,7 @@ bool _m25Encrypt(const uint8_t* key, const uint8_t* spp, uint8_t sppLen,
 bool _m25Decrypt(const uint8_t* key, const uint8_t* frame, size_t frameLen,
                  uint8_t* sppOut, size_t* sppLen) {
     if (!key || !frame || !sppOut || !sppLen) {
-        Serial.println("[BLE-DEC] ERROR: NULL parameter provided");
+        LOG_ERROR(TAG_CRYPTO, "BLE-DEC: NULL parameter provided");
         return false;
     }
     
@@ -688,8 +692,8 @@ bool _m25Decrypt(const uint8_t* key, const uint8_t* frame, size_t frameLen,
     uint16_t expectedCrc = _m25Crc16(frame, crcPos);
     uint16_t receivedCrc = ((uint16_t)frame[crcPos] << 8) | frame[crcPos + 1];
     if (expectedCrc != receivedCrc) {
-        Serial.printf("[BLE-DEC] CRC mismatch: expected 0x%04X, got 0x%04X\n", 
-                     expectedCrc, receivedCrc);
+        LOG_WARN(TAG_CRYPTO, "BLE-DEC CRC mismatch: expected 0x%04X, got 0x%04X",
+                 expectedCrc, receivedCrc);
         return false;
     }
     
@@ -727,14 +731,14 @@ bool _m25Decrypt(const uint8_t* key, const uint8_t* frame, size_t frameLen,
     // Remove PKCS7 padding
     uint8_t padLen = decrypted[encDataLen - 1];
     if (padLen == 0 || padLen > 16 || padLen > encDataLen) {
-        Serial.printf("[BLE-DEC] Invalid PKCS7 padding: %d\n", padLen);
+        LOG_WARN(TAG_CRYPTO, "BLE-DEC invalid PKCS7 padding: %d", padLen);
         return false;
     }
     
     // Verify padding bytes
     for (size_t i = encDataLen - padLen; i < encDataLen; i++) {
         if (decrypted[i] != padLen) {
-            Serial.printf("[BLE-DEC] PKCS7 padding verification failed\n");
+            LOG_WARN(TAG_CRYPTO, "BLE-DEC PKCS7 padding verification failed");
             return false;
         }
     }
@@ -810,14 +814,20 @@ static const char* _paramName(uint8_t serviceId, uint8_t paramId) {
     return "UNKNOWN";
 }
 
-static void _printHexBytes(const uint8_t* data, size_t len) {
+static void _hexSnippet(const uint8_t* data, size_t len, char* out, size_t outSize, size_t maxBytes = 48) {
+    if (!out || outSize == 0) return;
     if (!data || len == 0) {
-        Serial.print("<empty>");
+        snprintf(out, outSize, "<empty>");
         return;
     }
-    for (size_t i = 0; i < len; i++) {
-        if (i > 0) Serial.print(' ');
-        Serial.printf("%02X", data[i]);
+
+    const size_t show = (len < maxBytes) ? len : maxBytes;
+    size_t off = 0;
+    for (size_t i = 0; i < show && off < outSize; i++) {
+        off += snprintf(out + off, outSize - off, (i == 0) ? "%02X" : " %02X", data[i]);
+    }
+    if (len > show && off < outSize) {
+        snprintf(out + off, outSize - off, " ...(+%u)", (unsigned)(len - show));
     }
 }
 
@@ -834,33 +844,34 @@ static void _debugLogTxPacket(int idx,
     const char* paramName = _paramName(serviceId, paramId);
     uint8_t telegramId = (sppLen >= 2) ? spp[1] : 0;
 
-    Serial.printf("[TX] %s %s svc=0x%02X param=0x%02X tg=0x%02X payloadLen=%u\n",
-                  wheelName, paramName, serviceId, paramId, telegramId, payloadLen);
+    LOG_DEBUG(TAG_TX, "%s %s svc=0x%02X param=0x%02X tg=0x%02X payloadLen=%u",
+              wheelName, paramName, serviceId, paramId, telegramId, payloadLen);
 
     if (serviceId == M25_SRV_APP_MGMT && paramId == M25_PARAM_WRITE_DRIVE_MODE && payloadLen >= 1) {
         uint8_t mode = payload[0];
-        Serial.printf("[TX]   drive_mode=0x%02X remote=%u cruise=%u auto_hold=%u\n",
-                      mode,
-                      (mode & M25_DRIVE_MODE_REMOTE) ? 1 : 0,
-                      (mode & M25_DRIVE_MODE_CRUISE) ? 1 : 0,
-                      (mode & M25_DRIVE_MODE_AUTO_HOLD) ? 1 : 0);
+        LOG_DEBUG(TAG_TX, "drive_mode=0x%02X remote=%u cruise=%u auto_hold=%u",
+                  mode,
+                  (mode & M25_DRIVE_MODE_REMOTE) ? 1 : 0,
+                  (mode & M25_DRIVE_MODE_CRUISE) ? 1 : 0,
+                  (mode & M25_DRIVE_MODE_AUTO_HOLD) ? 1 : 0);
     } else if (serviceId == M25_SRV_APP_MGMT && paramId == M25_PARAM_WRITE_REMOTE_SPEED && payloadLen >= 2) {
         int16_t raw = (int16_t)(((uint16_t)payload[0] << 8) | payload[1]);
         float pct = (float)raw / M25_SPEED_SCALE;
-        Serial.printf("[TX]   remote_speed raw=%d pct=%+.1f payload=%02X %02X\n",
-                      (int)raw, (double)pct, payload[0], payload[1]);
+        LOG_DEBUG(TAG_TX, "remote_speed raw=%d pct=%+.1f payload=%02X %02X",
+                  (int)raw, (double)pct, payload[0], payload[1]);
     } else if (payloadLen > 0) {
-        Serial.print("[TX]   payload: ");
-        _printHexBytes(payload, payloadLen);
-        Serial.println();
+        char payloadHex[192];
+        _hexSnippet(payload, payloadLen, payloadHex, sizeof(payloadHex));
+        LOG_DEBUG(TAG_TX, "payload: %s", payloadHex);
     }
 
-    Serial.print("[TX]   spp   : ");
-    _printHexBytes(spp, sppLen);
-    Serial.println();
-    Serial.print("[TX]   wire  : ");
-    _printHexBytes(wire, wireLen);
-    Serial.println();
+    char sppHex[192];
+    _hexSnippet(spp, sppLen, sppHex, sizeof(sppHex));
+    LOG_DEBUG(TAG_TX, "spp : %s", sppHex);
+
+    char wireHex[192];
+    _hexSnippet(wire, wireLen, wireHex, sizeof(wireHex));
+    LOG_DEBUG(TAG_TX, "wire: %s", wireHex);
 }
 
 // Returns true while the wheel is still considered usable (transient failure),
@@ -876,25 +887,25 @@ static bool _handleTxFailure(int idx, uint8_t serviceId, uint8_t paramId, const 
     w.lastTxFailMs = now;
     if (w.txFailStreak < 255) w.txFailStreak++;
 
-    if ((debugFlags & DBG_BLE) &&
+    if (Logger::instance().isTagEnabled(TAG_BLE) &&
         (w.txFailStreak == 1 || (w.txFailStreak % BLE_TX_FAIL_LOG_EVERY) == 0)) {
-        Serial.printf("[BLE] %s wheel TX fail: %s (svc=0x%02X param=0x%02X, streak=%u/%u)\n",
-                      w.name ? w.name : "?", reason ? reason : "unknown",
-                      serviceId, paramId,
-                      (unsigned)w.txFailStreak,
-                      (unsigned)BLE_TX_FAIL_DISCONNECT_STREAK);
+        LOG_WARN(TAG_BLE, "%s wheel TX fail: %s (svc=0x%02X param=0x%02X, streak=%u/%u)",
+                 w.name ? w.name : "?", reason ? reason : "unknown",
+                 serviceId, paramId,
+                 (unsigned)w.txFailStreak,
+                 (unsigned)BLE_TX_FAIL_DISCONNECT_STREAK);
     }
 
     if (w.txFailStreak < BLE_TX_FAIL_DISCONNECT_STREAK) {
         return true;   // Treat as transient: keep session alive.
     }
 
-    Serial.printf("[BLE] %s wheel marked disconnected after TX failures (%u in %ums, last svc=0x%02X param=0x%02X, reason=%s)\n",
-                  w.name ? w.name : "?",
-                  (unsigned)w.txFailStreak,
-                  (unsigned)BLE_TX_FAIL_WINDOW_MS,
-                  serviceId, paramId,
-                  reason ? reason : "unknown");
+    LOG_ERROR(TAG_BLE, "%s wheel marked disconnected after TX failures (%u in %ums, last svc=0x%02X param=0x%02X, reason=%s)",
+              w.name ? w.name : "?",
+              (unsigned)w.txFailStreak,
+              (unsigned)BLE_TX_FAIL_WINDOW_MS,
+              serviceId, paramId,
+              reason ? reason : "unknown");
     w.connected     = false;
     w.protocolReady = false;
     w.driveModeBits = 0;
@@ -905,10 +916,10 @@ static bool _handleTxFailure(int idx, uint8_t serviceId, uint8_t paramId, const 
 }
 
 static void _clearTxFailureState(WheelConnState_t& w) {
-    if (w.txFailStreak > 0 && (debugFlags & DBG_BLE)) {
-        Serial.printf("[BLE] %s wheel TX recovered after %u failures\n",
-                      w.name ? w.name : "?",
-                      (unsigned)w.txFailStreak);
+    if (w.txFailStreak > 0 && Logger::instance().isTagEnabled(TAG_BLE)) {
+        LOG_INFO(TAG_BLE, "%s wheel TX recovered after %u failures",
+                 w.name ? w.name : "?",
+                 (unsigned)w.txFailStreak);
     }
     w.txFailStreak = 0;
     w.lastTxFailMs = 0;
@@ -993,7 +1004,7 @@ bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
         uint8_t sppLen = 0;
         size_t len = _buildAndEncrypt(idx, serviceId, paramId, payload, payloadLen, buf, spp, &sppLen);
         if (len > 0) {
-            if (debugFlags & DBG_PROTO) {
+            if (Logger::instance().isTagEnabled(TAG_TX)) {
                 _debugLogTxPacket(idx, serviceId, paramId, payload, payloadLen, spp, sppLen, buf, len);
             }
 #if M25_TRANSPORT_BLE
