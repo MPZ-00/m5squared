@@ -24,9 +24,9 @@
 #include <esp_bt_main.h>
 #include "Logger.h"
 
-// ---------------------------------------------------------------------------
-// Internal static storage (single instance across translation units)
-// ---------------------------------------------------------------------------
+ // ---------------------------------------------------------------------------
+ // Internal static storage (single instance across translation units)
+ // ---------------------------------------------------------------------------
 
 static WheelConnState_t _wheelsStorage[WHEEL_COUNT];
 static bool _bleAutoReconnectFlag = true;
@@ -67,10 +67,10 @@ static portMUX_TYPE _txStatsMux = portMUX_INITIALIZER_UNLOCKED;
 // BLE traffic recorder state
 // ---------------------------------------------------------------------------
 static BleRecordEntry    _recordBuf[BLE_RECORD_MAX];
-static volatile uint16_t _recordCount  = 0;
+static volatile uint16_t _recordCount = 0;
 static volatile bool     _recordActive = false;
-static volatile uint32_t _recordEndMs  = 0;   // millis() when auto-stop fires
-static portMUX_TYPE      _recordMux    = portMUX_INITIALIZER_UNLOCKED;
+static volatile uint32_t _recordEndMs = 0;   // millis() when auto-stop fires
+static portMUX_TYPE      _recordMux = portMUX_INITIALIZER_UNLOCKED;
 
 WheelConnState_t* _getWheels() {
     return _wheelsStorage;
@@ -87,12 +87,12 @@ void _bleRecordFrame(uint8_t dir, uint8_t wheelIdx, const uint8_t* data, size_t 
     if (!_recordActive) return;
     portENTER_CRITICAL(&_recordMux);
     if (_recordActive && _recordCount < BLE_RECORD_MAX) {
-        uint16_t idx        = _recordCount;
-        BleRecordEntry& e   = _recordBuf[idx];
-        e.ms        = millis();
+        uint16_t idx = _recordCount;
+        BleRecordEntry& e = _recordBuf[idx];
+        e.ms = millis();
         e.direction = dir;
-        e.wheel     = wheelIdx;
-        e.rawLen    = (uint8_t)min(len, (size_t)255);
+        e.wheel = wheelIdx;
+        e.rawLen = (uint8_t)min(len, (size_t)255);
         size_t copy = (len < BLE_RECORD_PAYLOAD) ? len : BLE_RECORD_PAYLOAD;
         memcpy(e.data, data, copy);
         if (copy < BLE_RECORD_PAYLOAD)
@@ -105,12 +105,12 @@ void _bleRecordFrame(uint8_t dir, uint8_t wheelIdx, const uint8_t* data, size_t 
 void bleRecordStart(uint32_t durationMs) {
     portENTER_CRITICAL(&_recordMux);
     memset(_recordBuf, 0, sizeof(_recordBuf));
-    _recordCount  = 0;
+    _recordCount = 0;
     _recordActive = true;
-    _recordEndMs  = millis() + durationMs;
+    _recordEndMs = millis() + durationMs;
     portEXIT_CRITICAL(&_recordMux);
     LOG_INFO(TAG_RECORD, "Started - %.1f s / %d entries max",
-             durationMs / 1000.0f, BLE_RECORD_MAX);
+        durationMs / 1000.0f, BLE_RECORD_MAX);
 }
 
 void bleRecordStop() {
@@ -140,12 +140,12 @@ void bleRecordDump() {
     LOG_INFO(TAG_RECORD, "----  ------   ---  -----  ---  ----");
     for (uint16_t i = 0; i < count; i++) {
         const BleRecordEntry& e = _recordBuf[i];
-        const char* dir   = (e.direction == BLE_REC_TX) ? "TX>" : "<RX";
-        const char* wheel = (e.wheel == WHEEL_LEFT)  ? "Left " :
-                            (e.wheel == WHEEL_RIGHT) ? "Right" : "?    ";
+        const char* dir = (e.direction == BLE_REC_TX) ? "TX>" : "<RX";
+        const char* wheel = (e.wheel == WHEEL_LEFT) ? "Left " :
+            (e.wheel == WHEEL_RIGHT) ? "Right" : "?    ";
         char lineBuf[240];
         int offset = snprintf(lineBuf, sizeof(lineBuf), "%-4u  +%-6u  %s  %s  %-3d  ",
-                              i, (uint32_t)(e.ms - t0), dir, wheel, e.rawLen);
+            i, (uint32_t)(e.ms - t0), dir, wheel, e.rawLen);
         size_t show = (e.rawLen < BLE_RECORD_PAYLOAD) ? e.rawLen : BLE_RECORD_PAYLOAD;
         for (size_t j = 0; j < show; j++) {
             if (offset < (int)sizeof(lineBuf) - 4) {
@@ -210,21 +210,23 @@ size_t _addDelimiters(const uint8_t* in, size_t inLen, uint8_t* out) {
 
 size_t _removeDelimiters(const uint8_t* in, size_t inLen, uint8_t* out, size_t outMax) {
     if (inLen == 0) return 0;
-    
+
     size_t pos = 0;
     bool lastWasEF = false;
-    
+
     for (size_t i = 0; i < inLen && pos < outMax; i++) {
         if (in[i] == M25_HEADER_MARKER) {
             if (lastWasEF) {
                 // This is the second 0xEF in a row, skip it
                 lastWasEF = false;
-            } else {
+            }
+            else {
                 // First 0xEF
                 out[pos++] = in[i];
                 lastWasEF = true;
             }
-        } else {
+        }
+        else {
             out[pos++] = in[i];
             lastWasEF = false;
         }
@@ -238,16 +240,16 @@ size_t _removeDelimiters(const uint8_t* in, size_t inLen, uint8_t* out, size_t o
 
 const char* _nackCodeToString(uint8_t code) {
     switch (code) {
-        case M25_NACK_GENERAL:            return "General error";
-        case M25_NACK_SID:                return "Invalid service ID";
-        case M25_NACK_PID:                return "Invalid parameter ID";
-        case M25_NACK_LENGTH:             return "Invalid length";
-        case M25_NACK_CHKSUM:             return "Checksum error";
-        case M25_NACK_COND:               return "Condition not met";
-        case M25_NACK_SEC_ACC:            return "Security/access denied";
-        case M25_NACK_CMD_NOT_EXEC:       return "Command not executed";
-        case M25_NACK_CMD_INTERNAL_ERROR: return "Internal error";
-        default:                          return "Unknown NACK";
+    case M25_NACK_GENERAL:            return "General error";
+    case M25_NACK_SID:                return "Invalid service ID";
+    case M25_NACK_PID:                return "Invalid parameter ID";
+    case M25_NACK_LENGTH:             return "Invalid length";
+    case M25_NACK_CHKSUM:             return "Checksum error";
+    case M25_NACK_COND:               return "Condition not met";
+    case M25_NACK_SEC_ACC:            return "Security/access denied";
+    case M25_NACK_CMD_NOT_EXEC:       return "Command not executed";
+    case M25_NACK_CMD_INTERNAL_ERROR: return "Internal error";
+    default:                          return "Unknown NACK";
     }
 }
 
@@ -265,35 +267,35 @@ bool _isAck(uint8_t paramId) {
 // we actually encounter.
 static const char* _bleErrStr(int rc) {
     switch (rc) {
-        case  0:     return "ESP_OK";
-        case -1:     return "ESP_FAIL (stack internal error)";
-        case 0x101:  return "ESP_ERR_NO_MEM";
-        case 0x102:  return "ESP_ERR_INVALID_ARG";
-        case 0x103:  return "ESP_ERR_INVALID_STATE (259) - write during teardown";
-        case 0x104:  return "ESP_ERR_INVALID_SIZE";
-        case 0x105:  return "ESP_ERR_NOT_FOUND";
-        case 0x106:  return "ESP_ERR_NOT_SUPPORTED";
-        case 0x107:  return "ESP_ERR_TIMEOUT";
+    case  0:     return "ESP_OK";
+    case -1:     return "ESP_FAIL (stack internal error)";
+    case 0x101:  return "ESP_ERR_NO_MEM";
+    case 0x102:  return "ESP_ERR_INVALID_ARG";
+    case 0x103:  return "ESP_ERR_INVALID_STATE (259) - write during teardown";
+    case 0x104:  return "ESP_ERR_INVALID_SIZE";
+    case 0x105:  return "ESP_ERR_NOT_FOUND";
+    case 0x106:  return "ESP_ERR_NOT_SUPPORTED";
+    case 0x107:  return "ESP_ERR_TIMEOUT";
         // esp_gatt_status_t (NOT in esp_err_to_name - logged as "Unknown ESP_ERR")
-        case 0x01:   return "ESP_GATT_INVALID_HANDLE";
-        case 0x02:   return "ESP_GATT_READ_NOT_PERMIT";
-        case 0x03:   return "ESP_GATT_WRITE_NOT_PERMIT";
-        case 0x06:   return "ESP_GATT_INVALID_PDU";
-        case 0x08:   return "ESP_GATT_INSUF_AUTHORIZATION";
-        case 0x0A:   return "ESP_GATT_INVALID_OFFSET";
-        case 0x0D:   return "ESP_GATT_INVALID_ATTR_LEN";
-        case 0x13:   return "ESP_GATT_UNKNOWN (19) - no descriptors (benign on first connect)";
-        case 0x85:   return "ESP_GATT_ERROR (133) - not connectable / controller busy";
-        case 0x8D:   return "ESP_GATT_BUSY";
-        case 0x8E:   return "ESP_GATT_ERROR (generic)";
-        case 0x8F:   return "ESP_GATT_CMD_STARTED";
-        case 0x96:   return "ESP_GATT_AUTH_FAIL";
-        case 0xFF:   return "connect scan timeout (255) - wheel not advertising or out of range";
-        default: {
-            static char buf[24];
-            snprintf(buf, sizeof(buf), "0x%X (%d)", rc, rc);
-            return buf;
-        }
+    case 0x01:   return "ESP_GATT_INVALID_HANDLE";
+    case 0x02:   return "ESP_GATT_READ_NOT_PERMIT";
+    case 0x03:   return "ESP_GATT_WRITE_NOT_PERMIT";
+    case 0x06:   return "ESP_GATT_INVALID_PDU";
+    case 0x08:   return "ESP_GATT_INSUF_AUTHORIZATION";
+    case 0x0A:   return "ESP_GATT_INVALID_OFFSET";
+    case 0x0D:   return "ESP_GATT_INVALID_ATTR_LEN";
+    case 0x13:   return "ESP_GATT_UNKNOWN (19) - no descriptors (benign on first connect)";
+    case 0x85:   return "ESP_GATT_ERROR (133) - not connectable / controller busy";
+    case 0x8D:   return "ESP_GATT_BUSY";
+    case 0x8E:   return "ESP_GATT_ERROR (generic)";
+    case 0x8F:   return "ESP_GATT_CMD_STARTED";
+    case 0x96:   return "ESP_GATT_AUTH_FAIL";
+    case 0xFF:   return "connect scan timeout (255) - wheel not advertising or out of range";
+    default: {
+        static char buf[24];
+        snprintf(buf, sizeof(buf), "0x%X (%d)", rc, rc);
+        return buf;
+    }
     }
 }
 
@@ -316,46 +318,46 @@ static int _findWheelByHandle(uint32_t handle) {
 
 static const char* _sppEvtName(esp_spp_cb_event_t ev) {
     switch (ev) {
-        case ESP_SPP_INIT_EVT: return "INIT";
-        case ESP_SPP_DISCOVERY_COMP_EVT: return "DISCOVERY_COMP";
-        case ESP_SPP_OPEN_EVT: return "OPEN";
-        case ESP_SPP_CLOSE_EVT: return "CLOSE";
-        case ESP_SPP_START_EVT: return "START";
-        case ESP_SPP_CL_INIT_EVT: return "CL_INIT";
-        case ESP_SPP_DATA_IND_EVT: return "DATA_IND";
-        case ESP_SPP_CONG_EVT: return "CONG";
-        case ESP_SPP_WRITE_EVT: return "WRITE";
-        case ESP_SPP_SRV_OPEN_EVT: return "SRV_OPEN";
-        default: return "OTHER";
+    case ESP_SPP_INIT_EVT: return "INIT";
+    case ESP_SPP_DISCOVERY_COMP_EVT: return "DISCOVERY_COMP";
+    case ESP_SPP_OPEN_EVT: return "OPEN";
+    case ESP_SPP_CLOSE_EVT: return "CLOSE";
+    case ESP_SPP_START_EVT: return "START";
+    case ESP_SPP_CL_INIT_EVT: return "CL_INIT";
+    case ESP_SPP_DATA_IND_EVT: return "DATA_IND";
+    case ESP_SPP_CONG_EVT: return "CONG";
+    case ESP_SPP_WRITE_EVT: return "WRITE";
+    case ESP_SPP_SRV_OPEN_EVT: return "SRV_OPEN";
+    default: return "OTHER";
     }
 }
 
 static void _rfcommGapCb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t* param) {
     if (!Logger::instance().isTagEnabled(TAG_AUTH)) return;
     switch (event) {
-        case ESP_BT_GAP_AUTH_CMPL_EVT:
-            LOG_DEBUG(TAG_AUTH, "AUTH_CMPL status=%d addr=%02X:%02X:%02X:%02X:%02X:%02X name=%s",
-                      param->auth_cmpl.stat,
-                      param->auth_cmpl.bda[0], param->auth_cmpl.bda[1],
-                      param->auth_cmpl.bda[2], param->auth_cmpl.bda[3],
-                      param->auth_cmpl.bda[4], param->auth_cmpl.bda[5],
-                      (const char*)param->auth_cmpl.device_name);
-            break;
-        case ESP_BT_GAP_PIN_REQ_EVT:
-            LOG_DEBUG(TAG_AUTH, "PIN_REQ min16=%d", param->pin_req.min_16_digit);
-            break;
-        case ESP_BT_GAP_CFM_REQ_EVT:
-            LOG_DEBUG(TAG_AUTH, "CFM_REQ num=%lu", (unsigned long)param->cfm_req.num_val);
-            break;
-        case ESP_BT_GAP_KEY_NOTIF_EVT:
-            LOG_DEBUG(TAG_AUTH, "KEY_NOTIF passkey=%lu", (unsigned long)param->key_notif.passkey);
-            break;
-        case ESP_BT_GAP_KEY_REQ_EVT:
-            LOG_DEBUG(TAG_AUTH, "KEY_REQ");
-            break;
-        default:
-            LOG_DEBUG(TAG_AUTH, "GAP event=%d", (int)event);
-            break;
+    case ESP_BT_GAP_AUTH_CMPL_EVT:
+        LOG_DEBUG(TAG_AUTH, "AUTH_CMPL status=%d addr=%02X:%02X:%02X:%02X:%02X:%02X name=%s",
+            param->auth_cmpl.stat,
+            param->auth_cmpl.bda[0], param->auth_cmpl.bda[1],
+            param->auth_cmpl.bda[2], param->auth_cmpl.bda[3],
+            param->auth_cmpl.bda[4], param->auth_cmpl.bda[5],
+            (const char*)param->auth_cmpl.device_name);
+        break;
+    case ESP_BT_GAP_PIN_REQ_EVT:
+        LOG_DEBUG(TAG_AUTH, "PIN_REQ min16=%d", param->pin_req.min_16_digit);
+        break;
+    case ESP_BT_GAP_CFM_REQ_EVT:
+        LOG_DEBUG(TAG_AUTH, "CFM_REQ num=%lu", (unsigned long)param->cfm_req.num_val);
+        break;
+    case ESP_BT_GAP_KEY_NOTIF_EVT:
+        LOG_DEBUG(TAG_AUTH, "KEY_NOTIF passkey=%lu", (unsigned long)param->key_notif.passkey);
+        break;
+    case ESP_BT_GAP_KEY_REQ_EVT:
+        LOG_DEBUG(TAG_AUTH, "KEY_REQ");
+        break;
+    default:
+        LOG_DEBUG(TAG_AUTH, "GAP event=%d", (int)event);
+        break;
     }
 }
 
@@ -363,7 +365,7 @@ static bool _parseMacToBda(const char* mac, esp_bd_addr_t out) {
     if (!mac || !out) return false;
     unsigned v[6];
     if (sscanf(mac, "%2x:%2x:%2x:%2x:%2x:%2x",
-               &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) != 6) {
+        &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) != 6) {
         return false;
     }
     for (int i = 0; i < 6; i++) out[i] = (uint8_t)v[i];
@@ -419,12 +421,13 @@ static void _rfcommConsumeBuffered(int idx) {
             if (!_wheels[idx].receivedFirstAck) {
                 _wheels[idx].receivedFirstAck = true;
                 LOG_INFO(TAG_RFCOMM, "%s wheel: First response received (%zu bytes)",
-                         _wheels[idx].name ? _wheels[idx].name : "Unknown", sPos);
+                    _wheels[idx].name ? _wheels[idx].name : "Unknown", sPos);
             }
             _parseSppPacket(sppPacket, sppLen, idx);
-        } else if (Logger::instance().isTagEnabled(TAG_CRYPTO)) {
+        }
+        else if (Logger::instance().isTagEnabled(TAG_CRYPTO)) {
             LOG_WARN(TAG_CRYPTO, "%s wheel: Decryption failed",
-                     _wheels[idx].name ? _wheels[idx].name : "Unknown");
+                _wheels[idx].name ? _wheels[idx].name : "Unknown");
         }
 
         memmove(_rfRxBuf[idx], _rfRxBuf[idx] + sPos, _rfRxLen[idx] - sPos);
@@ -438,68 +441,70 @@ static void _rfcommSppCb(esp_spp_cb_event_t event, esp_spp_cb_param_t* param) {
         LOG_DEBUG(TAG_AUTH, "SPP event=%s(%d)", _sppEvtName(event), (int)event);
     }
     switch (event) {
-        case ESP_SPP_INIT_EVT:
-            if (param->init.status == ESP_SPP_SUCCESS) {
-                _rfcommReady = true;
-                LOG_INFO(TAG_RFCOMM, "SPP stack ready");
-            } else {
-                LOG_ERROR(TAG_RFCOMM, "SPP init failed: status=%d", (int)param->init.status);
-            }
-            break;
-        case ESP_SPP_OPEN_EVT: {
-            int idx = _rfcommPendingIdx;
-            if (idx < 0 || idx >= WHEEL_COUNT) {
-                idx = _findWheelByHandle(param->open.handle);
-            }
-            if (idx >= 0) {
-                _wheels[idx].sppHandle = param->open.handle;
-                _wheels[idx].connected = true;
-                _rfcommOpenStatus[idx] = param->open.status;
-                _rfcommOpenEvt[idx] = true;
-                _rfcommPendingIdx = -1;
-                LOG_INFO(TAG_RFCOMM, "%s wheel link open (status=%d, handle=%u)",
-                         _wheels[idx].name ? _wheels[idx].name : "?",
-                         (int)param->open.status,
-                         (unsigned)param->open.handle);
-            }
-            break;
+    case ESP_SPP_INIT_EVT:
+        if (param->init.status == ESP_SPP_SUCCESS) {
+            _rfcommReady = true;
+            LOG_INFO(TAG_RFCOMM, "SPP stack ready");
         }
-        case ESP_SPP_CLOSE_EVT: {
-            int idx = _findWheelByHandle(param->close.handle);
-            if (idx >= 0) {
-                _wheels[idx].connected = false;
-                _wheels[idx].protocolReady = false;
-                _wheels[idx].driveModeBits = 0;
-                _wheels[idx].sppHandle = 0;
-                _rfRxLen[idx] = 0;
-                _rfcommCloseEvt[idx] = true;
-                LOG_WARN(TAG_RFCOMM, "%s wheel disconnected",
-                         _wheels[idx].name ? _wheels[idx].name : "?");
-            }
-            break;
+        else {
+            LOG_ERROR(TAG_RFCOMM, "SPP init failed: status=%d", (int)param->init.status);
         }
-        case ESP_SPP_DATA_IND_EVT: {
-            int idx = _findWheelByHandle(param->data_ind.handle);
-            if (idx < 0) break;
-            size_t copy = param->data_ind.len;
-            if (copy > 0 && param->data_ind.data) {
-                if (_rfRxLen[idx] + copy > sizeof(_rfRxBuf[idx])) {
-                    size_t overflow = (_rfRxLen[idx] + copy) - sizeof(_rfRxBuf[idx]);
-                    if (overflow >= _rfRxLen[idx]) {
-                        _rfRxLen[idx] = 0;
-                    } else {
-                        memmove(_rfRxBuf[idx], _rfRxBuf[idx] + overflow, _rfRxLen[idx] - overflow);
-                        _rfRxLen[idx] -= overflow;
-                    }
+        break;
+    case ESP_SPP_OPEN_EVT: {
+        int idx = _rfcommPendingIdx;
+        if (idx < 0 || idx >= WHEEL_COUNT) {
+            idx = _findWheelByHandle(param->open.handle);
+        }
+        if (idx >= 0) {
+            _wheels[idx].sppHandle = param->open.handle;
+            _wheels[idx].connected = true;
+            _rfcommOpenStatus[idx] = param->open.status;
+            _rfcommOpenEvt[idx] = true;
+            _rfcommPendingIdx = -1;
+            LOG_INFO(TAG_RFCOMM, "%s wheel link open (status=%d, handle=%u)",
+                _wheels[idx].name ? _wheels[idx].name : "?",
+                (int)param->open.status,
+                (unsigned)param->open.handle);
+        }
+        break;
+    }
+    case ESP_SPP_CLOSE_EVT: {
+        int idx = _findWheelByHandle(param->close.handle);
+        if (idx >= 0) {
+            _wheels[idx].connected = false;
+            _wheels[idx].protocolReady = false;
+            _wheels[idx].driveModeBits = 0;
+            _wheels[idx].sppHandle = 0;
+            _rfRxLen[idx] = 0;
+            _rfcommCloseEvt[idx] = true;
+            LOG_WARN(TAG_RFCOMM, "%s wheel disconnected",
+                _wheels[idx].name ? _wheels[idx].name : "?");
+        }
+        break;
+    }
+    case ESP_SPP_DATA_IND_EVT: {
+        int idx = _findWheelByHandle(param->data_ind.handle);
+        if (idx < 0) break;
+        size_t copy = param->data_ind.len;
+        if (copy > 0 && param->data_ind.data) {
+            if (_rfRxLen[idx] + copy > sizeof(_rfRxBuf[idx])) {
+                size_t overflow = (_rfRxLen[idx] + copy) - sizeof(_rfRxBuf[idx]);
+                if (overflow >= _rfRxLen[idx]) {
+                    _rfRxLen[idx] = 0;
                 }
-                memcpy(_rfRxBuf[idx] + _rfRxLen[idx], param->data_ind.data, copy);
-                _rfRxLen[idx] += copy;
-                _rfcommConsumeBuffered(idx);
+                else {
+                    memmove(_rfRxBuf[idx], _rfRxBuf[idx] + overflow, _rfRxLen[idx] - overflow);
+                    _rfRxLen[idx] -= overflow;
+                }
             }
-            break;
+            memcpy(_rfRxBuf[idx] + _rfRxLen[idx], param->data_ind.data, copy);
+            _rfRxLen[idx] += copy;
+            _rfcommConsumeBuffered(idx);
         }
-        default:
-            break;
+        break;
+    }
+    default:
+        break;
     }
 }
 #endif
@@ -510,14 +515,14 @@ static void _rfcommSppCb(esp_spp_cb_event_t event, esp_spp_cb_param_t* param) {
 
 bool _wheelActive(int idx) {
     switch (WHEEL_MODE) {
-        case WHEEL_MODE_DUAL:
-            return true;
-        case WHEEL_MODE_LEFT_ONLY:
-            return idx == WHEEL_LEFT;
-        case WHEEL_MODE_RIGHT_ONLY:
-            return idx == WHEEL_RIGHT;
-        default:
-            return true;
+    case WHEEL_MODE_DUAL:
+        return true;
+    case WHEEL_MODE_LEFT_ONLY:
+        return idx == WHEEL_LEFT;
+    case WHEEL_MODE_RIGHT_ONLY:
+        return idx == WHEEL_RIGHT;
+    default:
+        return true;
     }
 }
 
@@ -588,14 +593,14 @@ static bool _transportIsProtocolConnected(const WheelConnState_t& w) {
 // ---------------------------------------------------------------------------
 
 bool _m25Encrypt(const uint8_t* key, const uint8_t* spp, uint8_t sppLen,
-                 uint8_t* out, size_t* outLen) {
+    uint8_t* out, size_t* outLen) {
     if (!key || !spp || !out || !outLen) {
         LOG_ERROR(TAG_CRYPTO, "BLE-ENC: NULL parameter provided");
         return false;
     }
-    
+
     // 1. PKCS7 pad SPP to 16-byte boundary
-    uint8_t padLen    = (uint8_t)(16 - (sppLen % 16));
+    uint8_t padLen = (uint8_t)(16 - (sppLen % 16));
     uint8_t paddedLen = sppLen + padLen;   // always 16 or 32 for our packets
 
     uint8_t padded[32];
@@ -605,7 +610,7 @@ bool _m25Encrypt(const uint8_t* key, const uint8_t* spp, uint8_t sppLen,
     // 2. Random IV
     uint8_t iv[16];
     esp_fill_random(iv, sizeof(iv));
-    
+
     // Verify RNG is working (all zeros would indicate uninitialized RNG)
     bool allZeros = true;
     for (int i = 0; i < 16; i++) {
@@ -639,13 +644,13 @@ bool _m25Encrypt(const uint8_t* key, const uint8_t* spp, uint8_t sppLen,
         mbedtls_aes_init(&ctx);
         mbedtls_aes_setkey_enc(&ctx, key, 128);
         mbedtls_aes_crypt_cbc(&ctx, MBEDTLS_AES_ENCRYPT, paddedLen,
-                               ivCopy, padded, encData);
+            ivCopy, padded, encData);
         mbedtls_aes_free(&ctx);
     }
 
     // 5. Build payload = iv_encrypted(16) + encrypted_data(paddedLen)
     uint8_t payload[64];
-    memcpy(payload,      ivEnc,   16);
+    memcpy(payload, ivEnc, 16);
     memcpy(payload + 16, encData, paddedLen);
     uint8_t payloadLen = (uint8_t)(16 + paddedLen);
 
@@ -662,7 +667,7 @@ bool _m25Encrypt(const uint8_t* key, const uint8_t* spp, uint8_t sppLen,
 
     // 7. Append CRC-16 (over the header + payload bytes, before byte stuffing)
     uint16_t crc = _m25Crc16(frame, frameLen);
-    frame[frameLen]     = (uint8_t)((crc >> 8) & 0xFF);
+    frame[frameLen] = (uint8_t)((crc >> 8) & 0xFF);
     frame[frameLen + 1] = (uint8_t)(crc & 0xFF);
     frameLen += 2;
 
@@ -672,39 +677,39 @@ bool _m25Encrypt(const uint8_t* key, const uint8_t* spp, uint8_t sppLen,
 }
 
 bool _m25Decrypt(const uint8_t* key, const uint8_t* frame, size_t frameLen,
-                 uint8_t* sppOut, size_t* sppLen) {
+    uint8_t* sppOut, size_t* sppLen) {
     if (!key || !frame || !sppOut || !sppLen) {
         LOG_ERROR(TAG_CRYPTO, "BLE-DEC: NULL parameter provided");
         return false;
     }
-    
+
     // Verify frame has minimum size
     if (frameLen < M25_HEADER_SIZE + 16 + 16 + M25_CRC_SIZE) {
         return false;
     }
-    
+
     // Parse header
     if (frame[0] != M25_HEADER_MARKER) return false;
     uint16_t declaredLen = ((uint16_t)frame[1] << 8) | frame[2];
-    
+
     // Verify CRC (over everything before the CRC bytes)
     size_t crcPos = frameLen - M25_CRC_SIZE;
     uint16_t expectedCrc = _m25Crc16(frame, crcPos);
     uint16_t receivedCrc = ((uint16_t)frame[crcPos] << 8) | frame[crcPos + 1];
     if (expectedCrc != receivedCrc) {
         LOG_WARN(TAG_CRYPTO, "BLE-DEC CRC mismatch: expected 0x%04X, got 0x%04X",
-                 expectedCrc, receivedCrc);
+            expectedCrc, receivedCrc);
         return false;
     }
-    
+
     // Extract encrypted IV (16 bytes after header)
     const uint8_t* ivEnc = frame + M25_HEADER_SIZE;
-    
+
     // Calculate encrypted data length (payload - IV - CRC)
     size_t encDataLen = frameLen - M25_HEADER_SIZE - 16 - M25_CRC_SIZE;
     if (encDataLen == 0 || encDataLen % 16 != 0) return false;
     const uint8_t* encData = ivEnc + 16;
-    
+
     // Decrypt IV with AES-128-ECB
     uint8_t iv[16];
     {
@@ -714,7 +719,7 @@ bool _m25Decrypt(const uint8_t* key, const uint8_t* frame, size_t frameLen,
         mbedtls_aes_crypt_ecb(&ctx, MBEDTLS_AES_DECRYPT, ivEnc, iv);
         mbedtls_aes_free(&ctx);
     }
-    
+
     // Decrypt data with AES-128-CBC
     uint8_t decrypted[64];
     {
@@ -724,17 +729,17 @@ bool _m25Decrypt(const uint8_t* key, const uint8_t* frame, size_t frameLen,
         mbedtls_aes_init(&ctx);
         mbedtls_aes_setkey_dec(&ctx, key, 128);
         mbedtls_aes_crypt_cbc(&ctx, MBEDTLS_AES_DECRYPT, encDataLen,
-                               ivCopy, encData, decrypted);
+            ivCopy, encData, decrypted);
         mbedtls_aes_free(&ctx);
     }
-    
+
     // Remove PKCS7 padding
     uint8_t padLen = decrypted[encDataLen - 1];
     if (padLen == 0 || padLen > 16 || padLen > encDataLen) {
         LOG_WARN(TAG_CRYPTO, "BLE-DEC invalid PKCS7 padding: %d", padLen);
         return false;
     }
-    
+
     // Verify padding bytes
     for (size_t i = encDataLen - padLen; i < encDataLen; i++) {
         if (decrypted[i] != padLen) {
@@ -742,7 +747,7 @@ bool _m25Decrypt(const uint8_t* key, const uint8_t* frame, size_t frameLen,
             return false;
         }
     }
-    
+
     *sppLen = encDataLen - padLen;
     memcpy(sppOut, decrypted, *sppLen);
     return true;
@@ -753,11 +758,11 @@ bool _m25Decrypt(const uint8_t* key, const uint8_t* frame, size_t frameLen,
 // ---------------------------------------------------------------------------
 
 size_t _buildAndEncrypt(int idx, uint8_t serviceId, uint8_t paramId,
-                        const uint8_t* payload, uint8_t payloadLen,
-                        uint8_t* out,
-                        uint8_t* sppOut,
-                        uint8_t* sppLenOut) {
-    WheelConnState_t &w = _wheels[idx];
+    const uint8_t* payload, uint8_t payloadLen,
+    uint8_t* out,
+    uint8_t* sppOut,
+    uint8_t* sppLenOut) {
+    WheelConnState_t& w = _wheels[idx];
 
     // Assemble plaintext SPP packet (6-byte header + payload)
     uint8_t spp[32];
@@ -795,14 +800,14 @@ static const char* _wheelNameOrDefault(int idx) {
 static const char* _paramName(uint8_t serviceId, uint8_t paramId) {
     if (serviceId == M25_SRV_APP_MGMT) {
         switch (paramId) {
-            case M25_PARAM_WRITE_SYSTEM_MODE:  return "WRITE_SYSTEM_MODE";
-            case M25_PARAM_WRITE_DRIVE_MODE:   return "WRITE_DRIVE_MODE";
-            case M25_PARAM_WRITE_REMOTE_SPEED: return "WRITE_REMOTE_SPEED";
-            case M25_PARAM_WRITE_ASSIST_LEVEL: return "WRITE_ASSIST_LEVEL";
-            case M25_PARAM_READ_ASSIST_LEVEL:  return "READ_ASSIST_LEVEL";
-            case M25_PARAM_READ_DRIVE_MODE:    return "READ_DRIVE_MODE";
-            case M25_PARAM_READ_CRUISE_VALUES: return "READ_CRUISE_VALUES";
-            default:                           return "APP_MGMT";
+        case M25_PARAM_WRITE_SYSTEM_MODE:  return "WRITE_SYSTEM_MODE";
+        case M25_PARAM_WRITE_DRIVE_MODE:   return "WRITE_DRIVE_MODE";
+        case M25_PARAM_WRITE_REMOTE_SPEED: return "WRITE_REMOTE_SPEED";
+        case M25_PARAM_WRITE_ASSIST_LEVEL: return "WRITE_ASSIST_LEVEL";
+        case M25_PARAM_READ_ASSIST_LEVEL:  return "READ_ASSIST_LEVEL";
+        case M25_PARAM_READ_DRIVE_MODE:    return "READ_DRIVE_MODE";
+        case M25_PARAM_READ_CRUISE_VALUES: return "READ_CRUISE_VALUES";
+        default:                           return "APP_MGMT";
         }
     }
     if (serviceId == M25_SRV_BATT_MGMT) {
@@ -832,34 +837,36 @@ static void _hexSnippet(const uint8_t* data, size_t len, char* out, size_t outSi
 }
 
 static void _debugLogTxPacket(int idx,
-                              uint8_t serviceId,
-                              uint8_t paramId,
-                              const uint8_t* payload,
-                              uint8_t payloadLen,
-                              const uint8_t* spp,
-                              uint8_t sppLen,
-                              const uint8_t* wire,
-                              size_t wireLen) {
+    uint8_t serviceId,
+    uint8_t paramId,
+    const uint8_t* payload,
+    uint8_t payloadLen,
+    const uint8_t* spp,
+    uint8_t sppLen,
+    const uint8_t* wire,
+    size_t wireLen) {
     const char* wheelName = _wheelNameOrDefault(idx);
     const char* paramName = _paramName(serviceId, paramId);
     uint8_t telegramId = (sppLen >= 2) ? spp[1] : 0;
 
     LOG_DEBUG(TAG_TX, "%s %s svc=0x%02X param=0x%02X tg=0x%02X payloadLen=%u",
-              wheelName, paramName, serviceId, paramId, telegramId, payloadLen);
+        wheelName, paramName, serviceId, paramId, telegramId, payloadLen);
 
     if (serviceId == M25_SRV_APP_MGMT && paramId == M25_PARAM_WRITE_DRIVE_MODE && payloadLen >= 1) {
         uint8_t mode = payload[0];
         LOG_DEBUG(TAG_TX, "drive_mode=0x%02X remote=%u cruise=%u auto_hold=%u",
-                  mode,
-                  (mode & M25_DRIVE_MODE_REMOTE) ? 1 : 0,
-                  (mode & M25_DRIVE_MODE_CRUISE) ? 1 : 0,
-                  (mode & M25_DRIVE_MODE_AUTO_HOLD) ? 1 : 0);
-    } else if (serviceId == M25_SRV_APP_MGMT && paramId == M25_PARAM_WRITE_REMOTE_SPEED && payloadLen >= 2) {
+            mode,
+            (mode & M25_DRIVE_MODE_REMOTE) ? 1 : 0,
+            (mode & M25_DRIVE_MODE_CRUISE) ? 1 : 0,
+            (mode & M25_DRIVE_MODE_AUTO_HOLD) ? 1 : 0);
+    }
+    else if (serviceId == M25_SRV_APP_MGMT && paramId == M25_PARAM_WRITE_REMOTE_SPEED && payloadLen >= 2) {
         int16_t raw = (int16_t)(((uint16_t)payload[0] << 8) | payload[1]);
         float pct = (float)raw / M25_SPEED_SCALE;
         LOG_DEBUG(TAG_TX, "remote_speed raw=%d pct=%+.1f payload=%02X %02X",
-                  (int)raw, (double)pct, payload[0], payload[1]);
-    } else if (payloadLen > 0) {
+            (int)raw, (double)pct, payload[0], payload[1]);
+    }
+    else if (payloadLen > 0) {
         char payloadHex[192];
         _hexSnippet(payload, payloadLen, payloadHex, sizeof(payloadHex));
         LOG_DEBUG(TAG_TX, "payload: %s", payloadHex);
@@ -877,7 +884,7 @@ static void _debugLogTxPacket(int idx,
 // Returns true while the wheel is still considered usable (transient failure),
 // false once the disconnect threshold has been reached.
 static bool _handleTxFailure(int idx, uint8_t serviceId, uint8_t paramId, const char* reason) {
-    WheelConnState_t &w = _wheels[idx];
+    WheelConnState_t& w = _wheels[idx];
     const uint32_t now = millis();
 
     // Failures far apart should not accumulate into a disconnect decision.
@@ -890,10 +897,10 @@ static bool _handleTxFailure(int idx, uint8_t serviceId, uint8_t paramId, const 
     if (Logger::instance().isTagEnabled(TAG_BLE) &&
         (w.txFailStreak == 1 || (w.txFailStreak % BLE_TX_FAIL_LOG_EVERY) == 0)) {
         LOG_WARN(TAG_BLE, "%s wheel TX fail: %s (svc=0x%02X param=0x%02X, streak=%u/%u)",
-                 w.name ? w.name : "?", reason ? reason : "unknown",
-                 serviceId, paramId,
-                 (unsigned)w.txFailStreak,
-                 (unsigned)BLE_TX_FAIL_DISCONNECT_STREAK);
+            w.name ? w.name : "?", reason ? reason : "unknown",
+            serviceId, paramId,
+            (unsigned)w.txFailStreak,
+            (unsigned)BLE_TX_FAIL_DISCONNECT_STREAK);
     }
 
     if (w.txFailStreak < BLE_TX_FAIL_DISCONNECT_STREAK) {
@@ -901,12 +908,12 @@ static bool _handleTxFailure(int idx, uint8_t serviceId, uint8_t paramId, const 
     }
 
     LOG_ERROR(TAG_BLE, "%s wheel marked disconnected after TX failures (%u in %ums, last svc=0x%02X param=0x%02X, reason=%s)",
-              w.name ? w.name : "?",
-              (unsigned)w.txFailStreak,
-              (unsigned)BLE_TX_FAIL_WINDOW_MS,
-              serviceId, paramId,
-              reason ? reason : "unknown");
-    w.connected     = false;
+        w.name ? w.name : "?",
+        (unsigned)w.txFailStreak,
+        (unsigned)BLE_TX_FAIL_WINDOW_MS,
+        serviceId, paramId,
+        reason ? reason : "unknown");
+    w.connected = false;
     w.protocolReady = false;
     w.driveModeBits = 0;
     w.driveModeReadbackBits = 0;
@@ -918,8 +925,8 @@ static bool _handleTxFailure(int idx, uint8_t serviceId, uint8_t paramId, const 
 static void _clearTxFailureState(WheelConnState_t& w) {
     if (w.txFailStreak > 0 && Logger::instance().isTagEnabled(TAG_BLE)) {
         LOG_INFO(TAG_BLE, "%s wheel TX recovered after %u failures",
-                 w.name ? w.name : "?",
-                 (unsigned)w.txFailStreak);
+            w.name ? w.name : "?",
+            (unsigned)w.txFailStreak);
     }
     w.txFailStreak = 0;
     w.lastTxFailMs = 0;
@@ -929,32 +936,33 @@ static void _txStatsCountAttempt(uint8_t paramId, const uint8_t* payload, uint8_
     portENTER_CRITICAL(&_txStatsMux);
     _txStats.totalAttempts++;
     switch (paramId) {
-        case M25_PARAM_WRITE_REMOTE_SPEED:
-            _txStats.remoteSpeed++;
-            if (payload && payloadLen >= 2 && payload[0] == 0 && payload[1] == 0) {
-                _txStats.remoteSpeedStop++;
-            } else {
-                _txStats.remoteSpeedMotion++;
-            }
-            break;
-        case M25_PARAM_WRITE_DRIVE_MODE:
-            _txStats.driveMode++;
-            break;
-        case M25_PARAM_WRITE_ASSIST_LEVEL:
-            _txStats.assistLevel++;
-            break;
-        case M25_PARAM_READ_SOC:
-            _txStats.readSoc++;
-            break;
-        case M25_PARAM_READ_SW_VERSION:
-            _txStats.readFw++;
-            break;
-        case M25_PARAM_READ_CRUISE_VALUES:
-            _txStats.readCruise++;
-            break;
-        default:
-            _txStats.other++;
-            break;
+    case M25_PARAM_WRITE_REMOTE_SPEED:
+        _txStats.remoteSpeed++;
+        if (payload && payloadLen >= 2 && payload[0] == 0 && payload[1] == 0) {
+            _txStats.remoteSpeedStop++;
+        }
+        else {
+            _txStats.remoteSpeedMotion++;
+        }
+        break;
+    case M25_PARAM_WRITE_DRIVE_MODE:
+        _txStats.driveMode++;
+        break;
+    case M25_PARAM_WRITE_ASSIST_LEVEL:
+        _txStats.assistLevel++;
+        break;
+    case M25_PARAM_READ_SOC:
+        _txStats.readSoc++;
+        break;
+    case M25_PARAM_READ_SW_VERSION:
+        _txStats.readFw++;
+        break;
+    case M25_PARAM_READ_CRUISE_VALUES:
+        _txStats.readCruise++;
+        break;
+    default:
+        _txStats.other++;
+        break;
     }
     portEXIT_CRITICAL(&_txStatsMux);
 }
@@ -963,7 +971,8 @@ static void _txStatsCountResult(bool ok) {
     portENTER_CRITICAL(&_txStatsMux);
     if (ok) {
         _txStats.totalSuccess++;
-    } else {
+    }
+    else {
         _txStats.totalFail++;
     }
     portEXIT_CRITICAL(&_txStatsMux);
@@ -982,8 +991,8 @@ static void _txStatsCountSpeedSkippedDueToMode() {
 }
 
 bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
-                  const uint8_t* payload, uint8_t payloadLen) {
-    WheelConnState_t &w = _wheels[idx];
+    const uint8_t* payload, uint8_t payloadLen) {
+    WheelConnState_t& w = _wheels[idx];
     _txStatsCountAttempt(paramId, payload, payloadLen);
     if (!_transportLinkReadyForSend(w)) return false;
 
@@ -1013,12 +1022,14 @@ bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
                 if (!sent) {
                     // write-with-response: server rejected or timed out
                     ok = _handleTxFailure(idx, serviceId, paramId, "writeValue returned false");
-                } else {
+                }
+                else {
                     _clearTxFailureState(w);
                     ok = true;
                     _bleRecordFrame(BLE_REC_TX, (uint8_t)idx, buf, len);
                 }
-            } catch (...) {
+            }
+            catch (...) {
                 ok = _handleTxFailure(idx, serviceId, paramId, "writeValue exception");
             }
 #endif
@@ -1028,16 +1039,19 @@ bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
                 char msg[64];
                 snprintf(msg, sizeof(msg), "esp_spp_write rc=%s", esp_err_to_name(rc));
                 ok = _handleTxFailure(idx, serviceId, paramId, msg);
-            } else {
+            }
+            else {
                 _clearTxFailureState(w);
                 ok = true;
                 _bleRecordFrame(BLE_REC_TX, (uint8_t)idx, buf, len);
             }
 #endif
-        } else {
+        }
+        else {
             ok = _handleTxFailure(idx, serviceId, paramId, "build/encrypt failed");
         }
-    } else {
+    }
+    else {
         ok = _handleTxFailure(idx, serviceId, paramId, "wheel not connected");
     }
 
@@ -1054,46 +1068,46 @@ bool _parseResponseHeader(const uint8_t* spp, size_t sppLen, ResponseHeader* hdr
     if (!spp || !hdr || sppLen < 6) {
         return false;
     }
-    
+
     hdr->protocolId = spp[0];
     hdr->telegramId = spp[1];
-    hdr->sourceId   = spp[2];
-    hdr->destId     = spp[3];
-    hdr->serviceId  = spp[4];
-    hdr->paramId    = spp[5];
-    hdr->payload    = (sppLen > 6) ? (spp + 6) : nullptr;
+    hdr->sourceId = spp[2];
+    hdr->destId = spp[3];
+    hdr->serviceId = spp[4];
+    hdr->paramId = spp[5];
+    hdr->payload = (sppLen > 6) ? (spp + 6) : nullptr;
     hdr->payloadLen = (sppLen > 6) ? (sppLen - 6) : 0;
-    
+
     return true;
 }
 
 bool _parseResponseData(const ResponseHeader* hdr, ResponseData* data) {
     if (!hdr || !data) return false;
-    
+
     memset(data, 0, sizeof(ResponseData));
-    
+
     // Check for ACK/NACK
     data->isAck = _isAck(hdr->paramId);
     data->isNack = _isNack(hdr->paramId);
-    
+
     if (data->isNack) {
         data->nackCode = hdr->paramId;
         return true;
     }
-    
+
     if (data->isAck) {
         return true;  // Simple ACK with no payload
     }
-    
+
     const uint8_t* p = hdr->payload;
     size_t len = hdr->payloadLen;
-    
+
     // Parse based on service and parameter ID.
     // The wheel echoes the READ param ID back (not a separate STATUS ID),
     // so both IDs are accepted here.
     if (hdr->serviceId == M25_SRV_BATT_MGMT) {
         if ((hdr->paramId == M25_PARAM_STATUS_SOC ||
-             hdr->paramId == M25_PARAM_READ_SOC) && len >= 1) {
+            hdr->paramId == M25_PARAM_READ_SOC) && len >= 1) {
             data->soc.batteryPercent = _parseUint8(p, 0);
             return true;
         }
@@ -1126,16 +1140,16 @@ bool _parseResponseData(const ResponseHeader* hdr, ResponseData* data) {
             //   [5-8] overall_distance (uint32_be, 0.01 m units)
             //   [9-10] push_counter (uint16_be)
             //   [11]  error
-            data->cruiseValues.speed        = _parseUint16BE(p, 2);
-            data->cruiseValues.distanceMm   = _parseUint32BE(p, 5);
-            data->cruiseValues.distanceKm   = (float)data->cruiseValues.distanceMm * 0.00001f;
-            data->cruiseValues.pushCounter  = _parseUint16BE(p, 9);
+            data->cruiseValues.speed = _parseUint16BE(p, 2);
+            data->cruiseValues.distanceMm = _parseUint32BE(p, 5);
+            data->cruiseValues.distanceKm = (float)data->cruiseValues.distanceMm * 0.00001f;
+            data->cruiseValues.pushCounter = _parseUint16BE(p, 9);
             return true;
         }
         else if (hdr->paramId == M25_PARAM_READ_CRUISE_VALUES && len >= 2) {
             // Compact read response (D1): 2-byte odometer, unit 0.01 m (same scale as D2)
-            data->cruiseValues.distanceMm   = (uint32_t)_parseUint16BE(p, 0);
-            data->cruiseValues.distanceKm   = (float)data->cruiseValues.distanceMm * 0.00001f;
+            data->cruiseValues.distanceMm = (uint32_t)_parseUint16BE(p, 0);
+            data->cruiseValues.distanceKm = (float)data->cruiseValues.distanceMm * 0.00001f;
             return true;
         }
         // Also handle write command echoes (ACKs with payload)
@@ -1160,113 +1174,105 @@ bool _parseResponseData(const ResponseHeader* hdr, ResponseData* data) {
         if (hdr->paramId == M25_PARAM_STATUS_SW_VERSION && len >= 4) {
             // 4-byte STATUS form: devState + major + minor + patch
             data->swVersion.devState = _parseUint8(p, 0);
-            data->swVersion.major    = _parseUint8(p, 1);
-            data->swVersion.minor    = _parseUint8(p, 2);
-            data->swVersion.patch    = _parseUint8(p, 3);
+            data->swVersion.major = _parseUint8(p, 1);
+            data->swVersion.minor = _parseUint8(p, 2);
+            data->swVersion.patch = _parseUint8(p, 3);
             return true;
         }
         if (hdr->paramId == M25_PARAM_READ_SW_VERSION && len >= 3) {
             // 3-byte READ response: major + minor + patch (no devState prefix)
             data->swVersion.devState = 0;
-            data->swVersion.major    = _parseUint8(p, 0);
-            data->swVersion.minor    = _parseUint8(p, 1);
-            data->swVersion.patch    = _parseUint8(p, 2);
+            data->swVersion.major = _parseUint8(p, 0);
+            data->swVersion.minor = _parseUint8(p, 1);
+            data->swVersion.patch = _parseUint8(p, 2);
             return true;
         }
     }
-    
+
     return false;  // Unknown response type
 }
 
 void _printResponse(const char* wheelName, const ResponseHeader* hdr, const ResponseData* data) {
     if (!wheelName || !hdr) return;
-    
-    if (debugFlags & DBG_BLE) {
-        Serial.printf("[BLE] %s wheel response:\n", wheelName);
-        Serial.printf("  Protocol: 0x%02X, Telegram: 0x%02X\n", hdr->protocolId, hdr->telegramId);
-        Serial.printf("  Src: 0x%02X, Dest: 0x%02X\n", hdr->sourceId, hdr->destId);
-        Serial.printf("  Service: 0x%02X, Param: 0x%02X\n", hdr->serviceId, hdr->paramId);
-        
+
+    if (Logger::instance().isTagEnabled(TAG_BLE)) {
+        LOG_DEBUG(TAG_BLE, "%s wheel response:", wheelName);
+        LOG_DEBUG(TAG_BLE, "Protocol: 0x%02X, Telegram: 0x%02X", hdr->protocolId, hdr->telegramId);
+        LOG_DEBUG(TAG_BLE, "Src: 0x%02X, Dest: 0x%02X", hdr->sourceId, hdr->destId);
+        LOG_DEBUG(TAG_BLE, "Service: 0x%02X, Param: 0x%02X", hdr->serviceId, hdr->paramId);
+
         if (hdr->payloadLen > 0) {
-            Serial.printf("  Payload (%zu bytes): ", hdr->payloadLen);
-            for (size_t i = 0; i < hdr->payloadLen && i < 16; i++) {
-                Serial.printf("%02X ", hdr->payload[i]);
-            }
-            if (hdr->payloadLen > 16) Serial.print("...");
-            Serial.println();
+            char payloadHex[192];
+            _hexSnippet(hdr->payload, hdr->payloadLen, payloadHex, sizeof(payloadHex), 16);
+            LOG_DEBUG(TAG_BLE, "Payload (%zu bytes): %s", hdr->payloadLen, payloadHex);
         }
     }
-    
+
     if (!data) return;
-    
+
     // Interpret response
     if (data->isNack) {
-        Serial.printf("[BLE] %s wheel NACK: 0x%02X - %s\n",
-                     wheelName, data->nackCode, _nackCodeToString(data->nackCode));
+        LOG_WARN(TAG_BLE, "%s wheel NACK: 0x%02X - %s",
+            wheelName, data->nackCode, _nackCodeToString(data->nackCode));
     }
     else if (data->isAck) {
-        if (debugFlags & DBG_BLE) {
-            Serial.printf("[BLE] %s wheel ACK", wheelName);
+        if (Logger::instance().isTagEnabled(TAG_BLE)) {
             if (hdr->payloadLen > 0) {
-                Serial.printf(" (payload %zu bytes:", hdr->payloadLen);
-                for (size_t _pi = 0; _pi < hdr->payloadLen && _pi < 8; _pi++)
-                    Serial.printf(" %02X", hdr->payload[_pi]);
-                if (hdr->payloadLen > 8) Serial.print(" ...");
-                Serial.print(")");
+                char payloadHex[160];
+                _hexSnippet(hdr->payload, hdr->payloadLen, payloadHex, sizeof(payloadHex), 8);
+                LOG_DEBUG(TAG_BLE, "%s wheel ACK (payload %zu bytes: %s)", wheelName, hdr->payloadLen, payloadHex);
             }
-            Serial.println();
-        } else if (hdr->payloadLen > 0) {
+            else {
+                LOG_DEBUG(TAG_BLE, "%s wheel ACK", wheelName);
+            }
+        }
+        else if (hdr->payloadLen > 0) {
             // ACK from a read command may carry the response data in its payload.
             // Log it unconditionally so protocol surprises are always visible.
-            if (debugFlags & DBG_BLE) {
-                Serial.printf("[BLE] %s wheel ACK with payload (srv=0x%02X, param=0x%02X, %zu bytes:",
-                             wheelName, hdr->serviceId, hdr->paramId, hdr->payloadLen);
-                for (size_t _pi = 0; _pi < hdr->payloadLen && _pi < 8; _pi++)
-                    Serial.printf(" %02X", hdr->payload[_pi]);
-                if (hdr->payloadLen > 8) Serial.print(" ...");
-                Serial.println(")");
-            }
+            char payloadHex[160];
+            _hexSnippet(hdr->payload, hdr->payloadLen, payloadHex, sizeof(payloadHex), 8);
+            LOG_INFO(TAG_BLE, "%s wheel ACK with payload (srv=0x%02X, param=0x%02X, %zu bytes: %s)",
+                wheelName, hdr->serviceId, hdr->paramId, hdr->payloadLen, payloadHex);
         }
     }
     else {
-        // Print parsed data based on response type (gate on DBG_TELEMETRY)
-        if (debugFlags & DBG_TELEMETRY) {
+        if (Logger::instance().isTagEnabled(TAG_TELEMETRY)) {
             if (hdr->serviceId == M25_SRV_BATT_MGMT &&
                 (hdr->paramId == M25_PARAM_STATUS_SOC || hdr->paramId == M25_PARAM_READ_SOC)) {
-                Serial.printf("[BLE] %s wheel battery: %d%%\n", wheelName, data->soc.batteryPercent);
+                LOG_INFO(TAG_TELEMETRY, "%s wheel battery: %d%%", wheelName, data->soc.batteryPercent);
             }
             else if (hdr->serviceId == M25_SRV_APP_MGMT) {
                 if (hdr->paramId == M25_PARAM_STATUS_ASSIST_LEVEL) {
                     const char* levelName = (data->assistLevel.level == 0) ? "Indoor" :
-                                           (data->assistLevel.level == 1) ? "Outdoor" :
-                                           (data->assistLevel.level == 2) ? "Learning" : "Unknown";
-                    Serial.printf("[BLE] %s wheel assist level: %s\n", wheelName, levelName);
+                        (data->assistLevel.level == 1) ? "Outdoor" :
+                        (data->assistLevel.level == 2) ? "Learning" : "Unknown";
+                    LOG_INFO(TAG_TELEMETRY, "%s wheel assist level: %s", wheelName, levelName);
                 }
-                else if (hdr->paramId == M25_PARAM_STATUS_DRIVE_MODE || 
-                         hdr->paramId == M25_PARAM_WRITE_DRIVE_MODE) {
-                    Serial.printf("[BLE] %s wheel drive mode: 0x%02X (", wheelName, data->driveMode.mode);
-                    if (data->driveMode.remote) Serial.print("REMOTE ");
-                    if (data->driveMode.cruise) Serial.print("CRUISE ");
-                    if (data->driveMode.autoHold) Serial.print("AUTO_HOLD ");
-                    if (data->driveMode.mode == 0) Serial.print("NORMAL");
-                    Serial.println(")");
+                else if (hdr->paramId == M25_PARAM_STATUS_DRIVE_MODE ||
+                    hdr->paramId == M25_PARAM_WRITE_DRIVE_MODE) {
+                    char modeDesc[48] = "";
+                    if (data->driveMode.remote) strcat(modeDesc, "REMOTE ");
+                    if (data->driveMode.cruise) strcat(modeDesc, "CRUISE ");
+                    if (data->driveMode.autoHold) strcat(modeDesc, "AUTO_HOLD ");
+                    if (data->driveMode.mode == 0) strcat(modeDesc, "NORMAL");
+                    LOG_INFO(TAG_TELEMETRY, "%s wheel drive mode: 0x%02X (%s)", wheelName, data->driveMode.mode, modeDesc);
                 }
                 else if (hdr->paramId == M25_PARAM_CRUISE_VALUES) {
-                    Serial.printf("[BLE] %s wheel cruise: %.2f km, speed %d, push %d\n",
-                                 wheelName, data->cruiseValues.distanceKm,
-                                 data->cruiseValues.speed, data->cruiseValues.pushCounter);
+                    LOG_INFO(TAG_TELEMETRY, "%s wheel cruise: %.2f km, speed %d, push %d",
+                        wheelName, data->cruiseValues.distanceKm,
+                        data->cruiseValues.speed, data->cruiseValues.pushCounter);
                 }
                 else if (hdr->paramId == M25_PARAM_READ_CRUISE_VALUES) {
-                    Serial.printf("[BLE] %s wheel odometer: %.3f km\n",
-                                 wheelName, data->cruiseValues.distanceKm);
+                    LOG_INFO(TAG_TELEMETRY, "%s wheel odometer: %.3f km",
+                        wheelName, data->cruiseValues.distanceKm);
                 }
             }
             else if (hdr->serviceId == M25_SRV_VERSION_MGMT &&
-                     (hdr->paramId == M25_PARAM_STATUS_SW_VERSION ||
-                      hdr->paramId == M25_PARAM_READ_SW_VERSION)) {
-                Serial.printf("[BLE] %s wheel firmware: %d.%d.%d\n",
-                             wheelName, data->swVersion.major, data->swVersion.minor,
-                             data->swVersion.patch);
+                (hdr->paramId == M25_PARAM_STATUS_SW_VERSION ||
+                    hdr->paramId == M25_PARAM_READ_SW_VERSION)) {
+                LOG_INFO(TAG_TELEMETRY, "%s wheel firmware: %d.%d.%d",
+                    wheelName, data->swVersion.major, data->swVersion.minor,
+                    data->swVersion.patch);
             }
         }
     }
@@ -1282,49 +1288,49 @@ void _updateWheelCache(int idx, const ResponseHeader* hdr, const ResponseData* d
 
     if (hdr->serviceId == M25_SRV_BATT_MGMT &&
         (hdr->paramId == M25_PARAM_STATUS_SOC || hdr->paramId == M25_PARAM_READ_SOC)) {
-        w.batteryPct   = (int8_t)data->soc.batteryPercent;
+        w.batteryPct = (int8_t)data->soc.batteryPercent;
         w.batteryValid = true;
     }
     else if (hdr->serviceId == M25_SRV_VERSION_MGMT &&
-             (hdr->paramId == M25_PARAM_STATUS_SW_VERSION ||
-              hdr->paramId == M25_PARAM_READ_SW_VERSION)) {
+        (hdr->paramId == M25_PARAM_STATUS_SW_VERSION ||
+            hdr->paramId == M25_PARAM_READ_SW_VERSION)) {
         w.fwMajor = data->swVersion.major;
         w.fwMinor = data->swVersion.minor;
         w.fwPatch = data->swVersion.patch;
         w.fwValid = true;
     }
     else if (hdr->serviceId == M25_SRV_APP_MGMT &&
-             (hdr->paramId == M25_PARAM_STATUS_DRIVE_MODE ||
-              hdr->paramId == M25_PARAM_READ_DRIVE_MODE)) {
+        (hdr->paramId == M25_PARAM_STATUS_DRIVE_MODE ||
+            hdr->paramId == M25_PARAM_READ_DRIVE_MODE)) {
         w.driveModeBits = data->driveMode.mode;
         w.driveModeReadbackBits = data->driveMode.mode;
         w.driveModeReadbackMs = millis();
         w.driveModeReadbackValid = true;
     }
     else if (hdr->serviceId == M25_SRV_APP_MGMT &&
-             (hdr->paramId == M25_PARAM_CRUISE_VALUES ||
-              hdr->paramId == M25_PARAM_READ_CRUISE_VALUES)) {
-        w.distanceKm    = data->cruiseValues.distanceKm;
+        (hdr->paramId == M25_PARAM_CRUISE_VALUES ||
+            hdr->paramId == M25_PARAM_READ_CRUISE_VALUES)) {
+        w.distanceKm = data->cruiseValues.distanceKm;
         w.distanceValid = true;
     }
 }
 
 void _parseSppPacket(const uint8_t* spp, size_t sppLen, int wheelIdx) {
     const char* wheelName = (wheelIdx >= 0 && wheelIdx < WHEEL_COUNT &&
-                             _wheels[wheelIdx].name)
-                            ? _wheels[wheelIdx].name : "Unknown";
+        _wheels[wheelIdx].name)
+        ? _wheels[wheelIdx].name : "Unknown";
     ResponseHeader hdr;
     if (!_parseResponseHeader(spp, sppLen, &hdr)) {
-        Serial.printf("[BLE] %s wheel: Failed to parse SPP header\n", wheelName);
+        LOG_WARN(TAG_BLE, "%s wheel: Failed to parse SPP header", wheelName);
         return;
     }
 
     ResponseData data;
     bool parsed = _parseResponseData(&hdr, &data);
 
-    if (!parsed && debugFlags & DBG_BLE) {
-        Serial.printf("[BLE] %s wheel: Unrecognized response (srv=0x%02X, param=0x%02X, payloadLen=%zu)\n",
-                     wheelName, hdr.serviceId, hdr.paramId, hdr.payloadLen);
+    if (!parsed && Logger::instance().isTagEnabled(TAG_BLE)) {
+        LOG_DEBUG(TAG_BLE, "%s wheel: Unrecognized response (srv=0x%02X, param=0x%02X, payloadLen=%zu)",
+            wheelName, hdr.serviceId, hdr.paramId, hdr.payloadLen);
     }
 
     if (parsed) {
@@ -1343,46 +1349,40 @@ void _notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size_t leng
     // Find which wheel this notification is for
     for (int i = 0; i < WHEEL_COUNT; i++) {
         if (_wheels[i].txChar == pChar) {
-            WheelConnState_t &w = _wheels[i];
-            
+            WheelConnState_t& w = _wheels[i];
+
             // Capture raw incoming frame for traffic recorder
             _bleRecordFrame(BLE_REC_RX, (uint8_t)i, pData, length);
             // Update notify timestamp so the stale-notify watchdog knows this wheel is alive
             _wheels[i].lastNotifyMs = millis();
 
             // Raw hex dump (DBG_PROTO: low-level frame debugging)
-            if (debugFlags & DBG_PROTO) {
-                Serial.print("[BLE] Raw data: ");
-                for (size_t i = 0; i < length && i < 48; i++) {
-                    Serial.printf("%02X ", pData[i]);
-                }
-                if (length > 48) Serial.print("...");
-                Serial.println();
+            if (Logger::instance().isTagEnabled(TAG_TX)) {
+                char rawHex[192];
+                _hexSnippet(pData, length, rawHex, sizeof(rawHex), 48);
+                LOG_DEBUG(TAG_TX, "Raw data: %s", rawHex);
             }
-            
+
             // Remove byte stuffing
             uint8_t unstuffed[128];
             size_t unstuffedLen = _removeDelimiters(pData, length, unstuffed, sizeof(unstuffed));
-            
-            if (debugFlags & DBG_PROTO) {
-                Serial.printf("[BLE] After unstuffing: %zu bytes\n", unstuffedLen);
+
+            if (Logger::instance().isTagEnabled(TAG_TX)) {
+                LOG_DEBUG(TAG_TX, "After unstuffing: %zu bytes", unstuffedLen);
                 if (unstuffedLen != length) {
-                    Serial.print("  Unstuffed: ");
-                    for (size_t i = 0; i < unstuffedLen && i < 48; i++) {
-                        Serial.printf("%02X ", unstuffed[i]);
-                    }
-                    if (unstuffedLen > 48) Serial.print("...");
-                    Serial.println();
+                    char unstuffedHex[192];
+                    _hexSnippet(unstuffed, unstuffedLen, unstuffedHex, sizeof(unstuffedHex), 48);
+                    LOG_DEBUG(TAG_TX, "Unstuffed: %s", unstuffedHex);
                 }
             }
-            
+
             // Check minimum frame size before attempting decrypt
             if (unstuffedLen < M25_HEADER_SIZE + 16 + 16 + M25_CRC_SIZE) {
-                Serial.printf("[BLE] %s wheel: Frame too short (%zu bytes, need >= 37)\n", 
-                             w.name ? w.name : "Unknown", unstuffedLen);
+                LOG_WARN(TAG_BLE, "%s wheel: Frame too short (%zu bytes, need >= 37)",
+                    w.name ? w.name : "Unknown", unstuffedLen);
                 break;
             }
-            
+
             // Decrypt frame
             uint8_t sppPacket[64];
             size_t sppLen = 0;
@@ -1390,16 +1390,17 @@ void _notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size_t leng
                 // Mark first successful decryption (encryption validated)
                 if (!w.receivedFirstAck) {
                     w.receivedFirstAck = true;
-                    Serial.printf("[BLE] %s wheel: First response received (%zu bytes) - encryption validated\n", 
-                                 w.name ? w.name : "Unknown", length);
+                    LOG_INFO(TAG_BLE, "%s wheel: First response received (%zu bytes) - encryption validated",
+                        w.name ? w.name : "Unknown", length);
                 }
-                
+
                 // Parse SPP packet structure
                 _parseSppPacket(sppPacket, sppLen, i);
-            } else {
-                Serial.printf("[BLE] %s wheel: Decryption failed\n", w.name ? w.name : "Unknown");
             }
-            
+            else {
+                LOG_WARN(TAG_CRYPTO, "%s wheel: Decryption failed", w.name ? w.name : "Unknown");
+            }
+
             break;
         }
     }
@@ -1414,18 +1415,18 @@ void _notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size_t leng
 void M25DisconnectCallback::onConnect(BLEClient*) {}
 
 void M25DisconnectCallback::onDisconnect(BLEClient*) {
-    _wheels[wheelIdx].connected     = false;
+    _wheels[wheelIdx].connected = false;
     _wheels[wheelIdx].protocolReady = false;
     _wheels[wheelIdx].driveModeBits = 0;
     _wheels[wheelIdx].driveModeReadbackBits = 0;
     _wheels[wheelIdx].driveModeReadbackMs = 0;
     _wheels[wheelIdx].driveModeReadbackValid = false;
-    _wheels[wheelIdx].txFailStreak  = 0;
-    _wheels[wheelIdx].lastTxFailMs  = 0;
-    
+    _wheels[wheelIdx].txFailStreak = 0;
+    _wheels[wheelIdx].lastTxFailMs = 0;
+
     // Only print message for active wheels (respect WHEEL_MODE)
     if (_wheelActive(wheelIdx)) {
-        Serial.printf("[BLE] %s wheel disconnected\n", _wheels[wheelIdx].name);
+        LOG_WARN(TAG_BLE, "%s wheel disconnected", _wheels[wheelIdx].name);
     }
 }
 #endif
@@ -1436,32 +1437,33 @@ void M25DisconnectCallback::onDisconnect(BLEClient*) {
 
 bool _connectWheel(int idx) {
     if (idx < 0 || idx >= WHEEL_COUNT) {
-        Serial.printf("[BLE] ERROR: Invalid wheel index %d\n", idx);
+        LOG_ERROR(TAG_BLE, "Invalid wheel index %d", idx);
         return false;
     }
-    
-    WheelConnState_t &w = _wheels[idx];
-    
+
+    WheelConnState_t& w = _wheels[idx];
+
     // CRITICAL: Check if name pointer is corrupted
     if (!w.name) {
-        Serial.printf("[BLE] CRITICAL ERROR: _wheels[%d].name is NULL!\n", idx);
-        Serial.printf("[BLE] Struct address: %p, name offset: %lu\n", 
-                      (void*)&w, offsetof(WheelConnState_t, name));
-        Serial.printf("[BLE] Attempting to restore name pointer...\n");
+        LOG_ERROR(TAG_BLE, "CRITICAL ERROR: _wheels[%d].name is NULL!", idx);
+        LOG_ERROR(TAG_BLE, "Struct address: %p, name offset: %lu",
+            (void*)&w, offsetof(WheelConnState_t, name));
+        LOG_WARN(TAG_BLE, "Attempting to restore name pointer...");
         // Restore the name from the expected value
         if (idx == WHEEL_LEFT) {
             w.name = "Left";
-        } else if (idx == WHEEL_RIGHT) {
+        }
+        else if (idx == WHEEL_RIGHT) {
             w.name = "Right";
         }
     }
-    
-    if (debugFlags & DBG_BLE) {
-        Serial.printf("[BLE] _connectWheel(%d): %s wheel\n", idx, w.name ? w.name : "UNKNOWN");
-        Serial.printf("[BLE] MAC: '%s' (length: %d)\n", w.mac, strlen(w.mac));
+
+    if (Logger::instance().isTagEnabled(TAG_BLE)) {
+        LOG_DEBUG(TAG_BLE, "_connectWheel(%d): %s wheel", idx, w.name ? w.name : "UNKNOWN");
+        LOG_DEBUG(TAG_BLE, "MAC: '%s' (length: %d)", w.mac, strlen(w.mac));
     }
-    
-    w.telegramId    = M25_TELEGRAM_ID_START;
+
+    w.telegramId = M25_TELEGRAM_ID_START;
     w.driveModeBits = 0;
     w.protocolReady = false;
     w.driveModeReadbackBits = 0;
@@ -1469,16 +1471,16 @@ bool _connectWheel(int idx) {
     w.driveModeReadbackValid = false;
 
     const char* wheelName = w.name ? w.name : "Unknown";
-    Serial.printf("[BLE] Connecting to %s wheel (%s)...\n", wheelName, w.mac);
+    LOG_INFO(TAG_BLE, "Connecting to %s wheel (%s)...", wheelName, w.mac);
 
 #if M25_TRANSPORT_RFCOMM
     if (strlen(w.mac) != 17 || !_parseMacToBda(w.mac, w.bda)) {
-        Serial.printf("[RFCOMM] %s wheel: Invalid MAC '%s'\n", wheelName, w.mac);
+        LOG_ERROR(TAG_RFCOMM, "%s wheel: Invalid MAC '%s'", wheelName, w.mac);
         w.consecutiveFails++;
         return false;
     }
     if (!_rfcommReady) {
-        Serial.printf("[RFCOMM] %s wheel: SPP stack not ready yet\n", wheelName);
+        LOG_WARN(TAG_RFCOMM, "%s wheel: SPP stack not ready yet", wheelName);
         w.consecutiveFails++;
         return false;
     }
@@ -1490,15 +1492,15 @@ bool _connectWheel(int idx) {
     _rfRxLen[idx] = 0;
     w.sppHandle = 0;
 
-    Serial.printf("[RFCOMM] Connecting %s wheel over SPP channel %d...\n",
-                  wheelName, RFCOMM_CHANNEL);
+    LOG_INFO(TAG_RFCOMM, "Connecting %s wheel over SPP channel %d...",
+        wheelName, RFCOMM_CHANNEL);
     esp_err_t rc = esp_spp_connect(ESP_SPP_SEC_NONE,
-                                   ESP_SPP_ROLE_MASTER,
-                                   RFCOMM_CHANNEL,
-                                   w.bda);
+        ESP_SPP_ROLE_MASTER,
+        RFCOMM_CHANNEL,
+        w.bda);
     if (rc != ESP_OK) {
-        Serial.printf("[RFCOMM] %s wheel: esp_spp_connect failed: %s\n",
-                      wheelName, esp_err_to_name(rc));
+        LOG_ERROR(TAG_RFCOMM, "%s wheel: esp_spp_connect failed: %s",
+            wheelName, esp_err_to_name(rc));
         w.consecutiveFails++;
         return false;
     }
@@ -1512,10 +1514,10 @@ bool _connectWheel(int idx) {
         delay(10);
     }
     if (!_rfcommOpenEvt[idx] || _rfcommOpenStatus[idx] != ESP_SPP_SUCCESS || w.sppHandle == 0) {
-        Serial.printf("[RFCOMM] %s wheel: open timeout/status=%d handle=%u\n",
-                      wheelName,
-                      _rfcommOpenStatus[idx],
-                      (unsigned)w.sppHandle);
+        LOG_ERROR(TAG_RFCOMM, "%s wheel: open timeout/status=%d handle=%u",
+            wheelName,
+            _rfcommOpenStatus[idx],
+            (unsigned)w.sppHandle);
         if (w.sppHandle != 0) {
             esp_spp_disconnect(w.sppHandle);
             w.sppHandle = 0;
@@ -1534,26 +1536,26 @@ bool _connectWheel(int idx) {
     if (w.client == nullptr) {
         w.client = BLEDevice::createClient();
         if (w.client == nullptr) {
-            Serial.printf("[BLE] %s wheel: Failed to create BLE client\n", wheelName);
+            LOG_ERROR(TAG_BLE, "%s wheel: Failed to create BLE client", wheelName);
             w.consecutiveFails++;
             return false;
         }
-        Serial.println("[BLE] Setting client callbacks...");
+        LOG_DEBUG(TAG_BLE, "Setting client callbacks...");
         w.client->setClientCallbacks(&_callbacks[idx]);
     }
 
     // Validate MAC address format before using it
     if (strlen(w.mac) != 17) {
-        Serial.printf("[BLE] ERROR: Invalid MAC address length: %d (expected 17)\n", strlen(w.mac));
+        LOG_ERROR(TAG_BLE, "Invalid MAC address length: %d (expected 17)", strlen(w.mac));
         w.consecutiveFails++;
         return false;
     }
 
-    Serial.printf("[BLE] Connecting to BLE address %s...\n", w.mac);
+    LOG_INFO(TAG_BLE, "Connecting to BLE address %s...", w.mac);
     if (!w.client->connect(BLEAddress(w.mac))) {
         // Library logs status code above; "Unknown ESP_ERR" means GATT status (not in esp_err_to_name).
         // status=133 = ESP_GATT_ERROR (not connectable / busy); see _bleErrStr() for others.
-        Serial.printf("[BLE] %s wheel: GATT connect FAILED\n", wheelName);
+        LOG_ERROR(TAG_BLE, "%s wheel: GATT connect FAILED", wheelName);
         w.consecutiveFails++;
         return false;
     }
@@ -1581,8 +1583,8 @@ bool _connectWheel(int idx) {
     BLERemoteCharacteristic* txChar = nullptr;
 
     for (int _gattRetry = 0;
-         _gattRetry < BLE_SERVICE_DISCOVERY_RETRIES && (!svc || !rxChar);
-         _gattRetry++) {
+        _gattRetry < BLE_SERVICE_DISCOVERY_RETRIES && (!svc || !rxChar);
+        _gattRetry++) {
         for (const auto& c : candidates) {
             svc = w.client->getService(BLEUUID(c.service));
             if (!svc) {
@@ -1595,16 +1597,16 @@ bool _connectWheel(int idx) {
             }
 
             txChar = svc->getCharacteristic(BLEUUID(c.tx));
-            Serial.printf("[BLE] %s wheel: matched %s profile (service=%s, rx=%s)\n",
-                          wheelName, c.name, c.service, c.rx);
+            LOG_INFO(TAG_BLE, "%s wheel: matched %s profile (service=%s, rx=%s)",
+                wheelName, c.name, c.service, c.rx);
             break;
         }
 
         if (!rxChar && _gattRetry < (BLE_SERVICE_DISCOVERY_RETRIES - 1)) {
-            Serial.printf("[BLE] %s wheel: known services not ready, retrying (%d/%d)...\n",
-                          wheelName,
-                          _gattRetry + 1,
-                          BLE_SERVICE_DISCOVERY_RETRIES);
+            LOG_WARN(TAG_BLE, "%s wheel: known services not ready, retrying (%d/%d)...",
+                wheelName,
+                _gattRetry + 1,
+                BLE_SERVICE_DISCOVERY_RETRIES);
             delay(BLE_SERVICE_DISCOVERY_DELAY_MS);
         }
     }
@@ -1635,9 +1637,9 @@ bool _connectWheel(int idx) {
                     rxChar = anyWrite;
                     txChar = anyNotify ? anyNotify : anyWrite;
                     svc = s;
-                    Serial.printf("[BLE] %s wheel: fallback matched service %s\n",
-                                  wheelName,
-                                  svcEntry.first.c_str());
+                    LOG_INFO(TAG_BLE, "%s wheel: fallback matched service %s",
+                        wheelName,
+                        svcEntry.first.c_str());
                     break;
                 }
             }
@@ -1645,7 +1647,7 @@ bool _connectWheel(int idx) {
     }
 
     if (!rxChar) {
-        Serial.printf("[BLE] %s wheel: no usable write/notify characteristics found\n", wheelName);
+        LOG_ERROR(TAG_BLE, "%s wheel: no usable write/notify characteristics found", wheelName);
         w.client->disconnect();
         w.consecutiveFails++;
         return false;
@@ -1658,26 +1660,26 @@ bool _connectWheel(int idx) {
         // WRITE_NR = write without response; WRITE = write with response.
         // Sending without response to a WRITE-only char is silently dropped by ATT.
         bool hasWriteNR = rxChar->canWriteNoResponse();
-        bool hasWrite   = rxChar->canWrite();
+        bool hasWrite = rxChar->canWrite();
         w.rxWriteWithResponse = hasWrite && !hasWriteNR;
-        Serial.printf("[BLE] %s wheel: RX properties canWrite=%d canWriteNR=%d -> %s\n",
-                      wheelName, hasWrite, hasWriteNR,
-                      w.rxWriteWithResponse ? "write-with-response" : "write-without-response");
+        LOG_INFO(TAG_BLE, "%s wheel: RX properties canWrite=%d canWriteNR=%d -> %s",
+            wheelName, hasWrite, hasWriteNR,
+            w.rxWriteWithResponse ? "write-with-response" : "write-without-response");
     }
 
     if (w.txChar && w.txChar->canNotify()) {
         // ESP32 BLE stack needs time after getCharacteristic() before descriptor retrieval
         uint32_t preNotifyDelay = (idx > 0) ? 800 : 500;
         delay(preNotifyDelay);
-        
-        Serial.printf("[BLE] %s wheel: registering notifications (pass 1)...\n", wheelName);
+
+        LOG_DEBUG(TAG_BLE, "%s wheel: registering notifications (pass 1)...", wheelName);
         w.txChar->registerForNotify(_notifyCallback);
-        Serial.printf("[BLE] %s wheel: waiting %d ms for stability...\n",
-                      wheelName, BLE_NOTIFY_RETRY_DELAY_MS);
+        LOG_DEBUG(TAG_BLE, "%s wheel: waiting %d ms for stability...",
+            wheelName, BLE_NOTIFY_RETRY_DELAY_MS);
         delay(BLE_NOTIFY_RETRY_DELAY_MS);
-        Serial.printf("[BLE] %s wheel: registering notifications (pass 2)...\n", wheelName);
+        LOG_DEBUG(TAG_BLE, "%s wheel: registering notifications (pass 2)...", wheelName);
         w.txChar->registerForNotify(_notifyCallback);
-        Serial.printf("[BLE] %s wheel: Notifications enabled\n", wheelName);
+        LOG_INFO(TAG_BLE, "%s wheel: Notifications enabled", wheelName);
     }
     w.receivedFirstAck = false;  // Reset ACK flag
 
@@ -1713,7 +1715,7 @@ bool _connectWheel(int idx) {
             buzzerTick();
             delay(1);
         }
-    };
+        };
 
     auto _readRemoteBitLatched = [&](uint8_t* observedMode) {
         uint32_t beforeMs = w.driveModeReadbackMs;
@@ -1739,7 +1741,7 @@ bool _connectWheel(int idx) {
             *observedMode = w.driveModeReadbackBits;
         }
         return false;
-    };
+        };
 
     uint8_t observedMode = 0;
     bool remoteLatched = false;
@@ -1748,10 +1750,10 @@ bool _connectWheel(int idx) {
         uint8_t sysMode = M25_SYSTEM_MODE_CONNECT;
         bool initOk = _sendCommand(idx, M25_SRV_APP_MGMT, M25_PARAM_WRITE_SYSTEM_MODE, &sysMode, 1);
         if (!initOk) {
-            Serial.printf("[BLE] %s wheel: SYSTEM_MODE send failed (%u/%u)\n",
-                          wheelName,
-                          (unsigned)attempt,
-                          (unsigned)connectAttempts);
+            LOG_WARN(TAG_BLE, "%s wheel: SYSTEM_MODE send failed (%u/%u)",
+                wheelName,
+                (unsigned)attempt,
+                (unsigned)connectAttempts);
             if (attempt < connectAttempts) _delayWithUiTicks(rearmDelayMs);
             continue;
         }
@@ -1761,10 +1763,10 @@ bool _connectWheel(int idx) {
             bool dearmOk = _sendCommand(idx, M25_SRV_APP_MGMT, M25_PARAM_WRITE_DRIVE_MODE, &dearmMode, 1);
             if (!dearmOk) {
                 _txStatsCountDriveModeWriteFail();
-                Serial.printf("[BLE] %s wheel: de-arm write 0x00 failed (%u/%u)\n",
-                              wheelName,
-                              (unsigned)attempt,
-                              (unsigned)connectAttempts);
+                LOG_WARN(TAG_BLE, "%s wheel: de-arm write 0x00 failed (%u/%u)",
+                    wheelName,
+                    (unsigned)attempt,
+                    (unsigned)connectAttempts);
             }
             _delayWithUiTicks(rearmDelayMs);
         }
@@ -1777,11 +1779,11 @@ bool _connectWheel(int idx) {
                 break;
             }
             _txStatsCountDriveModeWriteFail();
-            Serial.printf("[BLE] %s wheel: arm write 0x%02X failed (%u/%u)\n",
-                          wheelName,
-                          mode,
-                          (unsigned)attempt,
-                          (unsigned)connectAttempts);
+            LOG_WARN(TAG_BLE, "%s wheel: arm write 0x%02X failed (%u/%u)",
+                wheelName,
+                mode,
+                (unsigned)attempt,
+                (unsigned)connectAttempts);
         }
         if (!armWriteOk) {
             if (attempt < connectAttempts) _delayWithUiTicks(rearmDelayMs);
@@ -1794,22 +1796,22 @@ bool _connectWheel(int idx) {
             break;
         }
 
-        Serial.printf("[BLE] %s wheel: drive mode readback not latched (attempt %u/%u, mode=0x%02X)\n",
-                      wheelName,
-                      (unsigned)attempt,
-                      (unsigned)connectAttempts,
-                      observedMode);
+        LOG_WARN(TAG_BLE, "%s wheel: drive mode readback not latched (attempt %u/%u, mode=0x%02X)",
+            wheelName,
+            (unsigned)attempt,
+            (unsigned)connectAttempts,
+            observedMode);
 
         // Explicit fallback sequence after failed readback.
         for (uint8_t mode : remoteModeCandidates) {
             bool forceOk = _sendCommand(idx, M25_SRV_APP_MGMT, M25_PARAM_WRITE_DRIVE_MODE, &mode, 1);
             if (!forceOk) {
                 _txStatsCountDriveModeWriteFail();
-                Serial.printf("[BLE] %s wheel: forced arm write 0x%02X failed (%u/%u)\n",
-                              wheelName,
-                              mode,
-                              (unsigned)attempt,
-                              (unsigned)connectAttempts);
+                LOG_WARN(TAG_BLE, "%s wheel: forced arm write 0x%02X failed (%u/%u)",
+                    wheelName,
+                    mode,
+                    (unsigned)attempt,
+                    (unsigned)connectAttempts);
             }
         }
 
@@ -1823,9 +1825,9 @@ bool _connectWheel(int idx) {
     }
 
     if (!remoteLatched) {
-        Serial.printf("[BLE] %s wheel: remote mode not latched after %u attempts\n",
-                      wheelName,
-                      (unsigned)connectAttempts);
+        LOG_ERROR(TAG_BLE, "%s wheel: remote mode not latched after %u attempts",
+            wheelName,
+            (unsigned)connectAttempts);
 #if M25_TRANSPORT_BLE
         w.client->disconnect();
 #endif
@@ -1841,9 +1843,9 @@ bool _connectWheel(int idx) {
     w.driveModeBits = observedMode;
 
     w.protocolReady = true;
-    w.lastNotifyMs  = millis();  // seed timer; watchdog won't trip before first real notify arrives
+    w.lastNotifyMs = millis();  // seed timer; watchdog won't trip before first real notify arrives
     w.consecutiveFails = 0;
-    Serial.printf("[BLE] %s wheel ready\n", wheelName);
+    LOG_INFO(TAG_BLE, "%s wheel ready", wheelName);
     return true;
 }
 
@@ -1855,40 +1857,45 @@ void bleInit(const char* deviceName) {
     // Create the GATT-write mutex before any possible _sendCommand() call.
     if (!_bleTxMutex) {
         _bleTxMutex = xSemaphoreCreateMutex();
-        if (!_bleTxMutex) Serial.println("[BLE] ERROR: failed to create TX mutex");
+        if (!_bleTxMutex) LOG_ERROR(TAG_BLE, "failed to create TX mutex");
     }
 
     // Populate mutable wheel config from compile-time device_config.h defaults
     memset(_wheels, 0, sizeof(_wheelsStorage));
-    if (debugFlags & DBG_BLE) {
-        Serial.printf("[BLE] Wheels array after memset: %p (size: %d bytes)\n", 
-                      (void*)_wheels, (int)sizeof(_wheelsStorage));
+    if (Logger::instance().isTagEnabled(TAG_BLE)) {
+        LOG_DEBUG(TAG_BLE, "Wheels array after memset: %p (size: %d bytes)",
+            (void*)_wheels, (int)sizeof(_wheelsStorage));
     }
-    
-    strncpy(_wheels[WHEEL_LEFT].mac,  LEFT_WHEEL_MAC,  17);
+
+    strncpy(_wheels[WHEEL_LEFT].mac, LEFT_WHEEL_MAC, 17);
     strncpy(_wheels[WHEEL_RIGHT].mac, RIGHT_WHEEL_MAC, 17);
-    _wheels[WHEEL_LEFT].name   = "Left";
-    _wheels[WHEEL_RIGHT].name  = "Right";
-    memcpy(_wheels[WHEEL_LEFT].key,  _keyDefaultLeft,  16);
+    _wheels[WHEEL_LEFT].name = "Left";
+    _wheels[WHEEL_RIGHT].name = "Right";
+    memcpy(_wheels[WHEEL_LEFT].key, _keyDefaultLeft, 16);
     memcpy(_wheels[WHEEL_RIGHT].key, _keyDefaultRight, 16);
-    _wheels[WHEEL_LEFT].telegramId  = M25_TELEGRAM_ID_START;
+    _wheels[WHEEL_LEFT].telegramId = M25_TELEGRAM_ID_START;
     _wheels[WHEEL_RIGHT].telegramId = M25_TELEGRAM_ID_START;
-    
+
     // Verify initialization
-    if (debugFlags & DBG_BLE) {
+    if (Logger::instance().isTagEnabled(TAG_BLE)) {
         for (int i = 0; i < WHEEL_COUNT; i++) {
-            Serial.printf("[BLE] _wheels[%d]: name=%s, mac=%s",
-                          i, _wheels[i].name ? _wheels[i].name : "NULL",
-                          _wheels[i].mac);
 #if M25_TRANSPORT_BLE
-            Serial.printf(", client=%p", (void*)_wheels[i].client);
+            LOG_DEBUG(TAG_BLE, "_wheels[%d]: name=%s, mac=%s, client=%p",
+                i,
+                _wheels[i].name ? _wheels[i].name : "NULL",
+                _wheels[i].mac,
+                (void*)_wheels[i].client);
+#else
+            LOG_DEBUG(TAG_BLE, "_wheels[%d]: name=%s, mac=%s",
+                i,
+                _wheels[i].name ? _wheels[i].name : "NULL",
+                _wheels[i].mac);
 #endif
-            Serial.println();
         }
     }
 #if M25_TRANSPORT_BLE
     BLEDevice::init(deviceName);
-    Serial.println("[BLE] Device initialized");
+    LOG_INFO(TAG_BLE, "Device initialized");
 #endif
 #if M25_TRANSPORT_RFCOMM
     if (!_rfcommInitDone) {
@@ -1900,7 +1907,7 @@ void bleInit(const char* deviceName) {
             esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
             rc = esp_bt_controller_init(&bt_cfg);
             if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
-                Serial.printf("[RFCOMM] controller init failed: %s\n", esp_err_to_name(rc));
+                LOG_ERROR(TAG_RFCOMM, "controller init failed: %s", esp_err_to_name(rc));
             }
             ctl = esp_bt_controller_get_status();
         }
@@ -1909,7 +1916,7 @@ void bleInit(const char* deviceName) {
             // Arduino/IDF configs often expect BTDM mode, not classic-only mode.
             rc = esp_bt_controller_enable(ESP_BT_MODE_BTDM);
             if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
-                Serial.printf("[RFCOMM] controller enable failed: %s\n", esp_err_to_name(rc));
+                LOG_ERROR(TAG_RFCOMM, "controller enable failed: %s", esp_err_to_name(rc));
             }
         }
 
@@ -1917,7 +1924,7 @@ void bleInit(const char* deviceName) {
         if (bl == ESP_BLUEDROID_STATUS_UNINITIALIZED) {
             rc = esp_bluedroid_init();
             if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
-                Serial.printf("[RFCOMM] bluedroid init failed: %s\n", esp_err_to_name(rc));
+                LOG_ERROR(TAG_RFCOMM, "bluedroid init failed: %s", esp_err_to_name(rc));
             }
             bl = esp_bluedroid_get_status();
         }
@@ -1925,7 +1932,7 @@ void bleInit(const char* deviceName) {
         if (bl != ESP_BLUEDROID_STATUS_ENABLED) {
             rc = esp_bluedroid_enable();
             if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
-                Serial.printf("[RFCOMM] bluedroid enable failed: %s\n", esp_err_to_name(rc));
+                LOG_ERROR(TAG_RFCOMM, "bluedroid enable failed: %s", esp_err_to_name(rc));
             }
         }
 
@@ -1933,22 +1940,24 @@ void bleInit(const char* deviceName) {
             rc = esp_bt_gap_register_callback(_rfcommGapCb);
             if (rc == ESP_OK || rc == ESP_ERR_INVALID_STATE) {
                 _rfcommGapCbRegistered = true;
-            } else {
-                Serial.printf("[RFCOMM] gap callback register failed: %s\n", esp_err_to_name(rc));
+            }
+            else {
+                LOG_ERROR(TAG_RFCOMM, "gap callback register failed: %s", esp_err_to_name(rc));
             }
         }
 
         rc = esp_bt_gap_set_device_name(deviceName);
         if (rc != ESP_OK) {
-            Serial.printf("[RFCOMM] set device name failed: %s\n", esp_err_to_name(rc));
+            LOG_ERROR(TAG_RFCOMM, "set device name failed: %s", esp_err_to_name(rc));
         }
 
         if (!_rfcommCbRegistered) {
             rc = esp_spp_register_callback(_rfcommSppCb);
             if (rc == ESP_OK || rc == ESP_ERR_INVALID_STATE) {
                 _rfcommCbRegistered = true;
-            } else {
-                Serial.printf("[RFCOMM] spp callback register failed: %s\n", esp_err_to_name(rc));
+            }
+            else {
+                LOG_ERROR(TAG_RFCOMM, "spp callback register failed: %s", esp_err_to_name(rc));
             }
         }
 
@@ -1958,12 +1967,14 @@ void bleInit(const char* deviceName) {
             rc = esp_spp_enhanced_init(&sppCfg);
             if (rc == ESP_OK) {
                 _rfcommSppInitRequested = true;
-            } else if (rc == ESP_ERR_INVALID_STATE) {
+            }
+            else if (rc == ESP_ERR_INVALID_STATE) {
                 // Already initialized from an earlier run; proceed.
                 _rfcommSppInitRequested = true;
                 _rfcommReady = true;
-            } else {
-                Serial.printf("[RFCOMM] spp init failed: %s\n", esp_err_to_name(rc));
+            }
+            else {
+                LOG_ERROR(TAG_RFCOMM, "spp init failed: %s", esp_err_to_name(rc));
             }
         }
 
@@ -1972,14 +1983,14 @@ void bleInit(const char* deviceName) {
             delay(10);
         }
         if (!_rfcommReady) {
-            Serial.println("[RFCOMM] WARNING: SPP init event timeout");
+            LOG_WARN(TAG_RFCOMM, "SPP init event timeout");
         }
         _rfcommInitDone = true;
     }
-    Serial.println("[RFCOMM] SPP client initialized");
+    LOG_INFO(TAG_RFCOMM, "SPP client initialized");
 #endif
-    Serial.printf("[BLE] Wheel mode: %s\n", WHEEL_MODE_NAME);
-    
+    LOG_INFO(TAG_BLE, "Wheel mode: %s", WHEEL_MODE_NAME);
+
     // Allow the ESP32 BLE GATT client stack to fully initialize before any
     // connection attempt.  BLEDevice::init() triggers the BT controller and
     // host stack asynchronously; 100 ms is not enough - on cold boot the first
@@ -1989,7 +2000,7 @@ void bleInit(const char* deviceName) {
     // RNG entropy also improves over this window, so the existing RNG test
     // below still runs afterwards.
     delay(BLE_STACK_INIT_DELAY_MS);
-    
+
     // Test RNG is working by generating test values
     uint32_t testRandom[4];
     esp_fill_random(testRandom, sizeof(testRandom));
@@ -2001,10 +2012,11 @@ void bleInit(const char* deviceName) {
         }
     }
     if (!rngWorking) {
-        Serial.println("[BLE] WARNING: RNG may not be seeded, waiting longer...");
+        LOG_WARN(TAG_CRYPTO, "RNG may not be seeded, waiting longer...");
         delay(500);
-    } else {
-        Serial.println("[BLE] RNG verified");
+    }
+    else {
+        LOG_INFO(TAG_CRYPTO, "RNG verified");
     }
 
     for (int i = 0; i < WHEEL_COUNT; i++) {
@@ -2016,10 +2028,10 @@ void bleInit(const char* deviceName) {
 
 void bleResetWheel(int idx) {
     if (idx < 0 || idx >= WHEEL_COUNT) return;
-    WheelConnState_t &w = _wheels[idx];
+    WheelConnState_t& w = _wheels[idx];
     const char* name = w.name ? w.name : "?";
 
-    Serial.printf("[BLE] Hard reset: %s wheel\n", name);
+    LOG_WARN(TAG_BLE, "Hard reset: %s wheel", name);
 
     // Disconnect the underlying GATT connection if still open, but intentionally
     // reuse the existing BLEClient object on the next attempt.
@@ -2031,28 +2043,28 @@ void bleResetWheel(int idx) {
     }
 
     // Clear all protocol state; preserve mac, name, key, and client object
-    w.connected        = false;
-    w.protocolReady    = false;
-    w.telegramId       = M25_TELEGRAM_ID_START;
-    w.driveModeBits    = 0;
+    w.connected = false;
+    w.protocolReady = false;
+    w.telegramId = M25_TELEGRAM_ID_START;
+    w.driveModeBits = 0;
     w.driveModeReadbackBits = 0;
     w.driveModeReadbackMs = 0;
     w.driveModeReadbackValid = false;
     _transportClearLinkState(w, idx);
-    w.receivedFirstAck     = false;
+    w.receivedFirstAck = false;
     w.consecutiveFails = 0;
-    w.lastNotifyMs     = 0;
-    w.txFailStreak     = 0;
-    w.lastTxFailMs     = 0;
+    w.lastNotifyMs = 0;
+    w.txFailStreak = 0;
+    w.lastTxFailMs = 0;
 
     // Invalidate telemetry cache so stale data is not served after reconnect
-    w.batteryValid  = false;
-    w.fwValid       = false;
+    w.batteryValid = false;
+    w.fwValid = false;
     w.distanceValid = false;
 }
 
 void bleFullReset() {
-    Serial.println("[BLE] Full stack reset: deinit + reinit");
+    LOG_WARN(TAG_BLE, "Full stack reset: deinit + reinit");
     // Hard-reset all GATT clients before tearing down the stack
     for (int i = 0; i < WHEEL_COUNT; i++) bleResetWheel(i);
     // Let Bluedroid finish teardown before deinit
@@ -2076,7 +2088,7 @@ void bleFullReset() {
     // Reinit restores compile-time MAC/key defaults from device_config.h.
     // Runtime bleSetMac/bleSetKey overrides are NOT preserved across a full reset.
     bleInit();
-    Serial.println("[BLE] Stack reset complete");
+    LOG_INFO(TAG_BLE, "Stack reset complete");
 }
 
 bool bleConnectWheel(int idx) {
@@ -2089,13 +2101,13 @@ bool bleConnectWheel(int idx) {
 void bleConnect() {
     for (int i = 0; i < WHEEL_COUNT; i++) {
         if (_wheelActive(i) && !_wheels[i].connected) {
-            if (debugFlags & DBG_BLE) {
-                Serial.printf("[BLE] bleConnect: About to connect wheel %d, MAC='%s' (len=%d)\n",
-                              i, _wheels[i].mac, (int)strlen(_wheels[i].mac));
+            if (Logger::instance().isTagEnabled(TAG_BLE)) {
+                LOG_DEBUG(TAG_BLE, "bleConnect: About to connect wheel %d, MAC='%s' (len=%d)",
+                    i, _wheels[i].mac, (int)strlen(_wheels[i].mac));
             }
-            
+
             bool success = _connectWheel(i);
-            
+
             // Delay between wheels for BLE stack to settle (dual-wheel mode)
             if (success && i < WHEEL_COUNT - 1 && _wheelActive(i + 1)) {
                 delay(BLE_INTER_WHEEL_DELAY_MS);
@@ -2107,12 +2119,12 @@ void bleConnect() {
 void bleDisconnect() {
     for (int i = 0; i < WHEEL_COUNT; i++) {
         if (!_wheelActive(i)) continue;
-        WheelConnState_t &w = _wheels[i];
+        WheelConnState_t& w = _wheels[i];
         if (w.connected) {
             // Step 3: WRITE_REMOTE_SPEED = 0  (stop)
             uint8_t spd[2] = { 0, 0 };
             _sendCommand(i, M25_SRV_APP_MGMT, M25_PARAM_WRITE_REMOTE_SPEED, spd, 2);
-            
+
             // Wait briefly for command to send (non-blocking loop)
             uint32_t waitStart = millis();
             while (millis() - waitStart < 50) {
@@ -2122,26 +2134,26 @@ void bleDisconnect() {
                 buzzerTick();
                 delay(1);
             }
-            
+
             // Step 4: WRITE_DRIVE_MODE = 0x00  (normal / release remote bit)
             uint8_t norm = M25_DRIVE_MODE_NORMAL;
             _sendCommand(i, M25_SRV_APP_MGMT, M25_PARAM_WRITE_DRIVE_MODE, &norm, 1);
         }
         _transportDisconnectLink(w);
         _transportClearLinkState(w, i);
-        w.connected     = false;
+        w.connected = false;
         w.protocolReady = false;
         w.driveModeBits = 0;
         w.driveModeReadbackBits = 0;
         w.driveModeReadbackMs = 0;
         w.driveModeReadbackValid = false;
-        w.txFailStreak  = 0;
-        w.lastTxFailMs  = 0;
+        w.txFailStreak = 0;
+        w.lastTxFailMs = 0;
     }
 }
 
 bool bleIsConnected(int wheelIdx) {
-    WheelConnState_t &w = _wheels[wheelIdx];
+    WheelConnState_t& w = _wheels[wheelIdx];
     return _transportIsProtocolConnected(w);
 }
 
@@ -2171,20 +2183,21 @@ struct _MotorCmd {
     float   right;
 };
 
-static QueueHandle_t  _motorQueue   = nullptr;
+static QueueHandle_t  _motorQueue = nullptr;
 static volatile bool  _motorWriteOk = true;   // cleared by task on write failure
 
 static bool _writeDriveModeIfNeeded(int idx, uint8_t targetMode) {
     if (idx < 0 || idx >= WHEEL_COUNT) return false;
     if (!bleIsConnected(idx)) return false;
 
-    WheelConnState_t &w = _wheels[idx];
+    WheelConnState_t& w = _wheels[idx];
     if (w.driveModeBits == targetMode) return true;
 
     bool sent = _sendCommand(idx, M25_SRV_APP_MGMT, M25_PARAM_WRITE_DRIVE_MODE, &targetMode, 1);
     if (sent) {
         w.driveModeBits = targetMode;
-    } else {
+    }
+    else {
         _txStatsCountDriveModeWriteFail();
     }
     return sent;
@@ -2193,8 +2206,8 @@ static bool _writeDriveModeIfNeeded(int idx, uint8_t targetMode) {
 static void _bleMotorTask(void* /*pv*/) {
     _MotorCmd cmd;
     uint32_t motorFailStreak = 0;  // consecutive failed write cycles (any wheel)
-    uint32_t stopLogCounter[WHEEL_COUNT] = {0, 0};
-    uint32_t modeGateFailStreak[WHEEL_COUNT] = {0, 0};
+    uint32_t stopLogCounter[WHEEL_COUNT] = { 0, 0 };
+    uint32_t modeGateFailStreak[WHEEL_COUNT] = { 0, 0 };
     for (;;) {
         if (xQueueReceive(_motorQueue, &cmd, portMAX_DELAY) != pdTRUE) continue;
 
@@ -2206,19 +2219,21 @@ static void _bleMotorTask(void* /*pv*/) {
                 const char* wn = _wheels[i].name ? _wheels[i].name : "?";
                 if (!bleIsConnected(i)) {
                     Serial.printf("[Motor] -> %s (not connected)\n", wn);
-                } else if (cmd.isStop) {
+                }
+                else if (cmd.isStop) {
                     if (_motorStopLogEnabled) {
                         stopLogCounter[i]++;
                         uint16_t every = _motorStopLogEvery;
                         if (every == 0) every = 1;
                         if ((stopLogCounter[i] % every) == 0) {
                             Serial.printf("[Motor] -> %s STOP (%lu)%s\n",
-                                          wn,
-                                          (unsigned long)stopLogCounter[i],
-                                          (every > 1) ? " [throttled]" : "");
+                                wn,
+                                (unsigned long)stopLogCounter[i],
+                                (every > 1) ? " [throttled]" : "");
                         }
                     }
-                } else {
+                }
+                else {
                     float pct = (i == WHEEL_LEFT) ? -cmd.left : cmd.right;
                     Serial.printf("[Motor] -> %s %.0f%%\n", wn, (double)pct);
                 }
@@ -2226,7 +2241,7 @@ static void _bleMotorTask(void* /*pv*/) {
 
             if (!bleIsConnected(i)) continue;
 
-            WheelConnState_t &w = _wheels[i];
+            WheelConnState_t& w = _wheels[i];
             uint8_t targetDriveMode = cmd.isStop
                 ? (uint8_t)((w.driveModeBits | M25_DRIVE_MODE_REMOTE) & (uint8_t)~M25_DRIVE_MODE_CRUISE)
                 : (uint8_t)(w.driveModeBits | M25_DRIVE_MODE_REMOTE | M25_DRIVE_MODE_CRUISE);
@@ -2239,15 +2254,16 @@ static void _bleMotorTask(void* /*pv*/) {
                     if (modeGateFailStreak[i] == 1 || (modeGateFailStreak[i] % 20) == 0) {
                         const char* wn = _wheels[i].name ? _wheels[i].name : "?";
                         Serial.printf("[Motor] %s speed skipped: drive mode update failed (streak=%lu, mode=0x%02X)\n",
-                                      wn,
-                                      (unsigned long)modeGateFailStreak[i],
-                                      targetDriveMode);
+                            wn,
+                            (unsigned long)modeGateFailStreak[i],
+                            targetDriveMode);
                     }
-                } else if (modeGateFailStreak[i] > 0) {
+                }
+                else if (modeGateFailStreak[i] > 0) {
                     const char* wn = _wheels[i].name ? _wheels[i].name : "?";
                     Serial.printf("[Motor] %s drive mode gate recovered after %lu skipped speed writes\n",
-                                  wn,
-                                  (unsigned long)modeGateFailStreak[i]);
+                        wn,
+                        (unsigned long)modeGateFailStreak[i]);
                     modeGateFailStreak[i] = 0;
                 }
                 ok &= modeOk;
@@ -2257,11 +2273,12 @@ static void _bleMotorTask(void* /*pv*/) {
             uint8_t spd[2];
             if (cmd.isStop) {
                 spd[0] = spd[1] = 0;
-            } else {
+            }
+            else {
                 float   pct = (i == WHEEL_LEFT) ? -cmd.left : cmd.right;
                 int16_t raw = (int16_t)constrain(pct * M25_SPEED_SCALE, -32768.0f, 32767.0f);
                 spd[0] = (uint8_t)((raw >> 8) & 0xFF);
-                spd[1] = (uint8_t)(raw        & 0xFF);
+                spd[1] = (uint8_t)(raw & 0xFF);
             }
 
             bool sent = _sendCommand(i, M25_SRV_APP_MGMT, M25_PARAM_WRITE_REMOTE_SPEED, spd, 2);
@@ -2284,11 +2301,12 @@ static void _bleMotorTask(void* /*pv*/) {
             motorFailStreak++;
             if (motorFailStreak == 1 || (motorFailStreak % 20) == 0) {
                 Serial.printf("[Motor] write FAILED (streak: %u cycles @ 20 Hz)\n",
-                              (unsigned)motorFailStreak);
+                    (unsigned)motorFailStreak);
             }
-        } else if (motorFailStreak > 0) {
+        }
+        else if (motorFailStreak > 0) {
             Serial.printf("[Motor] write recovered after %u failed cycles\n",
-                          (unsigned)motorFailStreak);
+                (unsigned)motorFailStreak);
             motorFailStreak = 0;
         }
         _motorWriteOk = ok;
@@ -2347,7 +2365,7 @@ bool bleSendStop() {
         if (!bleIsConnected(i)) continue;
         ok &= _sendCommand(i, M25_SRV_APP_MGMT, M25_PARAM_WRITE_REMOTE_SPEED, spd, 2);
         uint8_t targetDriveMode = (uint8_t)((_wheels[i].driveModeBits | M25_DRIVE_MODE_REMOTE) &
-                                            (uint8_t)~M25_DRIVE_MODE_CRUISE);
+            (uint8_t)~M25_DRIVE_MODE_CRUISE);
         ok &= _writeDriveModeIfNeeded(i, targetDriveMode);
     }
     return ok;
@@ -2364,8 +2382,8 @@ bool bleSendMotorCommand(float leftPercent, float rightPercent) {
     for (int i = 0; i < WHEEL_COUNT; i++) {
         if (!bleIsConnected(i)) continue;
         uint8_t targetDriveMode = (uint8_t)(_wheels[i].driveModeBits |
-                                            M25_DRIVE_MODE_REMOTE |
-                                            M25_DRIVE_MODE_CRUISE);
+            M25_DRIVE_MODE_REMOTE |
+            M25_DRIVE_MODE_CRUISE);
         bool modeOk = _writeDriveModeIfNeeded(i, targetDriveMode);
         ok &= modeOk;
         if (!modeOk) {
@@ -2384,10 +2402,11 @@ bool bleSendHillHold(bool enable) {
     bool ok = true;
     for (int i = 0; i < WHEEL_COUNT; i++) {
         if (!bleIsConnected(i)) continue;
-        WheelConnState_t &w = _wheels[i];
+        WheelConnState_t& w = _wheels[i];
         if (enable) {
-            w.driveModeBits |=  M25_DRIVE_MODE_AUTO_HOLD;
-        } else {
+            w.driveModeBits |= M25_DRIVE_MODE_AUTO_HOLD;
+        }
+        else {
             w.driveModeBits &= (uint8_t)~M25_DRIVE_MODE_AUTO_HOLD;
         }
         uint8_t dm = w.driveModeBits;
@@ -2403,7 +2422,7 @@ bool bleSendAssistLevel(uint8_t level) {
     for (int i = 0; i < WHEEL_COUNT; i++) {
         if (bleIsConnected(i)) {
             ok &= _sendCommand(i, M25_SRV_APP_MGMT, M25_PARAM_WRITE_ASSIST_LEVEL,
-                               &m25Level, 1);
+                &m25Level, 1);
         }
     }
     return ok;
@@ -2421,20 +2440,20 @@ void bleTick() {
     uint32_t now = millis();
     for (int i = 0; i < WHEEL_COUNT; i++) {
         if (!_wheelActive(i)) continue;
-        WheelConnState_t &w = _wheels[i];
+        WheelConnState_t& w = _wheels[i];
         if (!w.connected) {
             if (now - w.lastConnectAttemptMs >= BLE_RECONNECT_DELAY_MS) {
                 w.lastConnectAttemptMs = now;
                 if (debugFlags & DBG_BLE) {
                     Serial.printf("[BLE] Attempting reconnect to %s wheel... (attempt %u/%u)\n",
-                                  w.name, (unsigned)(w.consecutiveFails + 1),
-                                  (unsigned)BLE_MAX_RECONNECT_FAILS);
+                        w.name, (unsigned)(w.consecutiveFails + 1),
+                        (unsigned)BLE_MAX_RECONNECT_FAILS);
                 }
                 _connectWheel(i);
                 if (w.consecutiveFails >= BLE_MAX_RECONNECT_FAILS) {
                     Serial.printf("[BLE] %s wheel: %u consecutive failures - "
-                                  "disabling auto-reconnect. Use 'autoreconnect on' to retry.\n",
-                                  w.name, (unsigned)w.consecutiveFails);
+                        "disabling auto-reconnect. Use 'autoreconnect on' to retry.\n",
+                        w.name, (unsigned)w.consecutiveFails);
                     _bleAutoReconnect = false;
                     return;
                 }
@@ -2482,24 +2501,24 @@ void blePrintTxStats() {
 
     Serial.println("[TX] --- Command TX Stats ---");
     Serial.printf("[TX] total attempts=%lu  success=%lu  fail=%lu\n",
-                  (unsigned long)s.totalAttempts,
-                  (unsigned long)s.totalSuccess,
-                  (unsigned long)s.totalFail);
+        (unsigned long)s.totalAttempts,
+        (unsigned long)s.totalSuccess,
+        (unsigned long)s.totalFail);
     Serial.printf("[TX] WRITE_REMOTE_SPEED=%lu  stop=%lu  motion=%lu\n",
-                  (unsigned long)s.remoteSpeed,
-                  (unsigned long)s.remoteSpeedStop,
-                  (unsigned long)s.remoteSpeedMotion);
+        (unsigned long)s.remoteSpeed,
+        (unsigned long)s.remoteSpeedStop,
+        (unsigned long)s.remoteSpeedMotion);
     Serial.printf("[TX] WRITE_DRIVE_MODE=%lu  WRITE_ASSIST_LEVEL=%lu\n",
-                  (unsigned long)s.driveMode,
-                  (unsigned long)s.assistLevel);
+        (unsigned long)s.driveMode,
+        (unsigned long)s.assistLevel);
     Serial.printf("[TX] drive_mode_write_fail=%lu  speed_skipped_due_mode=%lu\n",
-                  (unsigned long)s.driveModeWriteFail,
-                  (unsigned long)s.speedSkippedDueToMode);
+        (unsigned long)s.driveModeWriteFail,
+        (unsigned long)s.speedSkippedDueToMode);
     Serial.printf("[TX] READ_SOC=%lu  READ_SW_VERSION=%lu  READ_CRUISE_VALUES=%lu  other=%lu\n",
-                  (unsigned long)s.readSoc,
-                  (unsigned long)s.readFw,
-                  (unsigned long)s.readCruise,
-                  (unsigned long)s.other);
+        (unsigned long)s.readSoc,
+        (unsigned long)s.readFw,
+        (unsigned long)s.readCruise,
+        (unsigned long)s.other);
 }
 
 void bleResetTxStats() {
@@ -2523,13 +2542,13 @@ void bleSetMac(int idx, const char* mac) {
     if (debugFlags & DBG_BLE) {
         Serial.printf("[BLE] bleSetMac(%d, %s)\n", idx, mac);
     }
-    
-    WheelConnState_t &w = _wheels[idx];
+
+    WheelConnState_t& w = _wheels[idx];
     if (strncmp(w.mac, mac, 17) == 0) {
         if (debugFlags & DBG_BLE) {
             Serial.printf("[BLE] %s wheel MAC unchanged (%s)\n",
-                          w.name ? w.name : "Unknown",
-                          mac);
+                w.name ? w.name : "Unknown",
+                mac);
         }
         return;
     }
@@ -2537,7 +2556,7 @@ void bleSetMac(int idx, const char* mac) {
     if (debugFlags & DBG_BLE) {
         Serial.printf("[BLE] Got reference to wheel struct (name=%s)\n", w.name ? w.name : "NULL");
     }
-    
+
     // Safely check and disconnect existing client
     if (debugFlags & DBG_BLE) {
         Serial.println("[BLE] Checking existing transport link state...");
@@ -2552,15 +2571,15 @@ void bleSetMac(int idx, const char* mac) {
     if (debugFlags & DBG_BLE) {
         Serial.println("[BLE] Updating wheel state...");
     }
-    w.connected     = false;
+    w.connected = false;
     w.protocolReady = false;
     w.consecutiveFails = 0;
-    w.txFailStreak  = 0;
-    w.lastTxFailMs  = 0;
+    w.txFailStreak = 0;
+    w.lastTxFailMs = 0;
     strncpy(w.mac, mac, 17);
     w.mac[17] = '\0';
-    Serial.printf("[BLE] %s wheel MAC -> %s  (reconnect required)\n", 
-                  w.name ? w.name : "Unknown", w.mac);
+    Serial.printf("[BLE] %s wheel MAC -> %s  (reconnect required)\n",
+        w.name ? w.name : "Unknown", w.mac);
 }
 
 void bleSetKey(int idx, const uint8_t* newKey) {
@@ -2578,8 +2597,8 @@ void bleSetKey(int idx, const uint8_t* newKey) {
     if (debugFlags & DBG_BLE) {
         Serial.printf("[BLE] bleSetKey(%d, [key data])\n", idx);
     }
-    
-    WheelConnState_t &w = _wheels[idx];
+
+    WheelConnState_t& w = _wheels[idx];
     if (memcmp(w.key, newKey, 16) == 0) {
         if (debugFlags & DBG_BLE) {
             Serial.printf("[BLE] %s wheel key unchanged\n", w.name ? w.name : "Unknown");
@@ -2593,19 +2612,20 @@ void bleSetKey(int idx, const uint8_t* newKey) {
         Serial.printf("[BLE] _wheels[%d].name before: %s\n", idx, w.name ? w.name : "NULL");
         Serial.printf("[BLE] _wheels[%d].mac before: '%s' (len=%d)\n", idx, w.mac, (int)strlen(w.mac));
     }
-    
+
     memcpy(w.key, newKey, 16);
     w.txFailStreak = 0;
     w.lastTxFailMs = 0;
-    
+
     if (debugFlags & DBG_BLE) {
         Serial.printf("[BLE] _wheels[%d].name after: %s\n", idx, w.name ? w.name : "NULL");
         Serial.printf("[BLE] _wheels[%d].mac after: '%s' (len=%d)\n", idx, w.mac, (int)strlen(w.mac));
     }
-    
+
     if (w.name) {
         Serial.printf("[BLE] %s wheel key updated  (reconnect required)\n", w.name);
-    } else {
+    }
+    else {
         Serial.printf("[BLE] Wheel %d key updated  (reconnect required)\n", idx);
     }
 }
@@ -2670,10 +2690,10 @@ float bleGetDistanceKm(int idx) {
 void blePrintWheelDetails() {
     Serial.printf("[BLE] Wheel mode    : %s\n", WHEEL_MODE_NAME);
     for (int i = 0; i < WHEEL_COUNT; i++) {
-        WheelConnState_t &w = _wheels[i];
+        WheelConnState_t& w = _wheels[i];
         if (!_wheelActive(i)) {
             Serial.printf("[Wheel %s] INACTIVE (WHEEL_MODE = %s)\n",
-                          w.name, WHEEL_MODE_NAME);
+                w.name, WHEEL_MODE_NAME);
             continue;
         }
         Serial.printf("[Wheel %s]\n", w.name);
@@ -2684,27 +2704,30 @@ void blePrintWheelDetails() {
             if (b < 15) Serial.print(' ');
         }
         Serial.println();
-        Serial.printf("  connected    : %s\n", w.connected     ? "yes" : "no");
+        Serial.printf("  connected    : %s\n", w.connected ? "yes" : "no");
         Serial.printf("  protocolRdy  : %s\n", w.protocolReady ? "yes" : "no");
         Serial.printf("  failCount    : %u / %u\n", (unsigned)w.consecutiveFails,
-                                                     (unsigned)BLE_MAX_RECONNECT_FAILS);
+            (unsigned)BLE_MAX_RECONNECT_FAILS);
         Serial.printf("  txFailStreak : %u\n", (unsigned)w.txFailStreak);
         Serial.printf("  driveMode    : 0x%02X\n", w.driveModeBits);
-        Serial.printf("  telegramId   : %u\n",     (unsigned)w.telegramId);
+        Serial.printf("  telegramId   : %u\n", (unsigned)w.telegramId);
         // Cached telemetry
         if (w.batteryValid) {
             Serial.printf("  battery      : %d%%\n", (int)w.batteryPct);
-        } else {
+        }
+        else {
             Serial.printf("  battery      : (not yet received)\n");
         }
         if (w.fwValid) {
             Serial.printf("  firmware     : %d.%d.%d\n", w.fwMajor, w.fwMinor, w.fwPatch);
-        } else {
+        }
+        else {
             Serial.printf("  firmware     : (not yet received)\n");
         }
         if (w.distanceValid) {
             Serial.printf("  distance     : %.3f km\n", w.distanceKm);
-        } else {
+        }
+        else {
             Serial.printf("  distance     : (not yet received)\n");
         }
     }

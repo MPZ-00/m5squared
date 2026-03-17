@@ -30,6 +30,7 @@
 #include "nvs_config.h"
 #include "serial_commands.h"
 #include "buzzer.h"
+#include "Logger.h"
 
 static SystemState sysState = STATE_BOOT;
 
@@ -251,6 +252,7 @@ static SerialContext _serialCtx = {
 void setup() {
     Serial.begin(115200);
     delay(200);
+    Logger::instance().begin(LogLevel::DEBUG, TAG_ALL);
     Serial.println("\n\n[Boot] M25 Remote Control starting...");
     
     // Check wake-up reason
