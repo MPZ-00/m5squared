@@ -172,10 +172,13 @@ static void enterOff() {
 
 static bool powerOnSafetyCheck() {
 #ifdef NO_JOYSTICK
-    LOG_INFO(TAG_SAFETY, "NO_JOYSTICK: press E-stop to confirm, or send 'confirm' via serial");
+    Logger::instance().logForced(LogLevel::INFO, TAG_SAFETY, __FILE__, __LINE__,
+        "NO_JOYSTICK: press E-stop to confirm, or send 'confirm' via serial");
 #else
-    LOG_INFO(TAG_SAFETY, "Power-on check: center joystick and hold for 5 seconds");
-    LOG_INFO(TAG_SAFETY, "(Send 'confirm' via serial or press E-stop to skip)");
+    Logger::instance().logForced(LogLevel::INFO, TAG_SAFETY, __FILE__, __LINE__,
+        "Power-on check: center joystick and hold for 5 seconds");
+    Logger::instance().logForced(LogLevel::INFO, TAG_SAFETY, __FILE__, __LINE__,
+        "(Send 'confirm' via serial or press E-stop to skip)");
 #endif
 
     uint32_t centeredSince = 0;
@@ -256,19 +259,19 @@ static SerialContext _serialCtx = {
 void setup() {
     Serial.begin(115200);
     delay(200);
-    const uint32_t defaultTagMask = TAG_ALL & ~(TAG_JOYSTICK | TAG_MOTOR | TAG_SUPERVISOR);
+    const uint32_t defaultTagMask = TAG_ALL & ~(TAG_MOTOR | TAG_SUPERVISOR);
     Logger::instance().begin(LogLevel::DEBUG, defaultTagMask);
-    LOG_INFO(TAG_BOOT, "M25 Remote Control starting...");
+    Logger::instance().logForced(LogLevel::INFO, TAG_BOOT, __FILE__, __LINE__, "M25 Remote Control starting...");
 
     // Check wake-up reason
     esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
     switch (wakeup_reason) {
     case ESP_SLEEP_WAKEUP_EXT0:
-        LOG_INFO(TAG_BOOT, "Wake-up from deep sleep via power button");
+        Logger::instance().logForced(LogLevel::INFO, TAG_BOOT, __FILE__, __LINE__, "Wake-up from deep sleep via power button");
         break;
     case ESP_SLEEP_WAKEUP_UNDEFINED:
     default:
-        LOG_INFO(TAG_BOOT, "Cold boot or reset");
+        Logger::instance().logForced(LogLevel::INFO, TAG_BOOT, __FILE__, __LINE__, "Cold boot or reset");
         break;
     }
 

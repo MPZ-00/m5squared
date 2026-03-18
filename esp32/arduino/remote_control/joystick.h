@@ -21,8 +21,12 @@
  // Stub implementation: no hardware joystick connected.
  // All reads return a perfectly centered, in-deadzone state.
  // ---------------------------------------------------------------------------
-inline void joystickInit() { LOG_INFO(TAG_JOYSTICK, "NO_JOYSTICK defined - ADC disabled"); }
-inline void joystickRecalibrate() { LOG_INFO(TAG_JOYSTICK, "NO_JOYSTICK - recal skipped"); }
+inline void joystickInit() {
+    Logger::instance().logForced(LogLevel::INFO, TAG_JOYSTICK, __FILE__, __LINE__, "NO_JOYSTICK defined - ADC disabled");
+}
+inline void joystickRecalibrate() {
+    Logger::instance().logForced(LogLevel::INFO, TAG_JOYSTICK, __FILE__, __LINE__, "NO_JOYSTICK - recal skipped");
+}
 inline int  joystickReadRawAxis(uint8_t) { return JOYSTICK_CENTER; }
 struct JoystickRaw { int x = JOYSTICK_CENTER; int y = JOYSTICK_CENTER; };
 struct JoystickNorm { float x = 0.0f; float y = 0.0f; bool inDeadzone = true; };
@@ -64,7 +68,8 @@ inline void joystickInit() {
     }
     _jsXCenter = (int)(sumX / 32);
     _jsYCenter = (int)(sumY / 32);
-    LOG_INFO(TAG_JOYSTICK, "Center calibrated: X=%d Y=%d", _jsXCenter, _jsYCenter);
+    Logger::instance().logForced(LogLevel::INFO, TAG_JOYSTICK, __FILE__, __LINE__,
+        "Center calibrated: X=%d Y=%d", _jsXCenter, _jsYCenter);
 }
 
 // ---------------------------------------------------------------------------
