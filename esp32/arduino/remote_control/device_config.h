@@ -18,10 +18,10 @@
 #ifndef DEVICE_CONFIG_H
 #define DEVICE_CONFIG_H
 
-// ---------------------------------------------------------------------------
-// Encryption keys (AES-128, 16 bytes)
-// Replace with actual keys derived from wheel QR codes (m25_qr_to_key.py)
-// ---------------------------------------------------------------------------
+ // ---------------------------------------------------------------------------
+ // Encryption keys (AES-128, 16 bytes)
+ // Replace with actual keys derived from wheel QR codes (m25_qr_to_key.py)
+ // ---------------------------------------------------------------------------
 #ifndef ENCRYPTION_KEY_LEFT
 #define ENCRYPTION_KEY_LEFT  { \
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
@@ -61,13 +61,13 @@
 #define WHEEL_MODE  WHEEL_MODE_DUAL   // <-- set to WHEEL_MODE_DUAL for normal operation
 
 #if   WHEEL_MODE == WHEEL_MODE_DUAL
-  #define WHEEL_MODE_NAME "Dual"
+#define WHEEL_MODE_NAME "Dual"
 #elif WHEEL_MODE == WHEEL_MODE_LEFT_ONLY
-  #define WHEEL_MODE_NAME "Left only"
+#define WHEEL_MODE_NAME "Left only"
 #elif WHEEL_MODE == WHEEL_MODE_RIGHT_ONLY
-  #define WHEEL_MODE_NAME "Right only"
+#define WHEEL_MODE_NAME "Right only"
 #else
-  #define WHEEL_MODE_NAME "Unknown"
+#define WHEEL_MODE_NAME "Unknown"
 #endif
 
 #define M25_TRANSPORT_RFCOMM 0
@@ -228,12 +228,12 @@
 // When using Supervisor, the actual state is SupervisorState from types.h
 // ---------------------------------------------------------------------------
 enum SystemState : uint8_t {
-    STATE_BOOT       = 0,
+    STATE_BOOT = 0,
     STATE_CONNECTING = 1,
-    STATE_READY      = 2,
-    STATE_OPERATING  = 3,
-    STATE_ERROR      = 4,
-    STATE_OFF        = 5,
+    STATE_READY = 2,
+    STATE_OPERATING = 3,
+    STATE_ERROR = 4,
+    STATE_OFF = 5,
 };
 
 // ---------------------------------------------------------------------------

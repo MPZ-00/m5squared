@@ -14,7 +14,7 @@
  *   log tag <name> <on|off>     Enable/disable one logger tag
  *   log all <on|off>            Enable/disable all logger tags
  *   debug ...                   Compatibility alias to log controls
- *   js                          One-shot joystick snapshot (raw + normalized)
+ *   js                          One-shot joystick snapshot (raw + normalized + direction)
  *   ble                         BLE connection status for each wheel
  *   wheels                      Verbose per-wheel status + key
  *   telemetry                   Request fresh telemetry from wheels + print cached values
@@ -203,7 +203,7 @@ static void _scPrintHelp() {
     _scCmdOut("  log stop <on|off>         Enable/disable STOP lines in motor logs");
     _scCmdOut("  log stop every <N>        Print every Nth STOP line (when enabled)");
     _scCmdOut("  log show                  Show current log-filter settings");
-    _scCmdOut("  js                        One-shot joystick snapshot");
+    _scCmdOut("  js                        One-shot joystick snapshot (includes direction)");
     _scCmdOut("  buttons                   Button hardware and state details");
     _scCmdOut("  ble                       Quick BLE connection status");
     _scCmdOut("  wheels                    Verbose per-wheel status + key");
@@ -413,8 +413,9 @@ static void _scPrintJs() {
     n.x = joystickNormalizeAxis(raw.x, _jsXCenter);
     n.y = joystickNormalizeAxis(raw.y, _jsYCenter);
     n.inDeadzone = (n.x == 0.0f && n.y == 0.0f);
-    _scCmdOutf("[JS] raw X=%-5d Y=%-5d  ctr X=%-5d Y=%-5d  norm X=%+.3f Y=%+.3f  dz=%s",
-        raw.x, raw.y, _jsXCenter, _jsYCenter, n.x, n.y, n.inDeadzone ? "yes" : "no");
+    const char* dir = joystickDirectionLabel(n.x, n.y);
+    _scCmdOutf("[JS] raw X=%-5d Y=%-5d  ctr X=%-5d Y=%-5d  norm X=%+.3f Y=%+.3f  dz=%s  dir=%s",
+        raw.x, raw.y, _jsXCenter, _jsYCenter, n.x, n.y, n.inDeadzone ? "yes" : "no", dir);
 }
 
 static void _scPrintWheels() {

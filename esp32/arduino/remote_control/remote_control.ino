@@ -294,6 +294,9 @@ void setup() {
 
     sysState = STATE_BOOT;
     powerOnSafetyCheck();
+    Logger::instance().logForced(LogLevel::INFO, TAG_JOYSTICK, __FILE__, __LINE__,
+        "Recalibrating joystick after safety check");
+    joystickRecalibrate();
 
     bleInit("M25-Remote");
     bleStartMotorTask();   // spawn async write task on Core 0

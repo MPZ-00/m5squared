@@ -30,6 +30,7 @@ inline void joystickRecalibrate() {
 inline int  joystickReadRawAxis(uint8_t) { return JOYSTICK_CENTER; }
 struct JoystickRaw { int x = JOYSTICK_CENTER; int y = JOYSTICK_CENTER; };
 struct JoystickNorm { float x = 0.0f; float y = 0.0f; bool inDeadzone = true; };
+inline const char* joystickDirectionLabel(float, float) { return "CENTER"; }
 inline JoystickRaw  joystickReadRaw() { return { JOYSTICK_CENTER, JOYSTICK_CENTER }; }
 inline JoystickNorm joystickRead() { return { 0.0f, 0.0f, true }; }
 #else // real joystick below
@@ -169,6 +170,31 @@ inline float joystickNormalizeAxis(int raw, int center) {
     if (usable > 1.0f) usable = 1.0f;
     if (usable < -1.0f) usable = -1.0f;
     return usable;
+}
+
+// ---------------------------------------------------------------------------
+// Classify normalized joystick vector into a readable direction label.
+// ---------------------------------------------------------------------------
+inline const char* joystickDirectionLabel(float x, float y) {
+    const float primary = 0.55f;
+    const float secondary = 0.25f;
+    const float ax = (x >= 0.0f) ? x : -x;
+    const float ay = (y >= 0.0f) ? y : -y;
+
+    if (x == 0.0f && y == 0.0f) return "CENTER";
+
+    if (y >= primary && ax <= secondary) return "UP";
+    if (y <= -primary && ax <= secondary) return "DOWN";
+    if (x >= primary && ay <= secondary) return "RIGHT";
+    if (x <= -primary && ay <= secondary) return "LEFT";
+
+    if (x >= secondary && y >= secondary) return "UP-RIGHT";
+    if (x <= -secondary && y >= secondary) return "UP-LEFT";
+    if (x >= secondary && y <= -secondary) return "DOWN-RIGHT";
+    if (x <= -secondary && y <= -secondary) return "DOWN-LEFT";
+
+    if (ay >= ax) return (y > 0.0f) ? "UP-ish" : "DOWN-ish";
+    return (x > 0.0f) ? "RIGHT-ish" : "LEFT-ish";
 }
 
 // ---------------------------------------------------------------------------
