@@ -59,17 +59,66 @@ static int _jsYCenter = JOYSTICK_CENTER;
 // ---------------------------------------------------------------------------
 inline void joystickInit() {
     analogReadResolution(ADC_RESOLUTION_BITS);
+    const int8_t gpioX = digitalPinToGPIONumber(JOYSTICK_X_PIN);
+    const int8_t gpioY = digitalPinToGPIONumber(JOYSTICK_Y_PIN);
+    const int8_t chX = digitalPinToAnalogChannel(JOYSTICK_X_PIN);
+    const int8_t chY = digitalPinToAnalogChannel(JOYSTICK_Y_PIN);
+    Logger::instance().logForced(LogLevel::INFO, TAG_JOYSTICK, __FILE__, __LINE__,
+        "Pin map: X pin %d->gpio %d ch %d, Y pin %d->gpio %d ch %d",
+        JOYSTICK_X_PIN, gpioX, chX, JOYSTICK_Y_PIN, gpioY, chY);
+    if (chX < 0 || chY < 0) {
+        Logger::instance().logForced(LogLevel::ERROR, TAG_JOYSTICK, __FILE__, __LINE__,
+            "Configured joystick pins are not ADC-capable on this board variant");
+    }
+    pinMode(JOYSTICK_X_PIN, ANALOG);
+    pinMode(JOYSTICK_Y_PIN, ANALOG);
+    // Use global ADC attenuation to avoid per-pin channel init issues on some core versions.
+    analogSetAttenuation(ADC_11db);
+
+    // Warm-up reads reduce first-sample artifacts after attenuation changes.
+    for (int i = 0; i < 4; i++) {
+        (void)analogRead(JOYSTICK_X_PIN);
+        (void)analogRead(JOYSTICK_Y_PIN);
+        delay(2);
+    }
+
+    const int bootProbeX = analogRead(JOYSTICK_X_PIN);
+    const int bootProbeY = analogRead(JOYSTICK_Y_PIN);
+    Logger::instance().logForced(LogLevel::INFO, TAG_JOYSTICK, __FILE__, __LINE__,
+        "Boot ADC probe: X=%d Y=%d (pins %d/%d)",
+        bootProbeX, bootProbeY, JOYSTICK_X_PIN, JOYSTICK_Y_PIN);
+
     // Calibrate center by averaging ADC samples taken at rest
     long sumX = 0, sumY = 0;
+    int minX = JOYSTICK_ADC_MAX;
+    int maxX = JOYSTICK_ADC_MIN;
+    int minY = JOYSTICK_ADC_MAX;
+    int maxY = JOYSTICK_ADC_MIN;
     for (int i = 0; i < 32; i++) {
-        sumX += analogRead(JOYSTICK_X_PIN);
-        sumY += analogRead(JOYSTICK_Y_PIN);
+        int x = analogRead(JOYSTICK_X_PIN);
+        int y = analogRead(JOYSTICK_Y_PIN);
+        sumX += x;
+        sumY += y;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
         delay(5);
     }
     _jsXCenter = (int)(sumX / 32);
     _jsYCenter = (int)(sumY / 32);
     Logger::instance().logForced(LogLevel::INFO, TAG_JOYSTICK, __FILE__, __LINE__,
         "Center calibrated: X=%d Y=%d", _jsXCenter, _jsYCenter);
+    Logger::instance().logForced(LogLevel::INFO, TAG_JOYSTICK, __FILE__, __LINE__,
+        "Boot ADC span: X=%d..%d (d=%d) Y=%d..%d (d=%d)",
+        minX, maxX, (maxX - minX), minY, maxY, (maxY - minY));
+
+    const bool xClamped = (maxX >= (JOYSTICK_ADC_MAX - 2)) || (minX <= (JOYSTICK_ADC_MIN + 2));
+    const bool yClamped = (maxY >= (JOYSTICK_ADC_MAX - 2)) || (minY <= (JOYSTICK_ADC_MIN + 2));
+    if (xClamped || yClamped) {
+        Logger::instance().logForced(LogLevel::WARN, TAG_JOYSTICK, __FILE__, __LINE__,
+            "ADC near rail during boot calibration (check wiring/3.3V/GND, attenuation, and pin mapping)");
+    }
 }
 
 // ---------------------------------------------------------------------------
