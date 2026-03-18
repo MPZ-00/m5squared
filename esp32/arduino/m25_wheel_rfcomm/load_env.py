@@ -23,20 +23,17 @@ except NameError:
 
 _env_path = _script_dir / ".env"
 
+cfg = {}
 if not _env_path.exists():
     print("[load_env] No local .env found -- using compiled defaults from config.h")
-    Return()  # type: ignore # noqa: F821
-    quit()
-
-print(f"[load_env] Using local .env: {_env_path}")
-
-cfg = {}
-for raw in _env_path.read_text().splitlines():
-    line = raw.strip()
-    if not line or line.startswith("#") or "=" not in line:
-        continue
-    key, _, value = line.partition("=")
-    cfg[key.strip()] = value.strip()
+else:
+    print(f"[load_env] Using local .env: {_env_path}")
+    for raw in _env_path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        cfg[key.strip()] = value.strip()
 
 
 def _hex_to_c_bytes(hex_str):
