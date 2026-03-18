@@ -256,7 +256,8 @@ static SerialContext _serialCtx = {
 void setup() {
     Serial.begin(115200);
     delay(200);
-    Logger::instance().begin(LogLevel::DEBUG, TAG_ALL);
+    const uint32_t defaultTagMask = TAG_ALL & ~(TAG_JOYSTICK | TAG_MOTOR | TAG_SUPERVISOR);
+    Logger::instance().begin(LogLevel::DEBUG, defaultTagMask);
     LOG_INFO(TAG_BOOT, "M25 Remote Control starting...");
 
     // Check wake-up reason

@@ -533,7 +533,6 @@ static void _scCmdOut(const char* msg) {
     if (!msg) return;
     char outBuf[320];
     _scCmdDecorateMsg(msg, outBuf, sizeof(outBuf));
-    Serial.println(outBuf);
     Logger::instance().logForced(LogLevel::INFO, _scCmdTagFromMsg(msg), __FILE__, __LINE__, "%s", outBuf);
 }
 
@@ -546,7 +545,6 @@ static void _scCmdOutf(const char* fmt, ...) {
     va_end(args);
     char outBuf[320];
     _scCmdDecorateMsg(buf, outBuf, sizeof(outBuf));
-    Serial.println(outBuf);
     Logger::instance().logForced(LogLevel::INFO, _scCmdTagFromMsg(buf), __FILE__, __LINE__, "%s", outBuf);
 }
 
@@ -1139,6 +1137,13 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
             nvsPrintAll();
             _scCmdOutf("[Config] Profile availability: env=%s, default=YES",
                 _scProfileEnvAvailable ? "YES" : "no");
+            _scCmdOutf("[Config] Build default MACs: left=%s right=%s",
+                _scProfileDefaultLeftMac, _scProfileDefaultRightMac);
+            if (_scProfileEnvAvailable) {
+                _scCmdOutf("[Config] Env profile MACs  : left=%s right=%s",
+                    _scProfileEnvLeftMac, _scProfileEnvRightMac);
+            }
+            _scCmdOut("[Config] Switch profile: 'config profile default' or 'config profile env'");
         }
         else if (strncmp(arg, "profile ", 8) == 0) {
             const char* profile = arg + 8;
@@ -1210,7 +1215,7 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
     }
 
     _scCmdOutf("[CMD] Unknown: '%s'  (type 'help')", cmd);
-}
+    }
 
 // ---------------------------------------------------------------------------
 // Live joystick output timer
