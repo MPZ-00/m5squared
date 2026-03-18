@@ -29,6 +29,7 @@
 // APP_MGMT (0x01) parameter IDs
 #define SPP_PARAM_SYSTEM_MODE       0x10
 #define SPP_PARAM_DRIVE_MODE        0x20
+#define SPP_PARAM_READ_DRIVE_MODE   0x21
 #define SPP_PARAM_REMOTE_SPEED      0x30
 #define SPP_PARAM_ASSIST_LEVEL      0x40
 #define SPP_PARAM_DRIVE_PROFILE     0x60
@@ -96,6 +97,7 @@ inline CmdResult command_apply(const uint8_t* spp, size_t sppLen,
         case SPP_PARAM_DRIVE_MODE:
             if (sppLen > SPP_MIN_LEN) {
                 const uint8_t mode = spp[6];
+                s->driveMode = mode;
                 s->hillHold = (mode & DRIVE_FLAG_HILL_HOLD) != 0;
                 if (debug) {
                     Serial.printf("[CMD] DRIVE_MODE = 0x%02X [", mode);
@@ -146,6 +148,7 @@ inline CmdResult command_apply(const uint8_t* spp, size_t sppLen,
         // wheel status (battery, assist, profile) from packet_encode_ack().
         case SPP_PARAM_DRIVE_PROFILE:
         case SPP_PARAM_AUTO_SHUTOFF:
+        case SPP_PARAM_READ_DRIVE_MODE:
         case SPP_PARAM_READ_SPEED:
         case SPP_PARAM_READ_CRUISE:
         case SPP_PARAM_DUO_DRIVE:

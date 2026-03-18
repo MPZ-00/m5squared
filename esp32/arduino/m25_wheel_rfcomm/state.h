@@ -21,6 +21,7 @@ struct WheelState {
     int      battery;        // Battery percentage 0-100
     uint8_t  assistLevel;    // Assist level 0-2
     bool     hillHold;       // Hill-hold active
+    uint8_t  driveMode;      // Raw APP_MGMT drive mode bits
     uint8_t  driveProfile;   // Drive profile 0-5
     int16_t  cruiseSpeed;    // Cruise control threshold (raw units)
     uint8_t  autoShutoffMin; // Idle auto-shutoff timeout in minutes
@@ -39,6 +40,7 @@ inline void state_init(WheelState* s) {
     s->battery        = 100;
     s->assistLevel    = 1;
     s->hillHold       = false;
+    s->driveMode      = 0;
     s->driveProfile   = 0;
     s->cruiseSpeed    = CRUISE_SPEED_DEFAULT;
     s->autoShutoffMin = AUTO_SHUTOFF_MIN_DEFAULT;

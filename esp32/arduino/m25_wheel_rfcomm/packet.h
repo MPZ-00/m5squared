@@ -156,6 +156,10 @@ inline size_t packet_encode_response(uint8_t           reqService,
                     spp[7] = (uint8_t)(s->speed & 0xFF);
                     sppLen = 8;
                     break;
+                case SPP_PARAM_READ_DRIVE_MODE:
+                    spp[6] = s->driveMode;
+                    sppLen = 7;
+                    break;
                 case SPP_PARAM_READ_CRUISE:
                     spp[6] = (uint8_t)(s->cruiseSpeed >> 8);
                     spp[7] = (uint8_t)(s->cruiseSpeed & 0xFF);
