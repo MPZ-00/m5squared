@@ -522,11 +522,11 @@ static void _scCmdDecorateMsg(const char* msg, char* out, size_t outSize) {
     }
 
     if (msg[0] == '[') {
-        snprintf(out, outSize, "[CMD]%s", msg);
+        snprintf(out, outSize, "\b%s", msg);
         return;
     }
 
-    snprintf(out, outSize, "[CMD] %s", msg);
+    snprintf(out, outSize, "%s", msg);
 }
 
 static void _scCmdOut(const char* msg) {
@@ -717,7 +717,7 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
             _scCmdOutf("[Log] STOP throttle -> every %u line(s)", (unsigned)bleGetMotorStopLogEvery());
             return;
         }
-        _scCmdOut("[CMD] log stop: use 'on', 'off', or 'every <N>'");
+        _scCmdOut("log stop: use 'on', 'off', or 'every <N>'");
         return;
     }
 
@@ -743,24 +743,24 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
     if (strncmp(cmd, "assist ", 7) == 0) {
         int lvl = atoi(cmd + 7);
         if (lvl < 0 || lvl >= ASSIST_COUNT) {
-            _scCmdOut("[CMD] assist: invalid level  0=indoor  1=outdoor  2=learning");
+            _scCmdOut("assist: invalid level  0=indoor  1=outdoor  2=learning");
             return;
         }
         if (*ctx.state == STATE_OPERATING) {
-            _scCmdOut("[CMD] assist: ignored - motors active, stop first");
+            _scCmdOut("assist: ignored - motors active, stop first");
             return;
         }
         *ctx.assistLevel = (uint8_t)lvl;
         ledSetAssistLevel(*ctx.assistLevel);
         bleSendAssistLevel(*ctx.assistLevel);
-        _scCmdOutf("[CMD] Assist -> %s", assistConfigs[*ctx.assistLevel].name);
+        _scCmdOutf("Assist -> %s", assistConfigs[*ctx.assistLevel].name);
         return;
     }
 
     // hillhold <on|off>
     if (strncmp(cmd, "hillhold ", 9) == 0) {
         if (*ctx.state == STATE_OPERATING) {
-            _scCmdOut("[CMD] hillhold: ignored - motors active");
+            _scCmdOut("hillhold: ignored - motors active");
             return;
         }
         const char* arg = cmd + 9;
@@ -771,22 +771,22 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
             *ctx.hillHoldOn = false;
         }
         else {
-            _scCmdOut("[CMD] hillhold: use 'on' or 'off'");
+            _scCmdOut("hillhold: use 'on' or 'off'");
             return;
         }
         ledSetHillHold(*ctx.hillHoldOn);
         bleSendHillHold(*ctx.hillHoldOn);
-        _scCmdOutf("[CMD] HillHold -> %s", *ctx.hillHoldOn ? "ON" : "OFF");
+        _scCmdOutf("HillHold -> %s", *ctx.hillHoldOn ? "ON" : "OFF");
         return;
     }
 
     // recal
     if (strcmp(cmd, "recal") == 0) {
         if (*ctx.state == STATE_OPERATING) {
-            _scCmdOut("[CMD] recal: release joystick to center before recalibrating");
+            _scCmdOut("recal: release joystick to center before recalibrating");
             return;
         }
-        _scCmdOut("[CMD] Recalibrating joystick center - keep joystick at rest...");
+        _scCmdOut("Recalibrating joystick center - keep joystick at rest...");
         ctx.fnRecalibrate();
         return;
     }
@@ -794,45 +794,45 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
     // arm - transition PAIRED -> ARMED
     if (strcmp(cmd, "arm") == 0) {
         if (!ctx.supervisor) {
-            _scCmdOut("[CMD] ERROR: supervisor not available");
+            _scCmdOut("ERROR: supervisor not available");
             return;
         }
         SupervisorState supState = ctx.supervisor->getState();
         if (supState != SUPERVISOR_PAIRED) {
-            _scCmdOutf("[CMD] arm: must be in PAIRED state (currently %s)",
+            _scCmdOutf("arm: must be in PAIRED state (currently %s)",
                 supervisorStateToString(supState));
             return;
         }
         ctx.supervisor->requestArm();
-        _scCmdOut("[CMD] Armed - joystick + deadman to drive");
+        _scCmdOut("Armed - joystick + deadman to drive");
         return;
     }
 
     // disarm - transition ARMED/DRIVING -> PAIRED (safe stop first)
     if (strcmp(cmd, "disarm") == 0) {
         if (!ctx.supervisor) {
-            _scCmdOut("[CMD] ERROR: supervisor not available");
+            _scCmdOut("ERROR: supervisor not available");
             return;
         }
         SupervisorState supState = ctx.supervisor->getState();
         if (supState != SUPERVISOR_ARMED && supState != SUPERVISOR_DRIVING) {
-            _scCmdOutf("[CMD] disarm: must be ARMED or DRIVING (currently %s)",
+            _scCmdOutf("disarm: must be ARMED or DRIVING (currently %s)",
                 supervisorStateToString(supState));
             return;
         }
         ctx.supervisor->requestDisarm();
-        _scCmdOut("[CMD] Disarmed -> PAIRED");
+        _scCmdOut("Disarmed -> PAIRED");
         return;
     }
 
     // stop (software e-stop -> FAILSAFE state)
     if (strcmp(cmd, "stop") == 0) {
         if (ctx.supervisor) {
-            _scCmdOut("[CMD] Emergency stop");
+            _scCmdOut("Emergency stop");
             ctx.supervisor->requestEmergencyStop("serial stop command");
         }
         else {
-            _scCmdOut("[CMD] ERROR: supervisor not available");
+            _scCmdOut("ERROR: supervisor not available");
         }
         return;
     }
@@ -840,15 +840,15 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
     // reset - exit FAILSAFE state back to CONNECTING
     if (strcmp(cmd, "reset") == 0) {
         if (!ctx.supervisor) {
-            _scCmdOut("[CMD] ERROR: supervisor not available");
+            _scCmdOut("ERROR: supervisor not available");
             return;
         }
         SupervisorState supState = ctx.supervisor->getState();
         if (supState != SUPERVISOR_FAILSAFE && supState != SUPERVISOR_DISCONNECTED) {
-            _scCmdOut("[CMD] reset: must be in FAILSAFE or DISCONNECTED state");
+            _scCmdOut("reset: must be in FAILSAFE or DISCONNECTED state");
             return;
         }
-        _scCmdOut("[CMD] Clearing failsafe, reconnecting...");
+        _scCmdOut("Clearing failsafe, reconnecting...");
         ctx.supervisor->requestReconnect();
         return;
     }
@@ -856,19 +856,19 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
     // reconnect - force BLE reconnect
     if (strcmp(cmd, "reconnect") == 0) {
         if (!ctx.supervisor) {
-            _scCmdOut("[CMD] ERROR: supervisor not available");
+            _scCmdOut("ERROR: supervisor not available");
             return;
         }
         SupervisorState supState = ctx.supervisor->getState();
         if (supState == SUPERVISOR_DRIVING) {
-            _scCmdOut("[CMD] reconnect: stop motors first");
+            _scCmdOut("reconnect: stop motors first");
             return;
         }
         if (*ctx.state == STATE_OFF) {
-            _scCmdOut("[CMD] reconnect: device is OFF, use 'power on' first");
+            _scCmdOut("reconnect: device is OFF, use 'power on' first");
             return;
         }
-        _scCmdOut("[CMD] Forcing reconnect...");
+        _scCmdOut("Forcing reconnect...");
         ctx.supervisor->requestReconnect();
         return;
     }
@@ -953,15 +953,15 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
     // disconnect - force-disconnect all wheels
     if (strcmp(cmd, "disconnect") == 0) {
         if (!ctx.supervisor) {
-            _scCmdOut("[CMD] ERROR: supervisor not available");
+            _scCmdOut("ERROR: supervisor not available");
             return;
         }
         SupervisorState supState = ctx.supervisor->getState();
         if (supState == SUPERVISOR_DRIVING) {
-            _scCmdOut("[CMD] disconnect: stop motors first ('stop' or release joystick)");
+            _scCmdOut("disconnect: stop motors first ('stop' or release joystick)");
             return;
         }
-        _scCmdOut("[CMD] Disconnecting all wheels...");
+        _scCmdOut("Disconnecting all wheels...");
         ctx.supervisor->requestDisconnect();
         return;
     }
@@ -973,7 +973,7 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
 
         if (strcmp(arg, "stop") == 0) {
             if (!bleRecordIsActive()) {
-                _scCmdOut("[CMD] record: not currently recording");
+                _scCmdOut("record: not currently recording");
             }
             else {
                 bleRecordStop();
@@ -1017,24 +1017,24 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
         const char* arg = cmd + 6;
         if (strcmp(arg, "off") == 0) {
             if (*ctx.state == STATE_OFF) {
-                _scCmdOut("[CMD] power: already off");
+                _scCmdOut("power: already off");
                 return;
             }
-            _scCmdOut("[CMD] Turning OFF (entering deep sleep)...");
+            _scCmdOut("Turning OFF (entering deep sleep)...");
             ctx.fnEnterOff();  // Never returns - enters deep sleep
         }
         else if (strcmp(arg, "on") == 0) {
             // Deep sleep means device reboots on wake, so this command only
             // makes sense during development/testing when deep sleep is disabled
             if (*ctx.state != STATE_OFF) {
-                _scCmdOut("[CMD] power: already on");
+                _scCmdOut("power: already on");
                 return;
             }
-            _scCmdOut("[CMD] Note: Device uses deep sleep. Power button causes reboot.");
-            _scCmdOut("[CMD] This command only works if deep sleep is disabled.");
+            _scCmdOut("Note: Device uses deep sleep. Power button causes reboot.");
+            _scCmdOut("This command only works if deep sleep is disabled.");
         }
         else {
-            _scCmdOut("[CMD] power: use 'on' or 'off'");
+            _scCmdOut("power: use 'on' or 'off'");
         }
         return;
     }
@@ -1071,7 +1071,7 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
             bleSetAutoReconnect(false);
         }
         else {
-            _scCmdOut("[CMD] autoreconnect: use 'on' or 'off'");
+            _scCmdOut("autoreconnect: use 'on' or 'off'");
         }
         return;
     }
@@ -1083,23 +1083,23 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
         if (strncmp(rest, "left ", 5) == 0) { idx = WHEEL_LEFT;  rest += 5; }
         else if (strncmp(rest, "right ", 6) == 0) { idx = WHEEL_RIGHT; rest += 6; }
         if (idx < 0) {
-            _scCmdOut("[CMD] setmac: setmac left <MAC>  or  setmac right <MAC>");
+            _scCmdOut("setmac: setmac left <MAC>  or  setmac right <MAC>");
             return;
         }
         if (strlen(rest) != 17) {
-            _scCmdOut("[CMD] setmac: MAC must be XX:XX:XX:XX:XX:XX (17 chars)");
+            _scCmdOut("setmac: MAC must be XX:XX:XX:XX:XX:XX (17 chars)");
             return;
         }
         if (*ctx.state == STATE_OPERATING) {
-            _scCmdOut("[CMD] setmac: stop motors first");
+            _scCmdOut("setmac: stop motors first");
             return;
         }
         bleSetMac(idx, rest);
         if (nvsSaveMac(idx, rest)) {
-            _scCmdOut("[CMD] setmac: saved to NVS (survives reboot)");
+            _scCmdOut("setmac: saved to NVS (survives reboot)");
         }
         else {
-            _scCmdOut("[CMD] setmac: WARNING - NVS save failed; change is runtime-only");
+            _scCmdOut("setmac: WARNING - NVS save failed; change is runtime-only");
         }
         return;
     }
@@ -1111,20 +1111,20 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
         if (strncmp(rest, "left ", 5) == 0) { idx = WHEEL_LEFT;  rest += 5; }
         else if (strncmp(rest, "right ", 6) == 0) { idx = WHEEL_RIGHT; rest += 6; }
         if (idx < 0) {
-            _scCmdOut("[CMD] setkey: setkey left <32hex>  or  setkey right <32hex>");
+            _scCmdOut("setkey: setkey left <32hex>  or  setkey right <32hex>");
             return;
         }
         uint8_t newKey[16];
         if (!_scParseHex16(rest, newKey)) {
-            _scCmdOut("[CMD] setkey: key must be exactly 32 hex chars, no spaces/colons");
+            _scCmdOut("setkey: key must be exactly 32 hex chars, no spaces/colons");
             return;
         }
         bleSetKey(idx, newKey);
         if (nvsSaveKey(idx, newKey)) {
-            _scCmdOut("[CMD] setkey: saved to NVS (survives reboot)");
+            _scCmdOut("setkey: saved to NVS (survives reboot)");
         }
         else {
-            _scCmdOut("[CMD] setkey: WARNING - NVS save failed; change is runtime-only");
+            _scCmdOut("setkey: WARNING - NVS save failed; change is runtime-only");
         }
         return;
     }
@@ -1192,7 +1192,7 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
                 _scCmdOut("[Config] Reconnect requested.");
             }
             else {
-                _scCmdOut("[CMD] config profile: use 'env' or 'default'");
+                _scCmdOut("config profile: use 'env' or 'default'");
             }
         }
         else if (strcmp(arg, "reset") == 0) {
@@ -1201,21 +1201,21 @@ static void _scDispatch(const char* cmd, const SerialContext& ctx) {
             _scCmdOut("[Config] Restart to apply ('restart' command).");
         }
         else {
-            _scCmdOut("[CMD] config: use 'config show', 'config reset', or 'config profile <env|default>'");
+            _scCmdOut("config: use 'config show', 'config reset', or 'config profile <env|default>'");
         }
         return;
     }
 
     // restart
     if (strcmp(cmd, "restart") == 0) {
-        _scCmdOut("[CMD] Restarting ESP32...");
+        _scCmdOut("Restarting ESP32...");
         delay(200);
         ESP.restart();
         return;
     }
 
-    _scCmdOutf("[CMD] Unknown: '%s'  (type 'help')", cmd);
-    }
+    _scCmdOutf("Unknown: '%s'  (type 'help')", cmd);
+}
 
 // ---------------------------------------------------------------------------
 // Live joystick output timer

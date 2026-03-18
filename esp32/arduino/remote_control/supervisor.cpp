@@ -131,10 +131,6 @@ void Supervisor::requestConnect(const char* leftAddr, const char* rightAddr,
 
     LOG_DEBUG(TAG_SUPERVISOR, "Stored: L=%s R=%s", _leftAddr, _rightAddr);
 
-    // Keep BLE runtime credentials in sync with the latest requested values.
-    // This ensures serial 'wheels' and the next connect attempt both use NVS data.
-    applyRuntimeWheelConfig();
-
     _connectionRequested = true;
 
     if (_state == SUPERVISOR_DISCONNECTED) {

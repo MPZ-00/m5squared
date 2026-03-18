@@ -44,9 +44,9 @@
 #include <esp_system.h>     // esp_fill_random()
 #include <stddef.h>         // offsetof()
 
-// ---------------------------------------------------------------------------
-// M25 SPP Service / Characteristic UUIDs (m25_bluetooth.py)
-// ---------------------------------------------------------------------------
+ // ---------------------------------------------------------------------------
+ // M25 SPP Service / Characteristic UUIDs (m25_bluetooth.py)
+ // ---------------------------------------------------------------------------
 #define M25_SPP_SERVICE_UUID  "00001101-0000-1000-8000-00805F9B34FB"
 
 // ---------------------------------------------------------------------------
@@ -130,16 +130,16 @@ static const uint8_t M25_ASSIST_LEVEL_MAP[ASSIST_COUNT] = { 0, 1, 2 };
 // Stop auto-reconnect after this many consecutive failures per wheel
 #define BLE_MAX_RECONNECT_FAILS   5
 // Delay between connecting wheels (dual-wheel mode, allows BLE stack to settle)
-#define BLE_INTER_WHEEL_DELAY_MS  1500
+#define BLE_INTER_WHEEL_DELAY_MS  2500
 // Post-GATT delay before sending commands
-#define BLE_POST_GATT_DELAY_MS    200
+#define BLE_POST_GATT_DELAY_MS    300
 // Cold-boot BLE stack init delay (GATT client async init after BLEDevice::init)
 #define BLE_STACK_INIT_DELAY_MS   1000
 // Retry delay for registerForNotify (descriptor retrieval stabilization)
-#define BLE_NOTIFY_RETRY_DELAY_MS 500
+#define BLE_NOTIFY_RETRY_DELAY_MS 700
 // GATT service discovery can lag after link-level connect on some wheels.
 #define BLE_SERVICE_DISCOVERY_RETRIES 4
-#define BLE_SERVICE_DISCOVERY_DELAY_MS 500
+#define BLE_SERVICE_DISCOVERY_DELAY_MS 650
 #define RFCOMM_CHANNEL 6
 #define RFCOMM_CONNECT_TIMEOUT_MS 7000
 // Stale-notify threshold: if a connected wheel sends no notify within this window
@@ -204,30 +204,30 @@ struct ResponseData {
     bool isAck;
     bool isNack;
     uint8_t nackCode;  // Only valid if isNack=true
-    
+
     union {
         struct {
             uint8_t batteryPercent;
         } soc;
-        
+
         struct {
             uint8_t level;  // 0=indoor, 1=outdoor, 2=learning
         } assistLevel;
-        
+
         struct {
             uint8_t mode;
             bool autoHold;
             bool cruise;
             bool remote;
         } driveMode;
-        
+
         struct {
             uint8_t devState;
             uint8_t major;
             uint8_t minor;
             uint8_t patch;
         } swVersion;
-        
+
         struct {
             uint32_t distanceMm;     // Overall distance in 0.01m
             float distanceKm;        // Converted to km
@@ -255,9 +255,9 @@ static inline uint16_t _parseUint16BE(const uint8_t* payload, size_t offset) {
 
 static inline uint32_t _parseUint32BE(const uint8_t* payload, size_t offset) {
     return ((uint32_t)payload[offset] << 24) |
-           ((uint32_t)payload[offset + 1] << 16) |
-           ((uint32_t)payload[offset + 2] << 8) |
-           (uint32_t)payload[offset + 3];
+        ((uint32_t)payload[offset + 1] << 16) |
+        ((uint32_t)payload[offset + 2] << 8) |
+        (uint32_t)payload[offset + 3];
 }
 
 static inline int32_t _parseInt32BE(const uint8_t* payload, size_t offset) {
@@ -269,16 +269,16 @@ static inline int32_t _parseInt32BE(const uint8_t* payload, size_t offset) {
 // ---------------------------------------------------------------------------
 struct WheelConnState_t {
     char                         mac[18];   // runtime-mutable "XX:XX:XX:XX:XX:XX\0"
-    const char*                  name;
+    const char* name;
     uint8_t                      key[16];   // runtime-mutable AES-128 key
     bool                         connected;
     bool                         protocolReady;      // SYSTEM_MODE + DRIVE_MODE acked
     uint8_t                      telegramId;         // SPP sequence counter
     uint8_t                      driveModeBits;      // current DRIVE_MODE byte
 #if M25_TRANSPORT_BLE
-    BLEClient*                   client;
-    BLERemoteCharacteristic*     rxChar;             // For writing commands to wheel
-    BLERemoteCharacteristic*     txChar;             // For receiving responses from wheel
+    BLEClient* client;
+    BLERemoteCharacteristic* rxChar;             // For writing commands to wheel
+    BLERemoteCharacteristic* txChar;             // For receiving responses from wheel
     bool                         rxWriteWithResponse; // true when RX char requires write-with-response
 #endif
 #if M25_TRANSPORT_RFCOMM
@@ -323,7 +323,7 @@ public:
 // ---------------------------------------------------------------------------
 // Compile-time default keys (copied into mutable _wheels storage by bleInit)
 // ---------------------------------------------------------------------------
-static const uint8_t _keyDefaultLeft[16]  = ENCRYPTION_KEY_LEFT;
+static const uint8_t _keyDefaultLeft[16] = ENCRYPTION_KEY_LEFT;
 static const uint8_t _keyDefaultRight[16] = ENCRYPTION_KEY_RIGHT;
 
 // ---------------------------------------------------------------------------
@@ -356,18 +356,18 @@ bool _wheelActive(int idx);
 
 // Encryption/decryption
 bool _m25Encrypt(const uint8_t* key, const uint8_t* spp, uint8_t sppLen,
-                 uint8_t* out, size_t* outLen);
+    uint8_t* out, size_t* outLen);
 bool _m25Decrypt(const uint8_t* key, const uint8_t* frame, size_t frameLen,
-                 uint8_t* sppOut, size_t* sppLen);
+    uint8_t* sppOut, size_t* sppLen);
 
 // SPP packet building and sending
 size_t _buildAndEncrypt(int idx, uint8_t serviceId, uint8_t paramId,
-                        const uint8_t* payload, uint8_t payloadLen,
-                        uint8_t* out,
-                        uint8_t* sppOut = nullptr,
-                        uint8_t* sppLenOut = nullptr);
+    const uint8_t* payload, uint8_t payloadLen,
+    uint8_t* out,
+    uint8_t* sppOut = nullptr,
+    uint8_t* sppLenOut = nullptr);
 bool _sendCommand(int idx, uint8_t serviceId, uint8_t paramId,
-                  const uint8_t* payload = nullptr, uint8_t payloadLen = 0);
+    const uint8_t* payload = nullptr, uint8_t payloadLen = 0);
 
 // Response parsing
 bool _parseResponseHeader(const uint8_t* spp, size_t sppLen, ResponseHeader* hdr);

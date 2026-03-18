@@ -299,6 +299,24 @@ static const char* _bleErrStr(int rc) {
     }
 }
 
+static const char* _btControllerStatusStr(esp_bt_controller_status_t status) {
+    switch (status) {
+    case ESP_BT_CONTROLLER_STATUS_IDLE: return "IDLE";
+    case ESP_BT_CONTROLLER_STATUS_INITED: return "INITED";
+    case ESP_BT_CONTROLLER_STATUS_ENABLED: return "ENABLED";
+    default: return "UNKNOWN";
+    }
+}
+
+static const char* _bluedroidStatusStr(esp_bluedroid_status_t status) {
+    switch (status) {
+    case ESP_BLUEDROID_STATUS_UNINITIALIZED: return "UNINITIALIZED";
+    case ESP_BLUEDROID_STATUS_INITIALIZED: return "INITIALIZED";
+    case ESP_BLUEDROID_STATUS_ENABLED: return "ENABLED";
+    default: return "UNKNOWN";
+    }
+}
+
 #if M25_TRANSPORT_RFCOMM
 static int _findWheelByBda(const uint8_t* bda) {
     if (!bda) return -1;
@@ -1551,11 +1569,24 @@ bool _connectWheel(int idx) {
         return false;
     }
 
-    LOG_INFO(TAG_BLE, "Connecting to BLE address %s...", w.mac);
+    esp_bt_controller_status_t ctlStatus = esp_bt_controller_get_status();
+    esp_bluedroid_status_t bdStatus = esp_bluedroid_get_status();
+    LOG_INFO(TAG_BLE, "Connecting to BLE address %s... (ctl=%s/%d, bd=%s/%d, failStreak=%d)",
+        w.mac,
+        _btControllerStatusStr(ctlStatus),
+        (int)ctlStatus,
+        _bluedroidStatusStr(bdStatus),
+        (int)bdStatus,
+        w.consecutiveFails);
     if (!w.client->connect(BLEAddress(w.mac))) {
         // Library logs status code above; "Unknown ESP_ERR" means GATT status (not in esp_err_to_name).
         // status=133 = ESP_GATT_ERROR (not connectable / busy); see _bleErrStr() for others.
-        LOG_ERROR(TAG_BLE, "%s wheel: GATT connect FAILED", wheelName);
+        LOG_ERROR(TAG_BLE, "%s wheel: GATT connect FAILED (ctl=%s/%d, bd=%s/%d)",
+            wheelName,
+            _btControllerStatusStr(ctlStatus),
+            (int)ctlStatus,
+            _bluedroidStatusStr(bdStatus),
+            (int)bdStatus);
         w.consecutiveFails++;
         return false;
     }
@@ -1582,6 +1613,7 @@ bool _connectWheel(int idx) {
     BLERemoteCharacteristic* rxChar = nullptr;
     BLERemoteCharacteristic* txChar = nullptr;
 
+    uint32_t discoverStartMs = millis();
     for (int _gattRetry = 0;
         _gattRetry < BLE_SERVICE_DISCOVERY_RETRIES && (!svc || !rxChar);
         _gattRetry++) {
@@ -1607,6 +1639,9 @@ bool _connectWheel(int idx) {
                 wheelName,
                 _gattRetry + 1,
                 BLE_SERVICE_DISCOVERY_RETRIES);
+            LOG_DEBUG(TAG_BLE, "%s wheel: discovery elapsed=%lu ms",
+                wheelName,
+                (unsigned long)(millis() - discoverStartMs));
             delay(BLE_SERVICE_DISCOVERY_DELAY_MS);
         }
     }
