@@ -60,6 +60,8 @@ static int _jsYCenter = JOYSTICK_CENTER;
 // ---------------------------------------------------------------------------
 inline void joystickInit() {
     analogReadResolution(ADC_RESOLUTION_BITS);
+    analogSetPinAttenuation(JOYSTICK_X_PIN, ADC_11db);
+    analogSetPinAttenuation(JOYSTICK_Y_PIN, ADC_11db);
     const int8_t gpioX = digitalPinToGPIONumber(JOYSTICK_X_PIN);
     const int8_t gpioY = digitalPinToGPIONumber(JOYSTICK_Y_PIN);
     const int8_t chX = digitalPinToAnalogChannel(JOYSTICK_X_PIN);
@@ -71,10 +73,6 @@ inline void joystickInit() {
         Logger::instance().logForced(LogLevel::ERROR, TAG_JOYSTICK, __FILE__, __LINE__,
             "Configured joystick pins are not ADC-capable on this board variant");
     }
-    pinMode(JOYSTICK_X_PIN, ANALOG);
-    pinMode(JOYSTICK_Y_PIN, ANALOG);
-    // Use global ADC attenuation to avoid per-pin channel init issues on some core versions.
-    analogSetAttenuation(ADC_11db);
 
     // Warm-up reads reduce first-sample artifacts after attenuation changes.
     for (int i = 0; i < 4; i++) {
@@ -89,13 +87,19 @@ inline void joystickInit() {
         "Boot ADC probe: X=%d Y=%d (pins %d/%d)",
         bootProbeX, bootProbeY, JOYSTICK_X_PIN, JOYSTICK_Y_PIN);
 
+    if (bootProbeX == 0 && bootProbeY == 0) {
+        Logger::instance().logForced(LogLevel::WARN, TAG_JOYSTICK, __FILE__, __LINE__,
+            "Boot probe is hard-zero on both axes - check joystick VCC/GND and signal wiring");
+    }
+
     // Calibrate center by averaging ADC samples taken at rest
+    const int calSamples = 64;
     long sumX = 0, sumY = 0;
     int minX = JOYSTICK_ADC_MAX;
     int maxX = JOYSTICK_ADC_MIN;
     int minY = JOYSTICK_ADC_MAX;
     int maxY = JOYSTICK_ADC_MIN;
-    for (int i = 0; i < 32; i++) {
+    for (int i = 0; i < calSamples; i++) {
         int x = analogRead(JOYSTICK_X_PIN);
         int y = analogRead(JOYSTICK_Y_PIN);
         sumX += x;
@@ -104,10 +108,10 @@ inline void joystickInit() {
         if (x > maxX) maxX = x;
         if (y < minY) minY = y;
         if (y > maxY) maxY = y;
-        delay(5);
+        delay(4);
     }
-    _jsXCenter = (int)(sumX / 32);
-    _jsYCenter = (int)(sumY / 32);
+    _jsXCenter = (int)(sumX / calSamples);
+    _jsYCenter = (int)(sumY / calSamples);
     Logger::instance().logForced(LogLevel::INFO, TAG_JOYSTICK, __FILE__, __LINE__,
         "Center calibrated: X=%d Y=%d", _jsXCenter, _jsYCenter);
     Logger::instance().logForced(LogLevel::INFO, TAG_JOYSTICK, __FILE__, __LINE__,
@@ -126,11 +130,12 @@ inline void joystickInit() {
 // Low-level: averaged ADC read
 // ---------------------------------------------------------------------------
 inline int joystickReadRawAxis(uint8_t pin) {
+    const int readSamples = 8;
     long sum = 0;
-    for (int i = 0; i < ADC_SAMPLES; i++) {
+    for (int i = 0; i < readSamples; i++) {
         sum += analogRead(pin);
     }
-    return (int)(sum / ADC_SAMPLES);
+    return (int)(sum / readSamples);
 }
 
 inline JoystickRaw joystickReadRaw() {
