@@ -32,6 +32,7 @@ Supervisor::Supervisor(Mapper& mapper, const SupervisorConfig& config)
     , _armedEntryMs(0)
     , _driveEntryMs(0)
     , _reconnectNotBeforeMs(0)
+    , _reconnectReqCooldownUntilMs(0)
     , _partialReconnect(false)
     , _connectionRequested(false)
     , _lastLeftConnected(false)
@@ -159,6 +160,21 @@ void Supervisor::requestDisconnect() {
 }
 
 void Supervisor::requestReconnect() {
+    static const uint32_t kReconnectRequestCooldownMs = 1200;
+    uint32_t now = millis();
+
+    if (now < _reconnectReqCooldownUntilMs) {
+        LOG_WARN(TAG_SUPERVISOR, "Reconnect request ignored (cooldown %lu ms)",
+            (unsigned long)(_reconnectReqCooldownUntilMs - now));
+        return;
+    }
+    _reconnectReqCooldownUntilMs = now + kReconnectRequestCooldownMs;
+
+    if (_state == SUPERVISOR_CONNECTING && _connectionRequested) {
+        LOG_DEBUG(TAG_SUPERVISOR, "Reconnect request ignored (already connecting)");
+        return;
+    }
+
     LOG_INFO(TAG_SUPERVISOR, "Forced reconnect requested");
 
     // Request disconnect first

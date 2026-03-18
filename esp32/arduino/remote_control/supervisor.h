@@ -179,6 +179,7 @@ private:
     uint32_t _armedEntryMs;         // millis() when ARMED state was entered (idle disarm timer)
     uint32_t _driveEntryMs;         // millis() when DRIVING state was entered (stale-notify watchdog anchor)
     uint32_t _reconnectNotBeforeMs; // earliest millis() to spawn first connect task (post-stop settle)
+    uint32_t _reconnectReqCooldownUntilMs; // debounce window for manual reconnect requests
     // Single-wheel reconnect tracking
     bool _partialReconnect;         // true = entered CONNECTING to recover a dropped wheel
     

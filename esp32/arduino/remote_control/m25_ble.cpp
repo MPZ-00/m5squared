@@ -1551,6 +1551,18 @@ bool _connectWheel(int idx) {
 #endif
 
 #if M25_TRANSPORT_BLE
+    if (!BLEDevice::getInitialized()) {
+        LOG_WARN(TAG_BLE, "%s wheel: BLE stack not initialized, reinitializing...", wheelName);
+        BLEDevice::init("M25-Remote");
+        delay(BLE_STACK_INIT_DELAY_MS);
+        if (!BLEDevice::getInitialized()) {
+            LOG_ERROR(TAG_BLE, "%s wheel: BLE reinit failed", wheelName);
+            w.consecutiveFails++;
+            return false;
+        }
+        LOG_INFO(TAG_BLE, "%s wheel: BLE stack reinitialized", wheelName);
+    }
+
     if (w.client == nullptr) {
         w.client = BLEDevice::createClient();
         if (w.client == nullptr) {
