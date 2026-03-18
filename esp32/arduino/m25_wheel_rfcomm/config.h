@@ -14,13 +14,13 @@
 // Runtime side selection is handled by `config set left|right`.
 // Build-time default is intentionally fixed to LEFT
 // =============================================================================
-#define WHEEL_SIDE_LEFT   0
-#define WHEEL_SIDE_RIGHT  1
+#define WHEEL_SIDE_LEFT 0
+#define WHEEL_SIDE_RIGHT 1
 
 #define WHEEL_SIDE_DEFAULT WHEEL_SIDE_LEFT
 
-#define DEVICE_NAME_LEFT   "M25_FAKE_LEFT"
-#define DEVICE_NAME_RIGHT  "M25_FAKE_RIGHT"
+#define DEVICE_NAME_LEFT "M25_FAKE_LEFT"
+#define DEVICE_NAME_RIGHT "M25_FAKE_RIGHT"
 
 // =============================================================================
 // TRANSPORT SELECTION
@@ -28,8 +28,8 @@
 // RFCOMM = Bluetooth Classic SPP (matches real wheel + m25_spp.py).
 // BLE    = BLE GATT (original fake_m25_wheel style; useful for BLE-only hosts).
 // =============================================================================
-#define TRANSPORT_RFCOMM_ENABLED  1   // Bluetooth Classic SPP
-#define TRANSPORT_BLE_ENABLED     0   // BLE GATT (disable when using RFCOMM only)
+#define TRANSPORT_RFCOMM_ENABLED 0 // Bluetooth Classic SPP
+#define TRANSPORT_BLE_ENABLED 1    // BLE GATT
 
 // RFCOMM channel the real wheel advertises on.
 // m25_spp.py hard-codes channel 6; our SPP server will target this channel via
@@ -46,25 +46,23 @@
 //   "A1B2C3D4..." -> 0xA1, 0xB2, 0xC3, 0xD4, ...
 // =============================================================================
 #ifndef ENCRYPTION_KEY_LEFT
-#define ENCRYPTION_KEY_LEFT { \
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00  \
-}
+#define ENCRYPTION_KEY_LEFT {                       \
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 #endif
 
 #ifndef ENCRYPTION_KEY_RIGHT
-#define ENCRYPTION_KEY_RIGHT { \
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00  \
-}
+#define ENCRYPTION_KEY_RIGHT {                      \
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 #endif
 
 #ifndef ENCRYPTION_KEY
-    #if WHEEL_SIDE_DEFAULT == WHEEL_SIDE_LEFT
-        #define ENCRYPTION_KEY ENCRYPTION_KEY_LEFT
-    #else
-        #define ENCRYPTION_KEY ENCRYPTION_KEY_RIGHT
-    #endif
+#if WHEEL_SIDE_DEFAULT == WHEEL_SIDE_LEFT
+#define ENCRYPTION_KEY ENCRYPTION_KEY_LEFT
+#else
+#define ENCRYPTION_KEY ENCRYPTION_KEY_RIGHT
+#endif
 #endif
 
 // =============================================================================
@@ -74,64 +72,64 @@
 // =============================================================================
 
 // Status LEDs
-#define PIN_LED_RED     25   // Low battery
-#define PIN_LED_YELLOW  26   // Medium battery
-#define PIN_LED_GREEN   27   // High battery
-#define PIN_LED_WHITE   32   // Connection status
-#define PIN_LED_BLUE    14   // Speed indicator
+#define PIN_LED_RED 25    // Low battery
+#define PIN_LED_YELLOW 26 // Medium battery
+#define PIN_LED_GREEN 27  // High battery
+#define PIN_LED_WHITE 32  // Connection status
+#define PIN_LED_BLUE 14   // Speed indicator
 
 // Audio
-#define PIN_BUZZER_ACTIVE   22   // Active buzzer (on/off)
-#define PIN_BUZZER_PASSIVE  23   // Passive buzzer (PWM / tone capable)
+#define PIN_BUZZER_ACTIVE 22  // Active buzzer (on/off)
+#define PIN_BUZZER_PASSIVE 23 // Passive buzzer (PWM / tone capable)
 
 // Control
-#define PIN_BUTTON  33   // Force-advertising button (active LOW with pullup)
+#define PIN_BUTTON 33 // Force-advertising button (active LOW with pullup)
 
 // =============================================================================
 // TIMING CONSTANTS
 // =============================================================================
 
 // Speed command watchdog: auto-stop if no REMOTE_SPEED received within this period
-#define CMD_TIMEOUT_MS          1200
+#define CMD_TIMEOUT_MS 1200
 
 // Battery simulation intervals (milliseconds)
-#define BATTERY_DRAIN_ACTIVE_MS 15000   // Drain faster while moving
-#define BATTERY_DRAIN_IDLE_MS   30000   // Drain slower while idle
+#define BATTERY_DRAIN_ACTIVE_MS 15000 // Drain faster while moving
+#define BATTERY_DRAIN_IDLE_MS 30000   // Drain slower while idle
 
 // Button debounce period
-#define BUTTON_DEBOUNCE_MS  50
+#define BUTTON_DEBOUNCE_MS 50
 
 // Stale-packet timeout after connection: discard bad packets for up to this long
-#define STALE_TIMEOUT_MS    15000
+#define STALE_TIMEOUT_MS 15000
 
 // BLE-specific UUIDs (only used when TRANSPORT_BLE_ENABLED)
-#define BLE_SERVICE_UUID_LEFT   "00001101-0000-1000-8000-00805F9B34FB"
-#define BLE_CHAR_UUID_TX_LEFT   "00001101-0000-1000-8000-00805F9B34FB"
-#define BLE_CHAR_UUID_RX_LEFT   "00001102-0000-1000-8000-00805F9B34FB"
+#define BLE_SERVICE_UUID_LEFT "00001101-0000-1000-8000-00805F9B34FB"
+#define BLE_CHAR_UUID_TX_LEFT "00001101-0000-1000-8000-00805F9B34FB"
+#define BLE_CHAR_UUID_RX_LEFT "00001102-0000-1000-8000-00805F9B34FB"
 
-#define BLE_SERVICE_UUID_RIGHT  "00001101-0000-1000-8000-00805F9B34FB"
-#define BLE_CHAR_UUID_TX_RIGHT  "00001103-0000-1000-8000-00805F9B34FB"
-#define BLE_CHAR_UUID_RX_RIGHT  "00001104-0000-1000-8000-00805F9B34FB"
+#define BLE_SERVICE_UUID_RIGHT "00001101-0000-1000-8000-00805F9B34FB"
+#define BLE_CHAR_UUID_TX_RIGHT "00001103-0000-1000-8000-00805F9B34FB"
+#define BLE_CHAR_UUID_RX_RIGHT "00001104-0000-1000-8000-00805F9B34FB"
 
 #if WHEEL_SIDE_DEFAULT == WHEEL_SIDE_LEFT
-    #define DEVICE_NAME       DEVICE_NAME_LEFT
-    #define BLE_SERVICE_UUID  BLE_SERVICE_UUID_LEFT
-    #define BLE_CHAR_UUID_TX  BLE_CHAR_UUID_TX_LEFT
-    #define BLE_CHAR_UUID_RX  BLE_CHAR_UUID_RX_LEFT
+#define DEVICE_NAME DEVICE_NAME_LEFT
+#define BLE_SERVICE_UUID BLE_SERVICE_UUID_LEFT
+#define BLE_CHAR_UUID_TX BLE_CHAR_UUID_TX_LEFT
+#define BLE_CHAR_UUID_RX BLE_CHAR_UUID_RX_LEFT
 #else
-    #define DEVICE_NAME       DEVICE_NAME_RIGHT
-    #define BLE_SERVICE_UUID  BLE_SERVICE_UUID_RIGHT
-    #define BLE_CHAR_UUID_TX  BLE_CHAR_UUID_TX_RIGHT
-    #define BLE_CHAR_UUID_RX  BLE_CHAR_UUID_RX_RIGHT
+#define DEVICE_NAME DEVICE_NAME_RIGHT
+#define BLE_SERVICE_UUID BLE_SERVICE_UUID_RIGHT
+#define BLE_CHAR_UUID_TX BLE_CHAR_UUID_TX_RIGHT
+#define BLE_CHAR_UUID_RX BLE_CHAR_UUID_RX_RIGHT
 #endif
 
 // =============================================================================
 // FIRMWARE / HARDWARE VERSION
 // Returned in VERSION_MGMT responses.
 // =============================================================================
-#define FW_VERSION_MAJOR  1
-#define FW_VERSION_MINOR  0
-#define HW_VERSION        1
+#define FW_VERSION_MAJOR 1
+#define FW_VERSION_MINOR 0
+#define HW_VERSION 1
 
 #ifndef FW_GIT_HASH
 #define FW_GIT_HASH "nogit"
@@ -146,14 +144,14 @@
 // cruiseSpeed: raw speed units (same scale as REMOTE_SPEED).
 // autoShutoffMin: idle-shutoff timeout in minutes.
 // =============================================================================
-#define CRUISE_SPEED_DEFAULT      100
-#define AUTO_SHUTOFF_MIN_DEFAULT   10
+#define CRUISE_SPEED_DEFAULT 100
+#define AUTO_SHUTOFF_MIN_DEFAULT 10
 
 // =============================================================================
 // PROTOCOL CONSTANTS (do not change unless the wheel firmware changes)
 // =============================================================================
-#define M25_HEADER_MARKER   0xEF
-#define M25_HEADER_SIZE     3
-#define M25_CRC_SIZE        2
+#define M25_HEADER_MARKER 0xEF
+#define M25_HEADER_SIZE 3
+#define M25_CRC_SIZE 2
 
 #endif // CONFIG_H
