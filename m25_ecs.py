@@ -339,11 +339,22 @@ class ECSRemote:
     # Delay between commands (ms)
     COMMAND_DELAY = 0.15  # 150ms
 
-    def __init__(self, left_conn, right_conn, verbose=False, retries=2):
+    def __init__(self, left_conn, right_conn, verbose=False, retries=2, log_callback=None):
         self.left_conn = left_conn
         self.right_conn = right_conn
         self.verbose = verbose
         self.retries = retries
+        self.log_callback = log_callback
+
+    def _trace(self, message):
+        if self.log_callback:
+            try:
+                self.log_callback(message)
+                return
+            except Exception:
+                pass
+        if self.verbose:
+            print(message, file=sys.stderr)
 
     def init_connection(self, conn, builder):
         """Send connection init (WRITE_SYSTEM_MODE = 0x01)"""
@@ -501,7 +512,19 @@ class ECSRemote:
         Remote speed writes on BLE can be stream-like and not always ACK each packet.
         Treat missing response as success as long as the packet was sent.
         """
+        wheel_name = getattr(conn, "name", "wheel")
+        wheel_label = wheel_name[:1].upper() + wheel_name[1:]
+        self._trace(f"[D][MOTOR] -> {wheel_label} {speed}")
         packet = builder.build_write_remote_speed(speed)
+        service_id = packet[POS_SERVICE_ID] if len(packet) > POS_SERVICE_ID else 0
+        param_id = packet[POS_PARAM_ID] if len(packet) > POS_PARAM_ID else 0
+        telegram_id = packet[POS_TELEGRAM_ID] if len(packet) > POS_TELEGRAM_ID else 0
+        payload = packet[POS_PAYLOAD:] if len(packet) > POS_PAYLOAD else b""
+        self._trace(
+            f"[D][TX] {wheel_label} WRITE_REMOTE_SPEED svc=0x{service_id:02X} param=0x{param_id:02X} tg=0x{telegram_id:02X} payloadLen={len(payload)}"
+        )
+        self._trace(f"[D][TX] remote_speed raw={speed} payload={' '.join(f'{byte:02X}' for byte in payload)}")
+        self._trace(f"[D][TX] spp : {' '.join(f'{byte:02X}' for byte in packet)}")
 
         # RFCOMM connection exposes send_packet() for fire-and-forget writes.
         send_packet = getattr(conn, "send_packet", None)

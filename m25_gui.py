@@ -105,7 +105,7 @@ IS_WINDOWS = sys.platform.startswith("win")
 class BLEConnectionAdapter:
     """Sync adapter for the async BLE transport used by ECSRemote."""
 
-    def __init__(self, address, key, name="wheel", debug=False, loop=None):
+    def __init__(self, address, key, name="wheel", debug=False, loop=None, log_callback=None):
         if not HAS_BLE:
             raise RuntimeError("BLE transport not available")
         if M25BluetoothBLE is None:
@@ -115,10 +115,21 @@ class BLEConnectionAdapter:
         self.name = name
         self.debug = debug
         self.loop = loop
-        self.bt = M25BluetoothBLE(address=address, key=key, name=name, debug=debug)
+        self.log_callback = log_callback
+        self.bt = M25BluetoothBLE(address=address, key=key, name=name, debug=debug, log_callback=log_callback)
         self.connected = False
         self.notifications_started = False
         self._loop_lock = threading.RLock()
+
+    def _trace(self, message):
+        if self.log_callback:
+            try:
+                self.log_callback(message)
+                return
+            except Exception:
+                pass
+        if self.debug:
+            print(message, file=sys.stderr)
 
     def _run(self, coro):
         """Run one coroutine on the shared loop, serialized across threads."""
@@ -211,16 +222,15 @@ class BLEConnectionAdapter:
                     return response
 
                 if self.debug:
-                    print(
+                    self._trace(
                         f"  [{self.name}] Ignoring out-of-order response "
-                        f"tid=0x{response_tid:02X} expected=0x{request_tid:02X}",
-                        file=sys.stderr,
+                        f"tid=0x{response_tid:02X} expected=0x{request_tid:02X}"
                     )
 
             return fallback_response
         except Exception as e:
             if self.debug:
-                print(f"  transact error [{self.name}]: {e}", file=sys.stderr)
+                self._trace(f"  transact error [{self.name}]: {e}")
             return None
 
 
@@ -366,6 +376,7 @@ class M25GUI:
         self.root = root
         self.root.title("m5squared - Wheelchair Controller")
         self.skip_disconnect_confirmation = bool(skip_disconnect_confirmation)
+        self.raw_trace_var = tk.BooleanVar(value=False)
         
         # Set window size to use max screen height
         screen_width = root.winfo_screenwidth()
@@ -568,6 +579,13 @@ class M25GUI:
         # Connect button
         self.connect_btn = tk.Button(self.conn_frame, text="Connect", command=self.toggle_connection, cursor="hand2")
         self.connect_btn.grid(row=9, column=0, columnspan=2, pady=(10, 0))
+
+        self.raw_trace_check = tk.Checkbutton(
+            self.conn_frame,
+            text="Show raw packet trace",
+            variable=self.raw_trace_var,
+        )
+        self.raw_trace_check.grid(row=10, column=0, columnspan=2, sticky=tk.W, pady=(6, 0))
 
         # Control Section
         self.control_frame = tk.LabelFrame(self.main_frame, text="Controls", padx=10, pady=10, font=("", 9, "bold"))
@@ -1028,6 +1046,9 @@ class M25GUI:
                     self._theme_widget(self.deadman_disable_check, "checkbox", fg="red", activeforeground="red")
                 else:
                     self._theme_widget(self.deadman_disable_check, "checkbox")
+
+        if hasattr(self, "raw_trace_check"):
+            self._theme_widget(self.raw_trace_check, "checkbox")
         
         self._theme_widget(self.connect_btn, "button")
         
@@ -1144,6 +1165,7 @@ class M25GUI:
         self.output.tag_configure("success", foreground=text["success"])
         self.output.tag_configure("warning", foreground=text["warning"])
         self.output.tag_configure("error", foreground=text["error"])
+        self.output.tag_configure("trace", foreground=text["info"])
 
         # Timestamp and prefix are muted. Message uses level tag.
         self.output.tag_configure("ts", foreground=text["muted"])
@@ -1318,10 +1340,23 @@ class M25GUI:
     def _make_connection(self, transport_kind, address, key_bytes, name, loop):
         """Create a wheel connection for the requested transport."""
         if transport_kind == TRANSPORT_BLE:
-            return BLEConnectionAdapter(address, key_bytes, name=name, debug=False, loop=loop)
+            return BLEConnectionAdapter(
+                address,
+                key_bytes,
+                name=name,
+                debug=False,
+                loop=loop,
+                log_callback=self.queue_raw_log,
+            )
         if RFCOMMBluetoothConnection is None:
             raise RuntimeError("RFCOMM transport unavailable")
-        return RFCOMMBluetoothConnection(address, key_bytes, name=name, debug=False)
+        return RFCOMMBluetoothConnection(
+            address,
+            key_bytes,
+            name=name,
+            debug=False,
+            log_callback=self.queue_raw_log,
+        )
     
     def detect_input_device(self):
         """Detect connected input devices (gamepad/joystick)"""
@@ -1398,6 +1433,19 @@ class M25GUI:
         self.output.insert(tk.END, f"{prefix}: ", ("prefix",))
         self.output.insert(tk.END, f"{message}\n", (lvl,))
         self.output.see(tk.END)
+
+    def raw_log(self, message):
+        """Append a raw packet trace line without timestamps or prefixes."""
+        if not self.raw_trace_var.get():
+            return
+        self.output.insert(tk.END, f"{message}\n", ("trace",))
+        self.output.see(tk.END)
+
+    def queue_raw_log(self, message):
+        """Thread-safe raw trace sink for background Bluetooth callbacks."""
+        if not self.raw_trace_var.get():
+            return
+        self.root.after(0, lambda: self.raw_log(message))
 
     def toggle_mpp_mode(self):
         """Toggle M++ mode (8 km/h support)"""
@@ -2007,7 +2055,13 @@ class M25GUI:
                         return
                     
                     # Create ECS Remote helper
-                    self.ecs_remote = ECSRemote(self.left_conn, self.right_conn, verbose=False, retries=2)
+                    self.ecs_remote = ECSRemote(
+                        self.left_conn,
+                        self.right_conn,
+                        verbose=False,
+                        retries=2,
+                        log_callback=self.queue_raw_log,
+                    )
                     
                     self.root.after(0, self.connection_complete, True, False)
                     

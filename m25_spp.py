@@ -23,20 +23,35 @@ from m25_protocol_data import (
 )
 
 
+def _hex_bytes(data):
+    return " ".join(f"{byte:02X}" for byte in data)
+
+
 class BluetoothConnection:
     """Bluetooth SPP connection to M25 wheel with encryption."""
 
     AF_BLUETOOTH = 31
     BTPROTO_RFCOMM = 3
 
-    def __init__(self, address, key, name="wheel", debug=False):
+    def __init__(self, address, key, name="wheel", debug=False, log_callback=None):
         self.address = address
         self.key = key
         self.name = name
         self.debug = debug
+        self.log_callback = log_callback
         self.socket = None
         self.encryptor = M25Encryptor(key)
         self.decryptor = M25Decryptor(key)
+
+    def _trace(self, message):
+        if self.log_callback:
+            try:
+                self.log_callback(message)
+                return
+            except Exception:
+                pass
+        if self.debug:
+            print(message, file=sys.stderr)
 
     def connect(self, channel=6):
         """Establish Bluetooth SPP connection."""
@@ -53,9 +68,8 @@ class BluetoothConnection:
     def send_packet(self, spp_data):
         """Encrypt and send SPP packet."""
         encrypted = self.encryptor.encrypt_packet(spp_data)
-        if self.debug:
-            print(f"  TX [{self.name}]: {encrypted.hex()}", file=sys.stderr)
-            print(f"      SPP: {spp_data.hex()}", file=sys.stderr)
+        self._trace(f"  TX [{self.name}]: {_hex_bytes(encrypted)}")
+        self._trace(f"      SPP: {_hex_bytes(spp_data)}")
         if self.socket:
             self.socket.send(encrypted)
         return encrypted
@@ -102,15 +116,13 @@ class BluetoothConnection:
         response = self.receive(timeout)
         if response:
             decrypted = self.decryptor.decrypt_packet(response)
-            if self.debug:
-                print(f"  RX [{self.name}]: {response.hex()}", file=sys.stderr)
-                if decrypted:
-                    print(f"      SPP: {decrypted.hex()}", file=sys.stderr)
-                else:
-                    print(f"      SPP: <decrypt failed>", file=sys.stderr)
+            self._trace(f"  RX [{self.name}]: {_hex_bytes(response)}")
+            if decrypted:
+                self._trace(f"      SPP: {_hex_bytes(decrypted)}")
+            else:
+                self._trace(f"      SPP: <decrypt failed>")
             return decrypted
-        elif self.debug:
-            print(f"  RX [{self.name}]: <no response>", file=sys.stderr)
+        self._trace(f"  RX [{self.name}]: <no response>")
         return None
 
 

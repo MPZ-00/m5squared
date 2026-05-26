@@ -79,6 +79,10 @@ KNOWN_M25_BLE_PROFILES = [
     },
 ]
 
+
+def _hex_bytes(data: bytes) -> str:
+    return " ".join(f"{byte:02X}" for byte in data)
+
 # State file for storing connection info
 STATE_FILE = Path.home() / ".m5squared" / "ble_state.json"
 
@@ -145,7 +149,7 @@ def find_services(address: str, timeout: int = 5) -> List[Tuple[int, str]]:
 class M25BluetoothBLE:
     """Cross-platform BLE handler for M25 devices using Bleak"""
     
-    def __init__(self, address: str = "", key: bytes = b"", name: str = "wheel", debug: bool = False):
+    def __init__(self, address: str = "", key: bytes = b"", name: str = "wheel", debug: bool = False, log_callback=None):
         """
         Initialize BLE connection
         
@@ -159,6 +163,7 @@ class M25BluetoothBLE:
         self.key = key
         self.name = name
         self.debug = debug
+        self.log_callback = log_callback
         
         self.client: Optional[Any] = None
         self.connected = False
@@ -175,6 +180,16 @@ class M25BluetoothBLE:
         # Notification callback (for power-efficient data reception)
         self._notification_callback = None
         self._notification_queue = asyncio.Queue() if asyncio._get_running_loop() else None
+
+    def _trace(self, message: str) -> None:
+        if self.log_callback:
+            try:
+                self.log_callback(message)
+                return
+            except Exception:
+                pass
+        if self.debug:
+            print(message, file=sys.stderr)
         
     async def scan(self, duration: int = 10, filter_m25: bool = False) -> List[Tuple[str, str]]:
         """
@@ -236,7 +251,7 @@ class M25BluetoothBLE:
         self.address = addr
         
         if self.debug:
-            print(f"[{self.name}] Connecting to {addr}...")
+            self._trace(f"[{self.name}] Connecting to {addr}...")
         
         try:
             self.client = BleakClient(addr, timeout=timeout)
@@ -245,7 +260,7 @@ class M25BluetoothBLE:
             
             if self.connected:
                 if self.debug:
-                    print(f"[{self.name}] Connected, discovering characteristics...")
+                    self._trace(f"[{self.name}] Connected, discovering characteristics...")
                 
                 # Discover TX/RX characteristics
                 await self._discover_characteristics()
@@ -262,7 +277,7 @@ class M25BluetoothBLE:
                             break
                 
                 if self.debug:
-                    print(f"[{self.name}] Ready (encryption={'enabled' if self.encryptor else 'disabled'})")
+                    self._trace(f"[{self.name}] Ready (encryption={'enabled' if self.encryptor else 'disabled'})")
             
             return self.connected
             
@@ -282,7 +297,7 @@ class M25BluetoothBLE:
                 await self.client.disconnect()
             except Exception as e:
                 if self.debug:
-                    print(f"[{self.name}] Disconnect error: {e}", file=sys.stderr)
+                    self._trace(f"[{self.name}] Disconnect error: {e}")
             finally:
                 self.connected = False
                 self.client = None
@@ -296,7 +311,7 @@ class M25BluetoothBLE:
                             break
                 
             if self.debug:
-                print(f"[{self.name}] Disconnected")
+                self._trace(f"[{self.name}] Disconnected")
     
     async def send_packet(self, data: bytes) -> bool:
         """
@@ -309,8 +324,7 @@ class M25BluetoothBLE:
             True if sent successfully
         """
         if not self.connected or not self.client or not self._tx_char:
-            if self.debug:
-                print(f"[{self.name}] Not connected or no TX char", file=sys.stderr)
+            self._trace(f"[{self.name}] Not connected or no TX char")
             return False
         
         try:
@@ -322,10 +336,13 @@ class M25BluetoothBLE:
                 send_data,
                 response=self._tx_requires_response,
             )
+
+            self._trace(f"  TX [{self.name}]: {_hex_bytes(send_data)}")
+            self._trace(f"      SPP: {_hex_bytes(data)}")
             
             if self.debug:
                 mode = "write-with-response" if self._tx_requires_response else "write-without-response"
-                print(
+                self._trace(
                     f"[{self.name}] Sent {len(send_data)} bytes "
                     f"(encrypted={self.encryptor is not None}, mode={mode})"
                 )
@@ -347,8 +364,7 @@ class M25BluetoothBLE:
             True if sent successfully
         """
         if not self.connected or not self.client or not self._tx_char:
-            if self.debug:
-                print(f"[{self.name}] Not connected or no TX char", file=sys.stderr)
+            self._trace(f"[{self.name}] Not connected or no TX char")
             return False
         
         try:
@@ -357,10 +373,13 @@ class M25BluetoothBLE:
                 encrypted_data,
                 response=self._tx_requires_response,
             )
+
+            self._trace(f"  TX [{self.name}]: {_hex_bytes(encrypted_data)}")
+            self._trace(f"      SPP: <pre-encrypted payload>")
             
             if self.debug:
                 mode = "write-with-response" if self._tx_requires_response else "write-without-response"
-                print(f"[{self.name}] Sent {len(encrypted_data)} bytes (pre-encrypted, mode={mode})")
+                self._trace(f"[{self.name}] Sent {len(encrypted_data)} bytes (pre-encrypted, mode={mode})")
             
             return True
             
@@ -395,8 +414,7 @@ class M25BluetoothBLE:
                 print(f"Got: {data.hex()}")
         """
         if not self.connected or not self.client or not self._rx_char:
-            if self.debug:
-                print(f"[{self.name}] Cannot start notifications: not connected or no RX char", file=sys.stderr)
+            self._trace(f"[{self.name}] Cannot start notifications: not connected or no RX char")
             return False
         
         try:
@@ -406,9 +424,12 @@ class M25BluetoothBLE:
             def notification_handler(sender, data: bytearray):
                 # Decrypt if decryptor available
                 decrypted = self.decryptor.decrypt(bytes(data)) if self.decryptor else bytes(data)
-                
-                if self.debug:
-                    print(f"[{self.name}] Notification: {len(data)} bytes (decrypted={self.decryptor is not None})")
+
+                self._trace(f"  RX [{self.name}]: {_hex_bytes(bytes(data))}")
+                if decrypted:
+                    self._trace(f"      SPP: {_hex_bytes(decrypted)}")
+                else:
+                    self._trace(f"      SPP: <decrypt failed>")
                 
                 # Route to callback or queue
                 if self._notification_callback:
@@ -419,7 +440,7 @@ class M25BluetoothBLE:
             await self.client.start_notify(self._rx_char, notification_handler)
             
             if self.debug:
-                print(f"[{self.name}] Notifications enabled (power-efficient mode)")
+                self._trace(f"[{self.name}] Notifications enabled (power-efficient mode)")
             
             return True
             
@@ -442,13 +463,13 @@ class M25BluetoothBLE:
             self._notification_callback = None
             
             if self.debug:
-                print(f"[{self.name}] Notifications disabled")
+                self._trace(f"[{self.name}] Notifications disabled")
             
             return True
             
         except Exception as e:
             if self.debug:
-                print(f"[{self.name}] Failed to stop notifications: {e}", file=sys.stderr)
+                self._trace(f"[{self.name}] Failed to stop notifications: {e}")
             return False
     
     async def wait_notification(self, timeout: float = 0.0) -> Optional[bytes]:
@@ -465,8 +486,7 @@ class M25BluetoothBLE:
             Received bytes (decrypted if key provided) or None on timeout
         """
         if not self._notification_queue:
-            if self.debug:
-                print(f"[{self.name}] No notification queue - call start_notifications() first", file=sys.stderr)
+            self._trace(f"[{self.name}] No notification queue - call start_notifications() first")
             return None
         
         try:
@@ -503,9 +523,12 @@ class M25BluetoothBLE:
             if data:
                 # Decrypt if decryptor is available
                 decrypted = self.decryptor.decrypt(bytes(data)) if self.decryptor else bytes(data)
-                
-                if self.debug:
-                    print(f"[{self.name}] Received {len(data)} bytes (decrypted={self.decryptor is not None})")
+
+                self._trace(f"  RX [{self.name}]: {_hex_bytes(bytes(data))}")
+                if decrypted:
+                    self._trace(f"      SPP: {_hex_bytes(decrypted)}")
+                else:
+                    self._trace(f"      SPP: <decrypt failed>")
                 
                 return decrypted
             
@@ -513,7 +536,7 @@ class M25BluetoothBLE:
             
         except Exception as e:
             if self.debug:
-                print(f"[{self.name}] Receive error: {e}", file=sys.stderr)
+                self._trace(f"[{self.name}] Receive error: {e}")
             return None
     
     def is_connected(self) -> bool:
