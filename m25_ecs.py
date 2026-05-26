@@ -507,11 +507,7 @@ class ECSRemote:
         return False
 
     def write_remote_speed(self, conn, builder, speed):
-        """Send one remote speed command.
-
-        Remote speed writes on BLE can be stream-like and not always ACK each packet.
-        Treat missing response as success as long as the packet was sent.
-        """
+        """Send one remote speed command; missing ACK on BLE is treated as success."""
         wheel_name = getattr(conn, "name", "wheel")
         wheel_label = wheel_name[:1].upper() + wheel_name[1:]
         self._trace(f"[D][MOTOR] -> {wheel_label} {speed}")
@@ -524,7 +520,6 @@ class ECSRemote:
             f"[D][TX] {wheel_label} WRITE_REMOTE_SPEED svc=0x{service_id:02X} param=0x{param_id:02X} tg=0x{telegram_id:02X} payloadLen={len(payload)}"
         )
         self._trace(f"[D][TX] remote_speed raw={speed} payload={' '.join(f'{byte:02X}' for byte in payload)}")
-        self._trace(f"[D][TX] spp : {' '.join(f'{byte:02X}' for byte in packet)}")
 
         # RFCOMM connection exposes send_packet() for fire-and-forget writes.
         send_packet = getattr(conn, "send_packet", None)
