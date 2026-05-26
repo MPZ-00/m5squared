@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+
+## 1.2.0 - 2026-05-26
+
 ### Added
 - New `gui/` package with modular GUI components (`app`, `theme`, `transport`, `widgets`).
 - New `m25_transport.py` transport helper to improve backend selection and reuse.
