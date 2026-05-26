@@ -128,10 +128,17 @@ class BLEConnectionAdapter:
             return self.loop.run_until_complete(coro)
 
     def _drain_notifications(self):
-        """Drop stale notifications so next transact() reads the current ACK/response."""
+        """Flush ALL stale notifications so next transact() reads the current ACK/response.
+
+        The previous cap of 8 was too low: a 6-second drive at ~10 Hz leaves ~60 queued
+        ACKs.  With only 8 drained, the second drive's transact() immediately gets a stale
+        response, the effective speed-command rate drops below the wheel's watchdog timeout,
+        and the wheel either nudges or refuses to move entirely.  Draining until the queue
+        is empty eliminates this session-to-session degradation.
+        """
         if not self.connected:
             return
-        for _ in range(8):
+        while True:
             data = self._run(self.bt.wait_notification(timeout=0.01))
             if data is None:
                 break
