@@ -162,6 +162,7 @@ class M25BluetoothBLE:
         self.address = address
         self.key = key
         self.name = name
+        self.side = "L" if name.lower().startswith("l") else "R"
         self.debug = debug
         self.log_callback = log_callback
         
@@ -337,8 +338,7 @@ class M25BluetoothBLE:
                 response=self._tx_requires_response,
             )
 
-            self._trace(f"  TX [{self.name}]: {_hex_bytes(send_data)}")
-            self._trace(f"      SPP: {_hex_bytes(data)}")
+            self._trace(f"TX {self.side} SPP: {_hex_bytes(data)}")
             
             if self.debug:
                 mode = "write-with-response" if self._tx_requires_response else "write-without-response"
@@ -374,8 +374,7 @@ class M25BluetoothBLE:
                 response=self._tx_requires_response,
             )
 
-            self._trace(f"  TX [{self.name}]: {_hex_bytes(encrypted_data)}")
-            self._trace(f"      SPP: <pre-encrypted payload>")
+            self._trace(f"TX {self.side} SPP: <pre-encrypted>")
             
             if self.debug:
                 mode = "write-with-response" if self._tx_requires_response else "write-without-response"
@@ -425,12 +424,11 @@ class M25BluetoothBLE:
                 # Decrypt if decryptor available
                 decrypted = self.decryptor.decrypt(bytes(data)) if self.decryptor else bytes(data)
 
-                self._trace(f"  RX [{self.name}]: {_hex_bytes(bytes(data))}")
                 if decrypted:
-                    self._trace(f"      SPP: {_hex_bytes(decrypted)}")
+                    self._trace(f"RX {self.side} SPP: {_hex_bytes(decrypted)}")
                 else:
-                    self._trace(f"      SPP: <decrypt failed>")
-                
+                    self._trace(f"RX {self.side} SPP: <decrypt failed>")
+
                 # Route to callback or queue
                 if self._notification_callback:
                     self._notification_callback(decrypted)
@@ -524,12 +522,11 @@ class M25BluetoothBLE:
                 # Decrypt if decryptor is available
                 decrypted = self.decryptor.decrypt(bytes(data)) if self.decryptor else bytes(data)
 
-                self._trace(f"  RX [{self.name}]: {_hex_bytes(bytes(data))}")
                 if decrypted:
-                    self._trace(f"      SPP: {_hex_bytes(decrypted)}")
+                    self._trace(f"RX {self.side} SPP: {_hex_bytes(decrypted)}")
                 else:
-                    self._trace(f"      SPP: <decrypt failed>")
-                
+                    self._trace(f"RX {self.side} SPP: <decrypt failed>")
+
                 return decrypted
             
             return None

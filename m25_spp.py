@@ -37,6 +37,7 @@ class BluetoothConnection:
         self.address = address
         self.key = key
         self.name = name
+        self.side = "L" if name.lower().startswith("l") else "R"
         self.debug = debug
         self.log_callback = log_callback
         self.socket = None
@@ -68,8 +69,7 @@ class BluetoothConnection:
     def send_packet(self, spp_data):
         """Encrypt and send SPP packet."""
         encrypted = self.encryptor.encrypt_packet(spp_data)
-        self._trace(f"  TX [{self.name}]: {_hex_bytes(encrypted)}")
-        self._trace(f"      SPP: {_hex_bytes(spp_data)}")
+        self._trace(f"TX {self.side} SPP: {_hex_bytes(spp_data)}")
         if self.socket:
             self.socket.send(encrypted)
         return encrypted
@@ -116,13 +116,12 @@ class BluetoothConnection:
         response = self.receive(timeout)
         if response:
             decrypted = self.decryptor.decrypt_packet(response)
-            self._trace(f"  RX [{self.name}]: {_hex_bytes(response)}")
             if decrypted:
-                self._trace(f"      SPP: {_hex_bytes(decrypted)}")
+                self._trace(f"RX {self.side} SPP: {_hex_bytes(decrypted)}")
             else:
-                self._trace(f"      SPP: <decrypt failed>")
+                self._trace(f"RX {self.side} SPP: <decrypt failed>")
             return decrypted
-        self._trace(f"  RX [{self.name}]: <no response>")
+        self._trace(f"RX {self.side} SPP: <no response>")
         return None
 
 

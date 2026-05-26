@@ -423,7 +423,10 @@ class M25GUI:
         self.keyboard_enabled = False
         self._keyboard_active_keys: set = set()
         self._kb_stop_event = threading.Event()
-        self._kb_stop_event.set()  # starts in "stopped" state
+        self._kb_stop_event.set()   # starts in "stopped" state (set = no drive)
+        self._kb_desired_left: int = 0
+        self._kb_desired_right: int = 0
+        self._kb_thread: threading.Thread | None = None
 
         # Theme state
         self.current_theme = "dark"
@@ -1413,13 +1416,7 @@ class M25GUI:
             self.profile_desc_text.config(state=tk.DISABLED)
     
     def _make_ui_callbacks(self, test_status_widget=None):
-        """Return thread-safe (ui_log, ui_status, ui_test_status) closures.
-
-        Intended for use at the top of background thread functions so every
-        thread gets the same safe wrappers without repeating the definitions.
-        All three callbacks schedule their Tk update on the main thread via
-        root.after(0, ...) and are safe to call from any worker thread.
-        """
+        """Return thread-safe (ui_log, ui_status, ui_test_status) closures for background threads."""
         def ui_log(level_msg: str, msg: str) -> None:
             self.root.after(0, lambda: self.log(level_msg, msg))
 
@@ -1483,9 +1480,7 @@ class M25GUI:
         """Return the selected M25 generation mode."""
         return normalize_m25_version(self.m25_version_var.get())
 
-    # ------------------------------------------------------------------
     # Keyboard driving
-    # ------------------------------------------------------------------
 
     _KB_MOVEMENT = frozenset({"w", "up", "s", "down", "a", "left", "d", "right"})
 
@@ -1548,10 +1543,9 @@ class M25GUI:
         key = event.keysym.lower()
 
         if key == "space":
-            # One-shot stop — cancel any ongoing keyboard drive first
-            self._kb_stop_drive()
+            # Stop — signal the drive thread to exit.
             self._keyboard_active_keys.clear()
-            self.run_just_stop()
+            self._kb_stop_drive()
             return
 
         if key in self._keyboard_active_keys:
@@ -1573,7 +1567,7 @@ class M25GUI:
             self._update_kb_drive()
 
     def _update_kb_drive(self):
-        """Compute (forward, left_pct, right_pct) from held keys and start pulsing."""
+        """Recompute desired speed from held keys; stop if no direction key is held."""
         keys = self._keyboard_active_keys
 
         # Require an explicit forward or backward key
@@ -1582,7 +1576,9 @@ class M25GUI:
         elif "s" in keys or "down" in keys:
             forward = False
         else:
-            return  # Only turn keys held — do nothing (no turn-in-place for now)
+            # Only turn keys held — no drive (no turn-in-place)
+            self._kb_stop_drive()
+            return
 
         # Asymmetric speed for turns
         if "a" in keys or "left" in keys:
@@ -1592,48 +1588,60 @@ class M25GUI:
         else:
             left_pct, right_pct = 1.0, 1.0
 
-        self._start_kb_drive(forward, left_pct, right_pct)
+        speed_mag = max(
+            self.MOTION_SPEED_MIN,
+            min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())),
+        )
+        direction = 1 if forward else -1
+        self._kb_desired_left = int(speed_mag * left_pct * direction)
+        self._kb_desired_right = int(speed_mag * right_pct * direction)
+
+        self._ensure_kb_thread_running()
 
     def _kb_stop_drive(self):
-        """Signal the running keyboard drive thread to stop."""
+        """Zero the desired speed and signal the drive thread to exit."""
+        self._kb_desired_left = 0
+        self._kb_desired_right = 0
         self._kb_stop_event.set()
 
-    def _start_kb_drive(self, forward: bool, left_pct: float, right_pct: float):
-        """Stop any current keyboard drive and start a new pulsing thread."""
-        # Signal the old thread to exit
-        self._kb_stop_event.set()
+    def _ensure_kb_thread_running(self):
+        """Start the keyboard drive thread if not already alive."""
+        if self._kb_thread and self._kb_thread.is_alive():
+            return  # Running — desired speed already updated, nothing else to do
 
-        stop_event = threading.Event()  # fresh event for this thread
+        # Create a fresh stop event for this thread lifetime
+        stop_event = threading.Event()
         self._kb_stop_event = stop_event
 
         def _thread():
-            ui_log, ui_status, _ = self._make_ui_callbacks()
-            builder = ECSPacketBuilder()
-            speed_mag = max(
-                self.MOTION_SPEED_MIN,
-                min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())),
-            )
-            direction = 1 if forward else -1
-            left_speed = int(speed_mag * left_pct * direction)
-            right_speed = int(speed_mag * right_pct * direction)
-
+            ui_log, _ui_status, _ = self._make_ui_callbacks()
             try:
                 if not self.ecs_remote or not self.left_conn or not self.right_conn:
                     ui_log("error", "Keyboard drive: not connected")
                     return
 
+                builder = ECSPacketBuilder()
                 remote_armed, _, _ = self._ensure_remote_mode_both(builder, ui_log)
                 if not remote_armed:
-                    ui_log("error", "Keyboard drive: could not arm remote mode")
+                    ui_log("warning", "Keyboard drive: could not arm remote mode")
                     return
+
+                # Key may have been released while arming was in progress
+                if stop_event.is_set() or (self._kb_desired_left == 0 and self._kb_desired_right == 0):
+                    return
+
                 self._prime_remote_motion(builder)
 
-                # Pulse speed until stop_event is set
+                # Pulse using the shared desired speed until stopped or zeroed
                 while not stop_event.is_set():
-                    self._write_remote_speed_both(builder, left_speed, right_speed)
+                    left = self._kb_desired_left
+                    right = self._kb_desired_right
+                    if left == 0 and right == 0:
+                        break  # Desired speed cleared by stop — exit loop
+                    self._write_remote_speed_both(builder, left, right)
                     stop_event.wait(self.REMOTE_PULSE_INTERVAL_S)
 
-                # Send explicit zero before exiting
+                # Explicit zero packet before disarming
                 self._write_remote_speed_both(builder, 0, 0)
                 time.sleep(self.REMOTE_STOP_DURATION_S)
 
@@ -1646,7 +1654,8 @@ class M25GUI:
                 except Exception:
                     pass
 
-        threading.Thread(target=_thread, daemon=True).start()
+        self._kb_thread = threading.Thread(target=_thread, daemon=True)
+        self._kb_thread.start()
 
     def _ensure_event_loop(self):
         """Create a private event loop for BLE tasks when needed."""
