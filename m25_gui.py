@@ -1125,6 +1125,12 @@ class M25GUI:
 
         if hasattr(self, "raw_trace_check"):
             self._theme_widget(self.raw_trace_check, "checkbox")
+        if hasattr(self, "raw_trace_save_check"):
+            self._theme_widget(self.raw_trace_save_check, "checkbox")
+        if hasattr(self, "raw_trace_file_label"):
+            self._theme_widget(self.raw_trace_file_label, "label")
+        if hasattr(self, "choose_trace_file_btn"):
+            self._theme_widget(self.choose_trace_file_btn, "button")
         
         self._theme_widget(self.connect_btn, "button")
         
