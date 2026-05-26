@@ -424,6 +424,9 @@ class M25GUI:
         # Create UI first (so status bar exists)
         self.create_widgets()
 
+        self._close_after_disconnect = False
+        self.root.protocol("WM_DELETE_WINDOW", self.on_window_close)
+
         # Apply theme
         self.apply_theme()
 
@@ -625,8 +628,15 @@ class M25GUI:
             self.deadman_disable_check.grid(row=8, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
 
         # Connect button
-        self.connect_btn = tk.Button(self.conn_frame, text="Connect", command=self.toggle_connection, cursor="hand2")
-        self.connect_btn.grid(row=9, column=0, columnspan=2, pady=(10, 0))
+        self.connection_action_frame = tk.Frame(self.conn_frame)
+        self.connection_action_frame.grid(row=9, column=0, columnspan=2, pady=(10, 0))
+
+        self.connect_btn = tk.Button(self.connection_action_frame, text="Connect", command=self.toggle_connection, cursor="hand2")
+        self.connect_btn.pack(side=tk.LEFT)
+
+        self.connection_state_lbl = tk.Label(self.connection_action_frame, text="● Disconnected", padx=8)
+        self.connection_state_lbl.pack(side=tk.LEFT)
+        self._update_connection_state_visual("disconnected")
 
         self.raw_trace_check = tk.Checkbutton(
             self.conn_frame,
@@ -1160,6 +1170,9 @@ class M25GUI:
             self._theme_widget(self.choose_trace_file_btn, "button")
         
         self._theme_widget(self.connect_btn, "button")
+        self._theme_widget(self.connection_action_frame, "frame")
+        self._theme_widget(self.connection_state_lbl, "label")
+        self._update_connection_state_visual("connected" if self.connected else "disconnected")
         
         # Controls
         self._theme_widget(self.control_frame, "labelframe")
@@ -2130,6 +2143,15 @@ class M25GUI:
         right_ok = self.ecs_remote.write_remote_speed(self.right_conn, builder, right_speed)
         return left_ok, right_ok
 
+    def on_window_close(self):
+        """Disconnect cleanly before closing the window."""
+        if self.connected:
+            self._close_after_disconnect = True
+            self.disconnect(skip_confirmation=True)
+            return
+
+        self.root.destroy()
+
     def enable_controls(self, enabled=True):
         """Enable or disable control buttons"""
         state = "normal" if enabled else "disabled"
@@ -2208,10 +2230,28 @@ class M25GUI:
             self.disconnect()
         else:
             self.connect()
+
+    def _update_connection_state_visual(self, state: str):
+        """Make the connection state obvious with a colored status label."""
+        if not hasattr(self, "connection_state_lbl"):
+            return
+
+        theme = self.THEMES[self.current_theme]
+        if state == "connected":
+            text = "● Connected"
+            color = theme["text"]["success"]
+        elif state == "error":
+            text = "● Connection error"
+            color = theme["text"]["error"]
+        else:
+            text = "● Disconnected"
+            color = theme["text"]["muted"]
+
+        self.connection_state_lbl.config(text=text, fg=color, bg=theme["bg"])
     
-    def disconnect(self):
+    def disconnect(self, skip_confirmation: bool = False):
         """Disconnect from M25 wheels"""
-        if not self.skip_disconnect_confirmation:
+        if not (self.skip_disconnect_confirmation or skip_confirmation):
             # Confirm disconnection
             confirm = messagebox.askyesno(
                 "Confirm Disconnect",
@@ -2253,15 +2293,21 @@ class M25GUI:
         """Handle disconnection error"""
         self.log("error", f"Disconnection failed: {error_msg}")
         self.status_message("error", "Disconnection failed")
+        self._update_connection_state_visual("error")
         messagebox.showerror("Disconnection Error", f"Failed to disconnect:\n{error_msg}")
     
     def disconnection_complete(self):
         """Handle disconnection completion"""
         self.connected = False
         self.connect_btn.config(text="Connect")
+        self._update_connection_state_visual("disconnected")
         self.enable_controls(False)
         self.log("success", "Disconnected successfully.")
         self.status_message("success", "Disconnected")
+
+        if self._close_after_disconnect:
+            self._close_after_disconnect = False
+            self.root.after(50, self.root.destroy)
 
     def connect(self):
         """Connect to M25 wheels"""
@@ -2359,6 +2405,7 @@ class M25GUI:
         """Handle connection error"""
         self.log("error", f"Connection failed: {error_msg}")
         self.status_message("error", "Connection failed")
+        self._update_connection_state_visual("error")
         messagebox.showerror("Connection Error", f"Failed to connect to wheels:\n{error_msg}")
 
     def connection_complete(self, success, demo_mode=False):
@@ -2372,6 +2419,7 @@ class M25GUI:
                 self.log("success", f"Connected successfully ({self.connected_transport_summary}).")
                 self.status_message("success", "Connected")
             self.connect_btn.config(text="Disconnect")
+            self._update_connection_state_visual("connected")
             self.enable_controls(True)
             
             # Update system info to reflect connection state
