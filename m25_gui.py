@@ -17,6 +17,7 @@ Features:
 """
 
 import tkinter as tk
+import tkinter.filedialog
 from tkinter import ttk, scrolledtext, messagebox
 import argparse
 import os
@@ -377,6 +378,9 @@ class M25GUI:
         self.root.title("m5squared - Wheelchair Controller")
         self.skip_disconnect_confirmation = bool(skip_disconnect_confirmation)
         self.raw_trace_var = tk.BooleanVar(value=False)
+        self.raw_trace_save_var = tk.BooleanVar(value=False)
+        self.raw_trace_file_path = tk.StringVar(value="")
+        self._trace_fp = None
         
         # Set window size to use max screen height
         screen_width = root.winfo_screenwidth()
@@ -586,6 +590,21 @@ class M25GUI:
             variable=self.raw_trace_var,
         )
         self.raw_trace_check.grid(row=10, column=0, columnspan=2, sticky=tk.W, pady=(6, 0))
+
+        # Save raw trace to file controls
+        self.raw_trace_save_check = tk.Checkbutton(
+            self.conn_frame,
+            text="Save raw trace to file",
+            variable=self.raw_trace_save_var,
+            command=self._on_raw_trace_save_toggle,
+        )
+        self.raw_trace_save_check.grid(row=11, column=0, sticky=tk.W, pady=(6, 0))
+
+        self.raw_trace_file_label = tk.Label(self.conn_frame, text="No file selected")
+        self.raw_trace_file_label.grid(row=11, column=1, sticky=(tk.W, tk.E), padx=(5, 0))
+
+        self.choose_trace_file_btn = tk.Button(self.conn_frame, text="Choose file...", command=self.open_trace_file_dialog, cursor="hand2")
+        self.choose_trace_file_btn.grid(row=11, column=2, sticky=tk.E)
 
         # Control Section
         self.control_frame = tk.LabelFrame(self.main_frame, text="Controls", padx=10, pady=10, font=("", 9, "bold"))
@@ -872,6 +891,19 @@ class M25GUI:
         )
         self.output.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
+        # Small button panel for output actions (Clear, Copy, Save)
+        self.output_btn_frame = tk.Frame(self.output_frame)
+        self.output_btn_frame.grid(row=0, column=1, sticky=(tk.N, tk.E), padx=(8, 0))
+
+        self.clear_log_btn = tk.Button(self.output_btn_frame, text="Clear", command=self.clear_output, cursor="hand2", width=8)
+        self.clear_log_btn.pack(side=tk.TOP, pady=(0, 6))
+
+        self.copy_log_btn = tk.Button(self.output_btn_frame, text="Copy", command=self.copy_output, cursor="hand2", width=8)
+        self.copy_log_btn.pack(side=tk.TOP, pady=(0, 6))
+
+        self.save_log_btn = tk.Button(self.output_btn_frame, text="Save...", command=self.save_output_dialog, cursor="hand2", width=8)
+        self.save_log_btn.pack(side=tk.TOP)
+
         # Status bar
         self.status = tk.Label(self.main_frame, text="Ready", anchor=tk.W, relief=tk.SUNKEN, padx=5, pady=2)
         self.status.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E))
@@ -1139,6 +1171,15 @@ class M25GUI:
                 selectforeground=theme["select_fg"],
             )
             self._apply_output_tags()
+            # Theme output button panel if present
+            if hasattr(self, "output_btn_frame"):
+                self._theme_widget(self.output_btn_frame, "frame")
+            if hasattr(self, "clear_log_btn"):
+                self._theme_widget(self.clear_log_btn, "button")
+            if hasattr(self, "copy_log_btn"):
+                self._theme_widget(self.copy_log_btn, "button")
+            if hasattr(self, "save_log_btn"):
+                self._theme_widget(self.save_log_btn, "button")
         
         # Status bar
         if hasattr(self, "status"):
@@ -1440,12 +1481,109 @@ class M25GUI:
             return
         self.output.insert(tk.END, f"{message}\n", ("trace",))
         self.output.see(tk.END)
+        # Also optionally write trace lines to disk
+        try:
+            if getattr(self, "raw_trace_save_var", None) and self.raw_trace_save_var.get():
+                self._write_trace_to_file(message)
+        except Exception:
+            pass
 
     def queue_raw_log(self, message):
         """Thread-safe raw trace sink for background Bluetooth callbacks."""
         if not self.raw_trace_var.get():
             return
         self.root.after(0, lambda: self.raw_log(message))
+
+    def _on_raw_trace_save_toggle(self):
+        """Handle toggling file-save for raw traces."""
+        if self.raw_trace_save_var.get():
+            # Enable saving; ensure we have a path
+            if not self.raw_trace_file_path.get():
+                # Prompt user to choose a file
+                self.open_trace_file_dialog()
+            else:
+                self._open_trace_file(self.raw_trace_file_path.get())
+        else:
+            self._close_trace_file()
+
+    def open_trace_file_dialog(self):
+        """Prompt for a file to save raw traces to and open it for append."""
+        path = tk.filedialog.asksaveasfilename(
+            defaultextension=".log",
+            filetypes=[("Log files", "*.log"), ("All files", "*.*")],
+            title="Select raw trace log file",
+        )
+        if not path:
+            # User cancelled; disable save checkbox if it was just enabled
+            if not self.raw_trace_file_path.get():
+                self.raw_trace_save_var.set(False)
+            return
+        self.raw_trace_file_path.set(path)
+        self.raw_trace_file_label.config(text=os.path.basename(path))
+        if self.raw_trace_save_var.get():
+            self._open_trace_file(path)
+
+    def _open_trace_file(self, path):
+        """Open the trace file for appending and keep the handle."""
+        try:
+            # Close existing handle if any
+            self._close_trace_file()
+            self._trace_fp = open(path, "a", encoding="utf-8")
+        except Exception as e:
+            self.log("error", f"Unable to open trace file: {e}")
+            self.raw_trace_save_var.set(False)
+
+    def _close_trace_file(self):
+        try:
+            if getattr(self, "_trace_fp", None):
+                self._trace_fp.close()
+                self._trace_fp = None
+        except Exception:
+            pass
+
+    def _write_trace_to_file(self, message):
+        """Write a single trace line to the open trace file (if any)."""
+        try:
+            if getattr(self, "_trace_fp", None):
+                self._trace_fp.write(message + "\n")
+                self._trace_fp.flush()
+        except Exception:
+            # Swallow file write errors to avoid crashing UI
+            pass
+
+    def clear_output(self):
+        """Clear the output text pane."""
+        try:
+            self.output.config(state=tk.NORMAL)
+            self.output.delete(1.0, tk.END)
+        except Exception:
+            pass
+
+    def copy_output(self):
+        """Copy the entire output contents to the clipboard."""
+        try:
+            text = self.output.get(1.0, tk.END)
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.status_message("success", "Output copied to clipboard")
+        except Exception as e:
+            self.status_message("error", f"Copy failed: {e}")
+
+    def save_output_dialog(self):
+        """Prompt the user to save the current output to a file."""
+        try:
+            path = tk.filedialog.asksaveasfilename(
+                defaultextension=".log",
+                filetypes=[("Log files", "*.log"), ("All files", "*.*")],
+                title="Save output to file",
+            )
+            if not path:
+                return
+            with open(path, "w", encoding="utf-8") as fp:
+                fp.write(self.output.get(1.0, tk.END))
+            self.status_message("success", f"Saved output to {os.path.basename(path)}")
+        except Exception as e:
+            self.status_message("error", f"Save failed: {e}")
 
     def toggle_mpp_mode(self):
         """Toggle M++ mode (8 km/h support)"""
