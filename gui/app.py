@@ -185,6 +185,7 @@ class M25GUI:
         # Keyboard driving state
         self.keyboard_enabled = False
         self._keyboard_active_keys: set = set()
+        self._kb_release_pending: dict = {}  # keysym -> after_id (autorepeat filter)
         self._kb_stop_event = threading.Event()
         self._kb_stop_event.set()   # starts in "stopped" state (set = no drive)
         self._kb_desired_left: int = 0
@@ -708,7 +709,10 @@ class M25GUI:
         self.arm_btn.pack(side=tk.LEFT, padx=(0, 5))
 
         self.disarm_btn = tk.Button(self.one_shot_frame, text="Disarm", command=self.run_disarm, state="disabled", cursor="hand2", width=8)
-        self.disarm_btn.pack(side=tk.LEFT)
+        self.disarm_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+        self.arm_state_lbl = tk.Label(self.one_shot_frame, text="State: --", font=("TkDefaultFont", 8))
+        self.arm_state_lbl.pack(side=tk.LEFT)
 
         # Row 6: one-shot - start fwd/bwd/stop
         self.one_shot_drive_frame = tk.Frame(self.drive_test_frame)
@@ -1086,6 +1090,8 @@ class M25GUI:
             self._theme_widget(self.one_shot_label, "label")
             self._theme_widget(self.arm_btn, "button")
             self._theme_widget(self.disarm_btn, "button")
+            if hasattr(self, "arm_state_lbl"):
+                self._theme_widget(self.arm_state_lbl, "label")
             if hasattr(self, "one_shot_drive_frame"):
                 self._theme_widget(self.one_shot_drive_frame, "frame")
             self._theme_widget(self.just_start_fwd_btn, "button")
@@ -1381,14 +1387,18 @@ class M25GUI:
 
         key = event.keysym.lower()
 
+        # Cancel a pending deferred release for this key (X11 autorepeat
+        # fires KeyRelease+KeyPress pairs; the pending release is not real).
+        if key in self._kb_release_pending:
+            self.root.after_cancel(self._kb_release_pending.pop(key))
+
         if key == "space":
-            # Stop - signal the drive thread to exit.
             self._keyboard_active_keys.clear()
             self._kb_stop_drive()
             return
 
         if key in self._keyboard_active_keys:
-            return  # Suppress OS key-repeat; we drive until KeyRelease
+            return  # Already driving this key
 
         self._keyboard_active_keys.add(key)
         self._update_kb_drive()
@@ -1396,13 +1406,19 @@ class M25GUI:
     def _on_kb_release(self, event):
         """Handle keyboard key-release events for driving."""
         key = event.keysym.lower()
+        # Defer processing by 30ms; a follow-up KeyPress cancels this if
+        # the release was from OS autorepeat rather than the user letting go.
+        after_id = self.root.after(30, self._process_kb_release, key)
+        self._kb_release_pending[key] = after_id
+
+    def _process_kb_release(self, key: str):
+        """Process a key release after the autorepeat filter window."""
+        self._kb_release_pending.pop(key, None)
         self._keyboard_active_keys.discard(key)
 
         if not (self._keyboard_active_keys & self._KB_MOVEMENT):
-            # No movement key held any more → stop
             self._kb_stop_drive()
         else:
-            # Some other key still held → re-evaluate direction
             self._update_kb_drive()
 
     def _update_kb_drive(self):
@@ -1460,10 +1476,14 @@ class M25GUI:
                     return
 
                 builder = ECSPacketBuilder()
+                self._set_arm_state("Arming...")
                 remote_armed, _, _ = self._ensure_remote_mode_both(builder, ui_log)
                 if not remote_armed:
                     ui_log("warning", "Keyboard drive: could not arm remote mode")
+                    self._set_arm_state("Disarmed")
                     return
+
+                self._set_arm_state("Armed")
 
                 # Key may have been released while arming was in progress
                 if stop_event.is_set() or (self._kb_desired_left == 0 and self._kb_desired_right == 0):
@@ -1492,6 +1512,7 @@ class M25GUI:
                     self._set_remote_mode_both(builder2, False)
                 except Exception:
                     pass
+                self._set_arm_state("Disarmed")
 
         self._kb_thread = threading.Thread(target=_thread, daemon=True)
         self._kb_thread.start()
@@ -2149,6 +2170,15 @@ class M25GUI:
 
         threading.Thread(target=move_thread, daemon=True).start()
 
+    def _set_arm_state(self, state: str):
+        """Update the arm state indicator label (call from any thread)."""
+        colors = {"Armed": "green", "Disarmed": "gray", "Arming...": "orange",
+                  "Disarming...": "orange", "--": "gray"}
+        color = colors.get(state, "gray")
+        self.root.after(0, lambda: self.arm_state_lbl.config(
+            text=f"State: {state}", foreground=color
+        ))
+
     def run_arm(self):
         """Arm remote mode on both wheels without driving."""
         if self.demo_mode:
@@ -2163,18 +2193,22 @@ class M25GUI:
                     return
                 builder = ECSPacketBuilder()
                 ui_test_status("Arming...")
+                self._set_arm_state("Arming...")
                 ok, left_mode, right_mode = self._ensure_remote_mode_both(builder, ui_log)
                 if ok:
                     ui_test_status("Armed")
+                    self._set_arm_state("Armed")
                     ui_log("success", "Remote mode armed")
                     ui_status("success", "Armed")
                 else:
                     ui_test_status("Arm failed")
+                    self._set_arm_state("Disarmed")
                     ui_log("error", f"Arm failed: left={left_mode}, right={right_mode}")
                     ui_status("error", "Arm failed")
             except Exception as exc:
                 ui_log("error", f"Arm error: {exc}")
                 ui_test_status("Arm error")
+                self._set_arm_state("Disarmed")
 
         threading.Thread(target=arm_thread, daemon=True).start()
 
@@ -2192,17 +2226,21 @@ class M25GUI:
                     return
                 builder = ECSPacketBuilder()
                 ui_test_status("Disarming...")
+                self._set_arm_state("Disarming...")
                 left_ok, right_ok = self._set_remote_mode_both(builder, False)
                 if left_ok and right_ok:
                     ui_test_status("Disarmed")
+                    self._set_arm_state("Disarmed")
                     ui_log("success", "Remote mode disarmed")
                     ui_status("success", "Disarmed")
                 else:
                     ui_test_status("Disarm partial")
+                    self._set_arm_state("Disarmed")
                     ui_log("warning", f"Disarm: left={left_ok}, right={right_ok}")
             except Exception as exc:
                 ui_log("error", f"Disarm error: {exc}")
                 ui_test_status("Disarm error")
+                self._set_arm_state("--")
 
         threading.Thread(target=disarm_thread, daemon=True).start()
 
@@ -2466,6 +2504,8 @@ class M25GUI:
         self._left_transport = None
         self._right_transport = None
         self.update_system_info()
+        if hasattr(self, "arm_state_lbl"):
+            self.arm_state_lbl.config(text="State: --", foreground="gray")
 
         if self._close_after_disconnect:
             self._close_after_disconnect = False
