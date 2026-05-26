@@ -133,7 +133,7 @@ class M25GUI:
     TURN_DURATION_FACTOR_MAX = 4.0
     TURN_DURATION_FACTOR_STEP = 0.1
 
-    def __init__(self, root, default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=False, keyboard=False):
+    def __init__(self, root, default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=False, keyboard=False, raw_trace=False):
         self.root = root
         self.root.title("m5squared - Wheelchair Controller")
         self.root.resizable(True, True)
@@ -142,6 +142,8 @@ class M25GUI:
         self.raw_trace_save_var = tk.BooleanVar(value=False)
         self.raw_trace_file_path = tk.StringVar(value="")
         self._trace_fp: Any = None
+        self.debug_log_var = tk.BooleanVar(value=False)
+        self.pulse_interval_var = tk.IntVar(value=int(self.REMOTE_PULSE_INTERVAL_S * 1000))
         
         # Set window size to use max screen height
         screen_width = root.winfo_screenwidth()
@@ -210,9 +212,11 @@ class M25GUI:
         # Initialize profile description with default profile
         self.update_profile_description()
 
-        # Enable keyboard driving if requested via CLI
+        # Apply startup overrides
         if keyboard:
             self.toggle_keyboard()
+        if raw_trace:
+            self.raw_trace_var.set(True)
 
         self.log("info", "Ready.")
         self.status_message("info", "Ready")
@@ -412,28 +416,6 @@ class M25GUI:
         self.connection_state_lbl = tk.Label(self.connection_action_frame, text="● Disconnected", padx=8)
         self.connection_state_lbl.pack(side=tk.LEFT)
         self._update_connection_state_visual("disconnected")
-
-        self.raw_trace_check = tk.Checkbutton(
-            self.conn_frame,
-            text="Show raw packet trace",
-            variable=self.raw_trace_var,
-        )
-        self.raw_trace_check.grid(row=10, column=0, columnspan=2, sticky=tk.W, pady=(6, 0))
-
-        # Save raw trace to file controls
-        self.raw_trace_save_check = tk.Checkbutton(
-            self.conn_frame,
-            text="Save raw trace to file",
-            variable=self.raw_trace_save_var,
-            command=self._on_raw_trace_save_toggle,
-        )
-        self.raw_trace_save_check.grid(row=11, column=0, sticky=tk.W, pady=(6, 0))
-
-        self.raw_trace_file_label = tk.Label(self.conn_frame, text="No file selected")
-        self.raw_trace_file_label.grid(row=11, column=1, sticky=(tk.W, tk.E), padx=(5, 0))
-
-        self.choose_trace_file_btn = tk.Button(self.conn_frame, text="Choose file...", command=self.open_trace_file_dialog, cursor="hand2")
-        self.choose_trace_file_btn.grid(row=11, column=2, sticky=tk.E)
 
         # Control Section
         self.control_frame = tk.LabelFrame(self.main_frame, text="Controls", padx=10, pady=10, font=("", 9, "bold"))
@@ -640,6 +622,21 @@ class M25GUI:
         )
         self.turn_duration_scale.pack(side=tk.LEFT, padx=(0, 5))
 
+        self.pulse_interval_label = tk.Label(self.motion_tuning_frame, text="Pulse (ms):")
+        self.pulse_interval_label.pack(side=tk.LEFT, padx=(0, 4))
+
+        self.pulse_interval_scale = tk.Scale(
+            self.motion_tuning_frame,
+            from_=50,
+            to=500,
+            resolution=10,
+            orient=tk.HORIZONTAL,
+            length=110,
+            variable=self.pulse_interval_var,
+            showvalue=True,
+        )
+        self.pulse_interval_scale.pack(side=tk.LEFT, padx=(0, 5))
+
         # Row 3: single direction - label right, controls left
         self.single_dir_label = tk.Label(self.drive_test_frame, text="Single direction:", anchor=tk.E)
         self.single_dir_label.grid(row=3, column=0, sticky=tk.E, padx=(0, 8), pady=3)
@@ -700,36 +697,65 @@ class M25GUI:
         self.quick_bwd_btn = tk.Button(self.quick_move_frame, text="Backward", command=lambda: self.run_short_movement("backward"), state="disabled", cursor="hand2", width=10)
         self.quick_bwd_btn.pack(side=tk.LEFT)
 
-        # Row 5: one-shot actions - label right, buttons left
+        # Row 5: one-shot - arm/disarm
         self.one_shot_label = tk.Label(self.drive_test_frame, text="One-shot:", anchor=tk.E)
-        self.one_shot_label.grid(row=5, column=0, sticky=tk.E, padx=(0, 8), pady=3)
+        self.one_shot_label.grid(row=5, column=0, sticky=tk.E, padx=(0, 8), pady=(3, 0))
 
         self.one_shot_frame = tk.Frame(self.drive_test_frame)
-        self.one_shot_frame.grid(row=5, column=1, sticky=tk.W, pady=3)
+        self.one_shot_frame.grid(row=5, column=1, sticky=tk.W, pady=(3, 0))
 
-        self.just_start_btn = tk.Button(
-            self.one_shot_frame,
-            text="Just Start",
-            command=self.run_just_start,
-            state="disabled",
-            cursor="hand2",
-            width=12,
-        )
-        self.just_start_btn.pack(side=tk.LEFT, padx=(0, 5))
+        self.arm_btn = tk.Button(self.one_shot_frame, text="Arm", command=self.run_arm, state="disabled", cursor="hand2", width=8)
+        self.arm_btn.pack(side=tk.LEFT, padx=(0, 5))
 
-        self.just_stop_btn = tk.Button(
-            self.one_shot_frame,
-            text="Just Stop",
-            command=self.run_just_stop,
-            state="disabled",
-            cursor="hand2",
-            width=12,
-        )
+        self.disarm_btn = tk.Button(self.one_shot_frame, text="Disarm", command=self.run_disarm, state="disabled", cursor="hand2", width=8)
+        self.disarm_btn.pack(side=tk.LEFT)
+
+        # Row 6: one-shot - start fwd/bwd/stop
+        self.one_shot_drive_frame = tk.Frame(self.drive_test_frame)
+        self.one_shot_drive_frame.grid(row=6, column=1, sticky=tk.W, pady=(0, 3))
+
+        self.just_start_fwd_btn = tk.Button(self.one_shot_drive_frame, text="Start Fwd", command=self.run_just_start_fwd, state="disabled", cursor="hand2", width=10)
+        self.just_start_fwd_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.just_start_bwd_btn = tk.Button(self.one_shot_drive_frame, text="Start Bwd", command=self.run_just_start_bwd, state="disabled", cursor="hand2", width=10)
+        self.just_start_bwd_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.just_stop_btn = tk.Button(self.one_shot_drive_frame, text="Stop", command=self.run_just_stop, state="disabled", cursor="hand2", width=8)
         self.just_stop_btn.pack(side=tk.LEFT)
 
-        # Row 6: status label centered
+        # Row 7: keyboard d-pad
+        self.kb_drive_label = tk.Label(self.drive_test_frame, text="Keyboard:", anchor=tk.E)
+        self.kb_drive_label.grid(row=7, column=0, sticky=tk.E, padx=(0, 8), pady=3)
+
+        self.kb_drive_frame = tk.Frame(self.drive_test_frame)
+        self.kb_drive_frame.grid(row=7, column=1, sticky=tk.W, pady=3)
+
+        self.kb_fwd_btn = tk.Button(self.kb_drive_frame, text="^ Fwd", width=8, cursor="hand2", state="disabled")
+        self.kb_fwd_btn.pack(side=tk.LEFT, padx=(0, 3))
+        self.kb_fwd_btn.bind("<ButtonPress-1>", lambda e: self._dpad_press("fwd"))
+        self.kb_fwd_btn.bind("<ButtonRelease-1>", lambda e: self._dpad_release())
+
+        self.kb_left_btn = tk.Button(self.kb_drive_frame, text="< Left", width=8, cursor="hand2", state="disabled")
+        self.kb_left_btn.pack(side=tk.LEFT, padx=(0, 3))
+        self.kb_left_btn.bind("<ButtonPress-1>", lambda e: self._dpad_press("left"))
+        self.kb_left_btn.bind("<ButtonRelease-1>", lambda e: self._dpad_release())
+
+        self.kb_stop_btn = tk.Button(self.kb_drive_frame, text="Stop", width=6, cursor="hand2", state="disabled", command=self._dpad_stop)
+        self.kb_stop_btn.pack(side=tk.LEFT, padx=(0, 3))
+
+        self.kb_right_btn = tk.Button(self.kb_drive_frame, text="Right >", width=8, cursor="hand2", state="disabled")
+        self.kb_right_btn.pack(side=tk.LEFT, padx=(0, 3))
+        self.kb_right_btn.bind("<ButtonPress-1>", lambda e: self._dpad_press("right"))
+        self.kb_right_btn.bind("<ButtonRelease-1>", lambda e: self._dpad_release())
+
+        self.kb_bwd_btn = tk.Button(self.kb_drive_frame, text="v Bwd", width=8, cursor="hand2", state="disabled")
+        self.kb_bwd_btn.pack(side=tk.LEFT)
+        self.kb_bwd_btn.bind("<ButtonPress-1>", lambda e: self._dpad_press("bwd"))
+        self.kb_bwd_btn.bind("<ButtonRelease-1>", lambda e: self._dpad_release())
+
+        # Row 8: status label centered
         self.drive_test_status = tk.Label(self.drive_test_frame, text="")
-        self.drive_test_status.grid(row=6, column=0, columnspan=2, pady=(3, 0))
+        self.drive_test_status.grid(row=8, column=0, columnspan=2, pady=(3, 0))
 
         # Output Section
         self.output_frame = tk.LabelFrame(self.main_frame, text="Output", padx=10, pady=10, font=("", 9, "bold"))
@@ -759,6 +785,38 @@ class M25GUI:
 
         self.save_log_btn = tk.Button(self.output_btn_frame, text="Save...", command=self.save_output_dialog, cursor="hand2", width=8)
         self.save_log_btn.pack(side=tk.TOP)
+
+        # Log configuration row
+        self.log_config_frame = tk.Frame(self.output_frame)
+        self.log_config_frame.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(4, 0))
+
+        self.raw_trace_check = tk.Checkbutton(
+            self.log_config_frame,
+            text="Show raw SPP trace [D][TX/RX]",
+            variable=self.raw_trace_var,
+        )
+        self.raw_trace_check.pack(side=tk.LEFT, padx=(0, 12))
+
+        self.debug_log_check = tk.Checkbutton(
+            self.log_config_frame,
+            text="Show debug [D] logs",
+            variable=self.debug_log_var,
+        )
+        self.debug_log_check.pack(side=tk.LEFT, padx=(0, 12))
+
+        self.raw_trace_save_check = tk.Checkbutton(
+            self.log_config_frame,
+            text="Save trace to file",
+            variable=self.raw_trace_save_var,
+            command=self._on_raw_trace_save_toggle,
+        )
+        self.raw_trace_save_check.pack(side=tk.LEFT, padx=(0, 6))
+
+        self.raw_trace_file_label = tk.Label(self.log_config_frame, text="No file selected")
+        self.raw_trace_file_label.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.choose_trace_file_btn = tk.Button(self.log_config_frame, text="Choose...", command=self.open_trace_file_dialog, cursor="hand2")
+        self.choose_trace_file_btn.pack(side=tk.LEFT)
 
         # Status bar
         self.status = tk.Label(self.main_frame, text="Ready", anchor=tk.W, relief=tk.SUNKEN, padx=5, pady=2)
@@ -945,15 +1003,6 @@ class M25GUI:
                 else:
                     self._theme_widget(self.deadman_disable_check, "checkbox")
 
-        if hasattr(self, "raw_trace_check"):
-            self._theme_widget(self.raw_trace_check, "checkbox")
-        if hasattr(self, "raw_trace_save_check"):
-            self._theme_widget(self.raw_trace_save_check, "checkbox")
-        if hasattr(self, "raw_trace_file_label"):
-            self._theme_widget(self.raw_trace_file_label, "label")
-        if hasattr(self, "choose_trace_file_btn"):
-            self._theme_widget(self.choose_trace_file_btn, "button")
-        
         self._theme_widget(self.connect_btn, "button")
         self._theme_widget(self.connection_action_frame, "frame")
         self._theme_widget(self.connection_state_lbl, "label")
@@ -1035,8 +1084,24 @@ class M25GUI:
             self._theme_widget(self.quick_bwd_btn, "button")
             self._theme_widget(self.one_shot_frame, "frame")
             self._theme_widget(self.one_shot_label, "label")
-            self._theme_widget(self.just_start_btn, "button")
+            self._theme_widget(self.arm_btn, "button")
+            self._theme_widget(self.disarm_btn, "button")
+            if hasattr(self, "one_shot_drive_frame"):
+                self._theme_widget(self.one_shot_drive_frame, "frame")
+            self._theme_widget(self.just_start_fwd_btn, "button")
+            self._theme_widget(self.just_start_bwd_btn, "button")
             self._theme_widget(self.just_stop_btn, "button")
+            if hasattr(self, "pulse_interval_label"):
+                self._theme_widget(self.pulse_interval_label, "label")
+            if hasattr(self, "pulse_interval_scale"):
+                self._theme_widget(self.pulse_interval_scale, "scale")
+            if hasattr(self, "kb_drive_label"):
+                self._theme_widget(self.kb_drive_label, "label")
+            if hasattr(self, "kb_drive_frame"):
+                self._theme_widget(self.kb_drive_frame, "frame")
+            for _btn in ("kb_fwd_btn", "kb_left_btn", "kb_stop_btn", "kb_right_btn", "kb_bwd_btn"):
+                if hasattr(self, _btn):
+                    self._theme_widget(getattr(self, _btn), "button")
             self._theme_widget(self.drive_test_status, "label")
         
         # Output
@@ -1059,7 +1124,19 @@ class M25GUI:
                 self._theme_widget(self.copy_log_btn, "button")
             if hasattr(self, "save_log_btn"):
                 self._theme_widget(self.save_log_btn, "button")
-        
+            if hasattr(self, "log_config_frame"):
+                self._theme_widget(self.log_config_frame, "frame")
+            if hasattr(self, "raw_trace_check"):
+                self._theme_widget(self.raw_trace_check, "checkbox")
+            if hasattr(self, "debug_log_check"):
+                self._theme_widget(self.debug_log_check, "checkbox")
+            if hasattr(self, "raw_trace_save_check"):
+                self._theme_widget(self.raw_trace_save_check, "checkbox")
+            if hasattr(self, "raw_trace_file_label"):
+                self._theme_widget(self.raw_trace_file_label, "label")
+            if hasattr(self, "choose_trace_file_btn"):
+                self._theme_widget(self.choose_trace_file_btn, "button")
+
         # Status bar
         if hasattr(self, "status"):
             self.status.configure(bg=theme["bg"])
@@ -1400,7 +1477,7 @@ class M25GUI:
                     if left == 0 and right == 0:
                         break  # Desired speed cleared by stop - exit loop
                     self._write_remote_speed_both(builder, left, right)
-                    stop_event.wait(self.REMOTE_PULSE_INTERVAL_S)
+                    stop_event.wait(self.pulse_interval_var.get() / 1000.0)
 
                 # Explicit zero packet before disarming
                 self._write_remote_speed_both(builder, 0, 0)
@@ -1417,6 +1494,35 @@ class M25GUI:
 
         self._kb_thread = threading.Thread(target=_thread, daemon=True)
         self._kb_thread.start()
+
+    # --- Virtual d-pad (ButtonPress/ButtonRelease dead-man) ---
+
+    def _dpad_press(self, direction: str):
+        """Start driving in the given direction; called on mouse-button-down."""
+        if not self.connected:
+            return
+        speed_mag = max(self.MOTION_SPEED_MIN, min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())))
+        if direction == "fwd":
+            self._kb_desired_left = speed_mag
+            self._kb_desired_right = speed_mag
+        elif direction == "bwd":
+            self._kb_desired_left = -speed_mag
+            self._kb_desired_right = -speed_mag
+        elif direction == "left":
+            self._kb_desired_left = int(speed_mag * 0.3)
+            self._kb_desired_right = speed_mag
+        elif direction == "right":
+            self._kb_desired_left = speed_mag
+            self._kb_desired_right = int(speed_mag * 0.3)
+        self._ensure_kb_thread_running()
+
+    def _dpad_release(self):
+        """Stop driving; called on mouse-button-up."""
+        self._kb_stop_drive()
+
+    def _dpad_stop(self):
+        """Explicit stop button (no dead-man; just zeroes speed)."""
+        self._kb_stop_drive()
 
     def _ensure_event_loop(self):
         """Create a private event loop for BLE tasks when needed."""
@@ -1554,13 +1660,18 @@ class M25GUI:
         self.output.insert(tk.END, f"{message}\n", (lvl,))
         self.output.see(tk.END)
 
+    def _raw_log_visible(self, message: str) -> bool:
+        """Return True when message should be shown given current toggles."""
+        is_spp = "SPP]" in message
+        return (is_spp and self.raw_trace_var.get()) or \
+               (not is_spp and self.debug_log_var.get())
+
     def raw_log(self, message):
-        """Append a raw packet trace line without timestamps or prefixes."""
-        if not self.raw_trace_var.get():
+        """Append a [D] trace line filtered by the log-config checkboxes."""
+        if not self._raw_log_visible(message):
             return
         self.output.insert(tk.END, f"{message}\n", ("trace",))
         self.output.see(tk.END)
-        # Also optionally write trace lines to disk
         try:
             if getattr(self, "raw_trace_save_var", None) and self.raw_trace_save_var.get():
                 self._write_trace_to_file(message)
@@ -1568,8 +1679,8 @@ class M25GUI:
             pass
 
     def queue_raw_log(self, message):
-        """Thread-safe raw trace sink for background Bluetooth callbacks."""
-        if not self.raw_trace_var.get():
+        """Thread-safe sink for background Bluetooth and ECS callbacks."""
+        if not self._raw_log_visible(message):
             return
         self.root.after(0, lambda: self.raw_log(message))
 
@@ -1802,7 +1913,7 @@ class M25GUI:
         Wheels expect periodic speed updates while in remote mode.
         """
         if interval_s is None:
-            interval_s = self.REMOTE_PULSE_INTERVAL_S
+            interval_s = self.pulse_interval_var.get() / 1000.0
         if duration_s <= 0:
             return self._write_remote_speed_both(builder, left_speed, right_speed)
 
@@ -2037,16 +2148,81 @@ class M25GUI:
 
         threading.Thread(target=move_thread, daemon=True).start()
 
+    def run_arm(self):
+        """Arm remote mode on both wheels without driving."""
+        if self.demo_mode:
+            self.log("warning", "Demo mode: arm simulated")
+            return
+
+        def arm_thread():
+            ui_log, ui_status, ui_test_status = self._make_ui_callbacks(self.drive_test_status)
+            try:
+                if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                    ui_log("error", "Not connected")
+                    return
+                builder = ECSPacketBuilder()
+                ui_test_status("Arming...")
+                ok, left_mode, right_mode = self._ensure_remote_mode_both(builder, ui_log)
+                if ok:
+                    ui_test_status("Armed")
+                    ui_log("success", "Remote mode armed")
+                    ui_status("success", "Armed")
+                else:
+                    ui_test_status("Arm failed")
+                    ui_log("error", f"Arm failed: left={left_mode}, right={right_mode}")
+                    ui_status("error", "Arm failed")
+            except Exception as exc:
+                ui_log("error", f"Arm error: {exc}")
+                ui_test_status("Arm error")
+
+        threading.Thread(target=arm_thread, daemon=True).start()
+
+    def run_disarm(self):
+        """Disarm remote mode on both wheels."""
+        if self.demo_mode:
+            self.log("warning", "Demo mode: disarm simulated")
+            return
+
+        def disarm_thread():
+            ui_log, ui_status, ui_test_status = self._make_ui_callbacks(self.drive_test_status)
+            try:
+                if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                    ui_log("error", "Not connected")
+                    return
+                builder = ECSPacketBuilder()
+                ui_test_status("Disarming...")
+                left_ok, right_ok = self._set_remote_mode_both(builder, False)
+                if left_ok and right_ok:
+                    ui_test_status("Disarmed")
+                    ui_log("success", "Remote mode disarmed")
+                    ui_status("success", "Disarmed")
+                else:
+                    ui_test_status("Disarm partial")
+                    ui_log("warning", f"Disarm: left={left_ok}, right={right_ok}")
+            except Exception as exc:
+                ui_log("error", f"Disarm error: {exc}")
+                ui_test_status("Disarm error")
+
+        threading.Thread(target=disarm_thread, daemon=True).start()
+
     def run_just_start(self):
-        """Send a single forward drive command without repeating it."""
-        self._run_one_shot_drive("start")
+        """Send a single forward drive command (kept for backward compat)."""
+        self._run_one_shot_drive("start_fwd")
+
+    def run_just_start_fwd(self):
+        """Send a single forward drive command."""
+        self._run_one_shot_drive("start_fwd")
+
+    def run_just_start_bwd(self):
+        """Send a single backward drive command."""
+        self._run_one_shot_drive("start_bwd")
 
     def run_just_stop(self):
-        """Send a single stop command without repeating it."""
+        """Send a single stop command."""
         self._run_one_shot_drive("stop")
 
     def _run_one_shot_drive(self, action: str):
-        """Send one remote-speed packet for a start or stop action."""
+        """Send one remote-speed packet for an arm+drive or stop action."""
         if self.demo_mode:
             self.log("warning", f"Demo mode: one-shot {action} simulated")
             return
@@ -2057,33 +2233,36 @@ class M25GUI:
             try:
                 if not self.ecs_remote or not self.left_conn or not self.right_conn:
                     ui_log("error", "Not connected")
-                    ui_status("error", "One-shot action failed: Not connected")
+                    ui_status("error", "One-shot: not connected")
                     return
 
                 builder = ECSPacketBuilder()
                 speed_mag = max(self.MOTION_SPEED_MIN, min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())))
-                speed = speed_mag if action == "start" else 0
+
+                if action == "start_fwd":
+                    speed, label = speed_mag, "Start Fwd"
+                elif action == "start_bwd":
+                    speed, label = -speed_mag, "Start Bwd"
+                else:
+                    speed, label = 0, "Stop"
 
                 remote_armed, left_mode, right_mode = self._ensure_remote_mode_both(builder, ui_log)
                 if not remote_armed:
-                    ui_log("error", "Failed to latch remote mode on both wheels after force re-arm attempts")
-                    ui_log("warning", f"Final drive mode flags: left={left_mode}, right={right_mode}")
-                    ui_status("error", "One-shot action failed: remote bit not active")
+                    ui_log("error", "Remote arm failed")
+                    ui_log("warning", f"Drive mode flags: left={left_mode}, right={right_mode}")
+                    ui_status("error", "One-shot: remote arm failed")
                     return
 
-                label = "Just Start" if action == "start" else "Just Stop"
                 ui_test_status(label)
-                ui_log("info", f"  -> {label} (single packet, L:{speed}, R:{speed})")
-
+                ui_log("info", f"  -> {label} (L:{speed}, R:{speed})")
                 self._write_remote_speed_both(builder, speed, speed)
-
                 ui_test_status(f"{label} sent")
                 ui_log("success", f"{label} command sent")
                 ui_status("success", f"{label} sent")
 
             except Exception as e:
-                ui_log("error", f"One-shot action failed: {e}")
-                ui_status("error", "One-shot action failed")
+                ui_log("error", f"One-shot failed: {e}")
+                ui_status("error", "One-shot failed")
                 ui_test_status("One-shot failed")
             finally:
                 try:
@@ -2144,8 +2323,14 @@ class M25GUI:
         self.single_dir_btn.config(state=state)
         self.quick_fwd_btn.config(state=state)
         self.quick_bwd_btn.config(state=state)
-        self.just_start_btn.config(state=state)
+        self.arm_btn.config(state=state)
+        self.disarm_btn.config(state=state)
+        self.just_start_fwd_btn.config(state=state)
+        self.just_start_bwd_btn.config(state=state)
         self.just_stop_btn.config(state=state)
+        for _btn in ("kb_fwd_btn", "kb_left_btn", "kb_stop_btn", "kb_right_btn", "kb_bwd_btn"):
+            if hasattr(self, _btn):
+                getattr(self, _btn).config(state=state)
     
     def toggle_deadman_disable(self):
         """Toggle deadman requirement with confirmation"""
@@ -3109,8 +3294,8 @@ class M25GUI:
             self.status_message("info", "Right wheel selected")
 
 
-def main(default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=False, keyboard=False):
-    """Launch the GUI application"""
+def main(default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=False, keyboard=False, raw_trace=False):
+    """Launch the GUI application."""
 
     missing = []
 
@@ -3147,6 +3332,11 @@ def main(default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=Fals
         action="store_true",
         help="Enable keyboard driving on startup (W/A/S/D + arrows + Space)",
     )
+    cli_parser.add_argument(
+        "--raw-trace",
+        action="store_true",
+        help="Enable raw SPP packet trace on startup",
+    )
     args, _ = cli_parser.parse_known_args()
 
     root = tk.Tk()
@@ -3155,6 +3345,7 @@ def main(default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=Fals
         default_m25_version=args.m25_version,
         skip_disconnect_confirmation=(args.skip_disconnect_confirmation or skip_disconnect_confirmation),
         keyboard=(args.keyboard or keyboard),
+        raw_trace=(args.raw_trace or raw_trace),
     )
     root.mainloop()
 

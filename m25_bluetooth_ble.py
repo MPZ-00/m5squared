@@ -338,7 +338,7 @@ class M25BluetoothBLE:
                 response=self._tx_requires_response,
             )
 
-            self._trace(f"TX {self.side} SPP: {_hex_bytes(data)}")
+            self._trace(f"[D][TX {self.side} SPP] {_hex_bytes(data)}")
             
             if self.debug:
                 mode = "write-with-response" if self._tx_requires_response else "write-without-response"
@@ -374,7 +374,7 @@ class M25BluetoothBLE:
                 response=self._tx_requires_response,
             )
 
-            self._trace(f"TX {self.side} SPP: <pre-encrypted>")
+            self._trace(f"[D][TX {self.side} SPP] <pre-encrypted>")
             
             if self.debug:
                 mode = "write-with-response" if self._tx_requires_response else "write-without-response"
@@ -425,9 +425,9 @@ class M25BluetoothBLE:
                 decrypted = self.decryptor.decrypt(bytes(data)) if self.decryptor else bytes(data)
 
                 if decrypted:
-                    self._trace(f"RX {self.side} SPP: {_hex_bytes(decrypted)}")
+                    self._trace(f"[D][RX {self.side} SPP] {_hex_bytes(decrypted)}")
                 else:
-                    self._trace(f"RX {self.side} SPP: <decrypt failed>")
+                    self._trace(f"[D][RX {self.side} SPP] <decrypt failed>")
 
                 # Route to callback or queue
                 if self._notification_callback:
@@ -523,9 +523,9 @@ class M25BluetoothBLE:
                 decrypted = self.decryptor.decrypt(bytes(data)) if self.decryptor else bytes(data)
 
                 if decrypted:
-                    self._trace(f"RX {self.side} SPP: {_hex_bytes(decrypted)}")
+                    self._trace(f"[D][RX {self.side} SPP] {_hex_bytes(decrypted)}")
                 else:
-                    self._trace(f"RX {self.side} SPP: <decrypt failed>")
+                    self._trace(f"[D][RX {self.side} SPP] <decrypt failed>")
 
                 return decrypted
             

@@ -26,14 +26,15 @@ def setup_logging(level: str = "INFO") -> None:
     )
 
 
-def launch_gui(m25_version: str = "auto", skip_disconnect_confirmation: bool = False, keyboard: bool = False) -> None:
-    """Launch the GUI application"""
+def launch_gui(m25_version: str = "auto", skip_disconnect_confirmation: bool = False, keyboard: bool = False, raw_trace: bool = False) -> None:
+    """Launch the GUI application."""
     print("Starting m5squared GUI...")
     from m25_gui import main
     main(
         default_m25_version=m25_version,
         skip_disconnect_confirmation=skip_disconnect_confirmation,
         keyboard=keyboard,
+        raw_trace=raw_trace,
     )
 
 
@@ -182,6 +183,11 @@ Examples:
         action="store_true",
         help="Enable keyboard driving on startup (W/A/S/D + arrows + Space)",
     )
+    parser.add_argument(
+        "--raw-trace",
+        action="store_true",
+        help="Enable raw SPP packet trace on startup",
+    )
 
     args = parser.parse_args()
 
@@ -199,6 +205,7 @@ Examples:
             m25_version=args.m25_version,
             skip_disconnect_confirmation=args.skip_disconnect_confirmation,
             keyboard=args.keyboard,
+            raw_trace=args.raw_trace,
         )
 
 
