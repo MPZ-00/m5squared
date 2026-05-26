@@ -1,0 +1,3163 @@
+# pyright: reportArgumentType=false
+"""M25 GUI application - implementation module; see gui/__init__.py for public API."""
+
+import tkinter as tk
+from tkinter import filedialog, ttk, scrolledtext, messagebox
+import argparse
+import os
+import sys
+import threading
+import asyncio
+import time
+from pathlib import Path
+from datetime import datetime
+from typing import Any, cast
+
+try:
+    from dotenv import load_dotenv
+    HAS_DOTENV = True
+except ImportError:
+    load_dotenv = None
+    HAS_DOTENV = False
+    print("Warning: python-dotenv not installed. Install with: pip install python-dotenv")
+
+# Import core architecture
+try:
+    from core.types import MapperConfig, SupervisorConfig, SupervisorState
+    from core.mapper import Mapper
+    from core.supervisor import Supervisor
+    from core.transport import MockTransport
+    HAS_CORE = True
+except ImportError:
+    HAS_CORE = False
+    print("Warning: Core architecture not available")
+
+try:
+    from m25_ecs import ECSPacketBuilder, ECSRemote, ResponseParser
+    from m25_utils import parse_key
+    HAS_M25_PROTOCOL = True
+except ImportError as e:
+    ECSPacketBuilder = cast(Any, None)
+    ECSRemote = cast(Any, None)
+    ResponseParser = cast(Any, None)
+    parse_key = cast(Any, None)
+    HAS_M25_PROTOCOL = False
+    print(f"Warning: M25 protocol modules not available: {e}")
+
+try:
+    from m25_spp import BluetoothConnection as RFCOMMBluetoothConnection
+    HAS_RFCOMM = True
+except ImportError:
+    RFCOMMBluetoothConnection = cast(Any, None)
+    HAS_RFCOMM = False
+
+try:
+    from m25_bluetooth_ble import M25BluetoothBLE, detect_m25_ble_profile, scan_devices as ble_scan_devices
+    HAS_BLE = True
+except ImportError:
+    M25BluetoothBLE = cast(Any, None)
+    detect_m25_ble_profile = cast(Any, None)
+    ble_scan_devices = cast(Any, None)
+    HAS_BLE = False
+
+from m25_protocol_data import (
+    PARAM_ID_STATUS_SOC,
+    PARAM_ID_STATUS_ASSIST_LEVEL,
+    PARAM_ID_STATUS_DRIVE_MODE,
+    PARAM_ID_STATUS_DRIVE_PROFILE,
+    PARAM_ID_STATUS_SW_VERSION,
+    PARAM_ID_CRUISE_VALUES,
+    PARAM_ID_STATUS_DUO_DRIVE_PARAMS,
+    DRIVE_MODE_BIT_CRUISE,
+    DRIVE_MODE_BIT_REMOTE,
+)
+from m25_transport import (
+    M25_VERSION_AUTO,
+    M25_VERSION_V1,
+    M25_VERSION_V2,
+    TRANSPORT_AUTO,
+    TRANSPORT_BLE,
+    TRANSPORT_RFCOMM,
+    describe_m25_version,
+    normalize_m25_version,
+    preferred_transport_for_version,
+)
+
+HAS_BLUETOOTH = HAS_M25_PROTOCOL and (HAS_BLE or HAS_RFCOMM)
+IS_WINDOWS = sys.platform.startswith("win")
+
+from gui.widgets import PlaceholderEntry
+from gui.theme import THEMES, LEVELS
+from gui.transport import BLEConnectionAdapter
+
+
+
+class M25GUI:
+    """Main GUI application for M25 wheelchair control"""
+
+    THEMES = THEMES
+    LEVELS = LEVELS
+
+    # Motion tuning defaults and limits (single location for quick adjustments).
+    MOTION_SPEED_MIN = 10
+    MOTION_SPEED_MAX = 160
+    MOTION_SPEED_STEP = 5
+    MOTION_SPEED_DEFAULT = 30
+
+    DRIVE_STEP_DURATION_MIN = 0.3
+    DRIVE_STEP_DURATION_MAX = 10.0
+    DRIVE_STEP_DURATION_DEFAULT = 1.0
+
+    SINGLE_DURATION_MIN = 0.2
+    SINGLE_DURATION_MAX = 10.0
+    SINGLE_DURATION_DEFAULT = 1.5
+
+    QUICK_DURATION_MIN = 2
+    QUICK_DURATION_MAX = 10.0
+    QUICK_DURATION_DEFAULT = 0.5
+
+    REMOTE_PULSE_INTERVAL_S = 0.1
+    REMOTE_STOP_DURATION_S = 0.2
+    REMOTE_ARM_SETTLE_S = 0.08
+    REMOTE_PRIME_DURATION_S = 0.12
+    REMOTE_ARM_ATTEMPTS = 4
+    REMOTE_REARM_DELAY_S = 0.09
+    REMOTE_READBACK_RETRY_DELAY_S = 0.18
+
+    # Turn-in-place tuning for scripted drive test.
+    # Some wheel setups need higher differential than half-speed to overcome deadband.
+    TURN_SPEED_FACTOR = 1.0
+    TURN_SPEED_MIN = 55
+    TURN_DURATION_FACTOR = 1.8
+    TURN_DURATION_FACTOR_MIN = 1.0
+    TURN_DURATION_FACTOR_MAX = 4.0
+    TURN_DURATION_FACTOR_STEP = 0.1
+
+    def __init__(self, root, default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=False, keyboard=False):
+        self.root = root
+        self.root.title("m5squared - Wheelchair Controller")
+        self.root.resizable(True, True)
+        self.skip_disconnect_confirmation = bool(skip_disconnect_confirmation)
+        self.raw_trace_var = tk.BooleanVar(value=False)
+        self.raw_trace_save_var = tk.BooleanVar(value=False)
+        self.raw_trace_file_path = tk.StringVar(value="")
+        self._trace_fp: Any = None
+        
+        # Set window size to use max screen height
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        window_width = min(800, screen_width - 100)  # Leave some margin
+        window_height = screen_height - 100  # Leave space for taskbar
+        
+        # Center the window
+        x_position = (screen_width - window_width) // 2
+        y_position = 0  # Start at top (leaving space for title bar)
+        
+        self.root.geometry(f"{window_width}x{window_height}+{x_position}+{y_position}")
+
+        # Connection state
+        self.connected = False
+        self.scanned_devices = []
+        self.left_conn = None
+        self.right_conn = None
+        self.ecs_remote: Any = None
+        self.demo_mode = False
+        self.event_loop = None  # For Windows async Bluetooth
+        self.default_m25_version = normalize_m25_version(default_m25_version or os.getenv("M25_VERSION"))
+        self.connected_transport_summary = "Not connected"
+        
+        # Core architecture components
+        self.use_core_architecture = False
+        self.supervisor = None
+        self.mapper = None
+        self.transport = None
+        self.deadman_disabled = False
+        
+        # System information
+        self.bluetooth_mode = "Unknown"
+        self.input_device = "None"
+        self.input_connected = False
+        self._left_transport = None
+        self._right_transport = None
+
+        # Keyboard driving state
+        self.keyboard_enabled = False
+        self._keyboard_active_keys: set = set()
+        self._kb_stop_event = threading.Event()
+        self._kb_stop_event.set()   # starts in "stopped" state (set = no drive)
+        self._kb_desired_left: int = 0
+        self._kb_desired_right: int = 0
+        self._kb_thread: threading.Thread | None = None
+
+        # Theme state
+        self.current_theme = "dark"
+
+        # Create UI first (so status bar exists)
+        self.create_widgets()
+
+        self._close_after_disconnect = False
+        self.root.protocol("WM_DELETE_WINDOW", self.on_window_close)
+
+        # Apply theme
+        self.apply_theme()
+
+        # Load environment variables
+        self.load_env()
+
+        # Load saved credentials
+        self.load_credentials()
+        
+        # Initialize profile description with default profile
+        self.update_profile_description()
+
+        # Enable keyboard driving if requested via CLI
+        if keyboard:
+            self.toggle_keyboard()
+
+        self.log("info", "Ready.")
+        self.status_message("info", "Ready")
+
+    def load_env(self):
+        """Load .env file if available"""
+        if HAS_DOTENV and load_dotenv is not None:
+            env_path = Path(".env")
+            if env_path.exists():
+                load_dotenv(env_path)
+                self.status_message("success", "Loaded .env file")
+            else:
+                self.status_message("muted", "No .env file found (optional)")
+        else:
+            self.status_message("warning", "python-dotenv not installed")
+
+    def create_widgets(self):
+        """Create all GUI elements"""
+
+        # Main scrollable container
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=1)
+        self.scroll_container = tk.Frame(self.root)
+        self.scroll_container.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.scroll_container.columnconfigure(0, weight=1)
+        self.scroll_container.rowconfigure(0, weight=1)
+
+        self.canvas = tk.Canvas(self.scroll_container, highlightthickness=0, borderwidth=0)
+        self.canvas.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        self.scrollbar = ttk.Scrollbar(self.scroll_container, orient=tk.VERTICAL, command=self.canvas.yview)
+        self.scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        self.main_frame = tk.Frame(self.canvas, padx=10, pady=10)
+        self.main_window = self.canvas.create_window((0, 0), window=self.main_frame, anchor="nw")
+
+        def _update_scrollregion(_event):
+            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+        def _sync_frame_width(event):
+            self.canvas.itemconfigure(self.main_window, width=event.width)
+
+        def _on_mousewheel(event):
+            if getattr(event, "num", None) == 4:
+                self.canvas.yview_scroll(-1, "units")
+            elif getattr(event, "num", None) == 5:
+                self.canvas.yview_scroll(1, "units")
+            elif getattr(event, "delta", 0):
+                steps = int(-1 * (event.delta / 120))
+                if steps:
+                    self.canvas.yview_scroll(steps, "units")
+
+        def _bind_mousewheel(_event):
+            self.canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            self.canvas.bind_all("<Button-4>", _on_mousewheel)
+            self.canvas.bind_all("<Button-5>", _on_mousewheel)
+
+        def _unbind_mousewheel(_event):
+            self.canvas.unbind_all("<MouseWheel>")
+            self.canvas.unbind_all("<Button-4>")
+            self.canvas.unbind_all("<Button-5>")
+
+        self.main_frame.bind("<Configure>", _update_scrollregion)
+        self.canvas.bind("<Configure>", _sync_frame_width)
+        self.canvas.bind("<Enter>", _bind_mousewheel)
+        self.canvas.bind("<Leave>", _unbind_mousewheel)
+
+        # Configure grid weights
+        self.main_frame.columnconfigure(1, weight=1)
+
+        # Title
+        self.title_frame = tk.Frame(self.main_frame)
+        self.title_frame.grid(row=0, column=0, columnspan=3, pady=(0, 20))
+
+        self.title_label = tk.Label(self.title_frame, text="m5squared Wheelchair Controller", font=("Arial", 16, "bold"))
+        self.title_label.pack(side=tk.LEFT, padx=(0, 20))
+
+        # Theme toggle button
+        self.theme_btn = tk.Button(
+            self.title_frame,
+            text="☀ Light Mode",
+            command=self.toggle_theme,
+            relief=tk.FLAT,
+            cursor="hand2",
+            font=("Arial", 10),
+        )
+        self.theme_btn.pack(side=tk.LEFT)
+
+        # Connection Section
+        self.conn_frame = tk.LabelFrame(self.main_frame, text="Connection", padx=10, pady=10, font=("", 9, "bold"))
+        self.conn_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+        self.conn_frame.columnconfigure(1, weight=1)
+
+        # Scan button
+        self.scan_frame = tk.Frame(self.conn_frame)
+        self.scan_frame.grid(row=0, column=0, columnspan=2, pady=(0, 10), sticky=(tk.W, tk.E))
+
+        self.scan_btn = tk.Button(self.scan_frame, text="🔍 Scan for Wheels", command=self.scan_devices, cursor="hand2")
+        self.scan_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+        self.filter_m25 = tk.BooleanVar(value=True)
+        self.filter_check = tk.Checkbutton(self.scan_frame, text="Filter M25 only", variable=self.filter_m25)
+        self.filter_check.pack(side=tk.LEFT, padx=(0, 10))
+
+        self.m25_version_var = tk.StringVar(value=self.default_m25_version)
+        self.m25_version_menu = tk.OptionMenu(
+            self.scan_frame,
+            self.m25_version_var,
+            M25_VERSION_AUTO,
+            M25_VERSION_V1,
+            M25_VERSION_V2,
+        )
+        self.m25_version_menu.config(width=10)
+        self.m25_version_menu.pack(side=tk.LEFT, padx=(0, 10))
+
+        self.scan_status_lbl = tk.Label(self.scan_frame, text="")
+        self.scan_status_lbl.pack(side=tk.LEFT)
+
+        # Device selection for left wheel
+        self.lbl_left_device = tk.Label(self.conn_frame, text="Left Wheel:")
+        self.lbl_left_device.grid(row=1, column=0, sticky=tk.W, pady=2)
+
+        self.left_device_frame = tk.Frame(self.conn_frame)
+        self.left_device_frame.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=(5, 0), pady=2)
+        self.left_device_frame.columnconfigure(0, weight=1)
+
+        self.left_device_var = tk.StringVar(value="")
+        self.left_device_menu = tk.OptionMenu(self.left_device_frame, self.left_device_var, "", command=self.on_left_device_selected)
+        self.left_device_menu.config(width=35)
+        self.left_device_menu.grid(row=0, column=0, sticky=(tk.W, tk.E))
+
+        # Left wheel MAC and Key
+        self.lbl_left_mac = tk.Label(self.conn_frame, text="Left Wheel MAC:")
+        self.lbl_left_mac.grid(row=2, column=0, sticky=tk.W, pady=2, padx=(20, 0))
+        self.left_mac = tk.Entry(self.conn_frame, width=30, relief=tk.FLAT, borderwidth=2)
+        self.left_mac.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=(5, 0), pady=2)
+
+        self.lbl_left_key = tk.Label(self.conn_frame, text="Left Key:")
+        self.lbl_left_key.grid(row=3, column=0, sticky=tk.W, pady=2, padx=(20, 0))
+        self.left_key = tk.Entry(self.conn_frame, width=30, show="*", relief=tk.FLAT, borderwidth=2)
+        self.left_key.grid(row=3, column=1, sticky=(tk.W, tk.E), padx=(5, 0), pady=2)
+
+        # Device selection for right wheel
+        self.lbl_right_device = tk.Label(self.conn_frame, text="Right Wheel:")
+        self.lbl_right_device.grid(row=4, column=0, sticky=tk.W, pady=2)
+
+        self.right_device_frame = tk.Frame(self.conn_frame)
+        self.right_device_frame.grid(row=4, column=1, sticky=(tk.W, tk.E), padx=(5, 0), pady=2)
+        self.right_device_frame.columnconfigure(0, weight=1)
+
+        self.right_device_var = tk.StringVar(value="")
+        self.right_device_menu = tk.OptionMenu(self.right_device_frame, self.right_device_var, "", command=self.on_right_device_selected)
+        self.right_device_menu.config(width=35)
+        self.right_device_menu.grid(row=0, column=0, sticky=(tk.W, tk.E))
+
+        # Right wheel MAC and Key
+        self.lbl_right_mac = tk.Label(self.conn_frame, text="Right Wheel MAC:")
+        self.lbl_right_mac.grid(row=5, column=0, sticky=tk.W, pady=2, padx=(20, 0))
+        self.right_mac = tk.Entry(self.conn_frame, width=30, relief=tk.FLAT, borderwidth=2)
+        self.right_mac.grid(row=5, column=1, sticky=(tk.W, tk.E), padx=(5, 0), pady=2)
+
+        self.lbl_right_key = tk.Label(self.conn_frame, text="Right Key:")
+        self.lbl_right_key.grid(row=6, column=0, sticky=tk.W, pady=2, padx=(20, 0))
+        self.right_key = tk.Entry(self.conn_frame, width=30, show="*", relief=tk.FLAT, borderwidth=2)
+        self.right_key.grid(row=6, column=1, sticky=(tk.W, tk.E), padx=(5, 0), pady=2)
+        
+        # Core architecture mode checkbox
+        if HAS_CORE:
+            self.core_mode_var = tk.BooleanVar(value=True)
+            self.core_mode_check = tk.Checkbutton(
+                self.conn_frame,
+                text="Use Core Architecture (Supervisor with safety)",
+                variable=self.core_mode_var,
+                command=self.update_system_info,
+            )
+            self.core_mode_check.grid(row=7, column=0, columnspan=2, sticky=tk.W, pady=(10, 5))
+            
+            # Deadman disable checkbox
+            self.deadman_disable_var = tk.BooleanVar(value=False)
+            self.deadman_disable_check = tk.Checkbutton(
+                self.conn_frame,
+                text="Disable Deadman Requirement ⚠ (USE WITH CAUTION)",
+                variable=self.deadman_disable_var,
+                command=self.toggle_deadman_disable,
+                fg="red"
+            )
+            self.deadman_disable_check.grid(row=8, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
+
+        # Connect button
+        self.connection_action_frame = tk.Frame(self.conn_frame)
+        self.connection_action_frame.grid(row=9, column=0, columnspan=2, pady=(10, 0))
+
+        self.connect_btn = tk.Button(self.connection_action_frame, text="Connect", command=self.toggle_connection, cursor="hand2")
+        self.connect_btn.pack(side=tk.LEFT)
+
+        self.connection_state_lbl = tk.Label(self.connection_action_frame, text="● Disconnected", padx=8)
+        self.connection_state_lbl.pack(side=tk.LEFT)
+        self._update_connection_state_visual("disconnected")
+
+        self.raw_trace_check = tk.Checkbutton(
+            self.conn_frame,
+            text="Show raw packet trace",
+            variable=self.raw_trace_var,
+        )
+        self.raw_trace_check.grid(row=10, column=0, columnspan=2, sticky=tk.W, pady=(6, 0))
+
+        # Save raw trace to file controls
+        self.raw_trace_save_check = tk.Checkbutton(
+            self.conn_frame,
+            text="Save raw trace to file",
+            variable=self.raw_trace_save_var,
+            command=self._on_raw_trace_save_toggle,
+        )
+        self.raw_trace_save_check.grid(row=11, column=0, sticky=tk.W, pady=(6, 0))
+
+        self.raw_trace_file_label = tk.Label(self.conn_frame, text="No file selected")
+        self.raw_trace_file_label.grid(row=11, column=1, sticky=(tk.W, tk.E), padx=(5, 0))
+
+        self.choose_trace_file_btn = tk.Button(self.conn_frame, text="Choose file...", command=self.open_trace_file_dialog, cursor="hand2")
+        self.choose_trace_file_btn.grid(row=11, column=2, sticky=tk.E)
+
+        # Control Section
+        self.control_frame = tk.LabelFrame(self.main_frame, text="Controls", padx=10, pady=10, font=("", 9, "bold"))
+        self.control_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+        
+        # Prevent column 2 from affecting columns 0 and 1
+        self.control_frame.columnconfigure(0, weight=0, minsize=100)
+        self.control_frame.columnconfigure(1, weight=0, minsize=350)
+        self.control_frame.columnconfigure(2, weight=1)
+        
+        # Keep rows compact (don't expand to fill rowspan height)
+        self.control_frame.rowconfigure(0, weight=0)
+        self.control_frame.rowconfigure(1, weight=0)
+
+        # Assist level
+        self.lbl_assist = tk.Label(self.control_frame, text="Assist Level:")
+        self.lbl_assist.grid(row=0, column=0, sticky=tk.W, pady=(5, 0))
+
+        self.assist_frame = tk.Frame(self.control_frame)
+        self.assist_frame.grid(row=0, column=1, padx=(5, 5), sticky=tk.W)
+        self.assist_level_var = tk.StringVar(value="Level 1 (Normal)")
+        self.assist_levels = ["Level 1 (Normal)", "Level 2 (Outdoor)", "Level 3 (Learning)"]
+        self.assist_level_menu = tk.OptionMenu(self.assist_frame, self.assist_level_var, *self.assist_levels)
+        self.assist_level_menu.config(width=18)
+        self.assist_level_menu.pack(side=tk.LEFT)
+        
+        self.set_level_btn = tk.Button(self.assist_frame, text="Set Level", command=self.set_assist_level, state="disabled", cursor="hand2", width=10)
+        self.set_level_btn.pack(side=tk.LEFT, padx=(5, 0))
+
+        # Drive profile
+        self.lbl_profile = tk.Label(self.control_frame, text="Drive Profile:")
+        self.lbl_profile.grid(row=1, column=0, sticky=tk.W, pady=(0, 5))
+
+        self.profile_frame = tk.Frame(self.control_frame)
+        self.profile_frame.grid(row=1, column=1, padx=(5, 5), sticky=tk.W)
+        self.profile_var = tk.StringVar(value="Standard")
+        self.profile_var.trace_add("write", self.update_profile_description)
+        self.profiles = ["Standard", "Sensitive", "Soft", "Active", "SensitivePlus"]
+        self.profile_menu = tk.OptionMenu(self.profile_frame, self.profile_var, *self.profiles)
+        self.profile_menu.config(width=18)
+        self.profile_menu.pack(side=tk.LEFT)
+        
+        self.set_profile_btn = tk.Button(self.profile_frame, text="Set Profile", command=self.set_drive_profile, state="disabled", cursor="hand2", width=10)
+        self.set_profile_btn.pack(side=tk.LEFT, padx=(5, 0))
+
+        # Profile description (multi-line) - spans both rows independently
+        self.profile_desc_frame = tk.Frame(self.control_frame)
+        self.profile_desc_frame.grid(row=0, column=2, rowspan=2, sticky=(tk.W, tk.E, tk.N), padx=(20, 0), pady=5)
+        self.profile_desc_text = tk.Text(self.profile_desc_frame, font=("TkDefaultFont", 9), height=6, width=50, wrap=tk.WORD, relief=tk.FLAT, borderwidth=0)
+        self.profile_desc_text.pack(fill=tk.BOTH, expand=True)
+        self.profile_desc_text.config(state=tk.DISABLED)
+
+        # Hill hold
+        self.lbl_hill_hold = tk.Label(self.control_frame, text="Hill Hold:")
+        self.lbl_hill_hold.grid(row=2, column=0, sticky=tk.W, pady=5)
+        self.hill_hold = tk.BooleanVar()
+        self.hill_hold_check = tk.Checkbutton(
+            self.control_frame,
+            text="Enable",
+            variable=self.hill_hold,
+            command=self.toggle_hill_hold,
+            state="disabled",
+        )
+        self.hill_hold_check.grid(row=2, column=1, sticky=tk.W, padx=(5, 0), pady=5)
+
+        # Max speed controls
+        self.lbl_max_speed = tk.Label(self.control_frame, text="Max Speed (km/h):")
+        self.lbl_max_speed.grid(row=3, column=0, sticky=tk.W, pady=5)
+        
+        # Max speed frame for Level 1 and Level 2
+        self.max_speed_frame = tk.Frame(self.control_frame)
+        self.max_speed_frame.grid(row=3, column=1, columnspan=2, sticky=tk.W, padx=(5, 0), pady=5)
+        
+        # Level 1 controls
+        tk.Label(self.max_speed_frame, text="Level 1:").grid(row=0, column=0, sticky=tk.W)
+        self.max_speed_level1 = tk.DoubleVar(value=4.0)
+        self.max_speed_level1_minus = tk.Button(
+            self.max_speed_frame, text="-", width=2,
+            command=lambda: self.adjust_speed(self.max_speed_level1, -0.5),
+            state="disabled", cursor="hand2"
+        )
+        self.max_speed_level1_minus.grid(row=0, column=1, padx=(5, 2))
+        self.max_speed_level1_entry = tk.Entry(
+            self.max_speed_frame, textvariable=self.max_speed_level1,
+            width=5, justify=tk.CENTER, state="readonly"
+        )
+        self.max_speed_level1_entry.grid(row=0, column=2, padx=2)
+        self.max_speed_level1_plus = tk.Button(
+            self.max_speed_frame, text="+", width=2,
+            command=lambda: self.adjust_speed(self.max_speed_level1, 0.5),
+            state="disabled", cursor="hand2"
+        )
+        self.max_speed_level1_plus.grid(row=0, column=3, padx=(2, 10))
+        
+        # Level 2 controls
+        tk.Label(self.max_speed_frame, text="Level 2:").grid(row=0, column=4, sticky=tk.W)
+        self.max_speed_level2 = tk.DoubleVar(value=6.0)
+        self.max_speed_level2_minus = tk.Button(
+            self.max_speed_frame, text="-", width=2,
+            command=lambda: self.adjust_speed(self.max_speed_level2, -0.5),
+            state="disabled", cursor="hand2"
+        )
+        self.max_speed_level2_minus.grid(row=0, column=5, padx=(5, 2))
+        self.max_speed_level2_entry = tk.Entry(
+            self.max_speed_frame, textvariable=self.max_speed_level2,
+            width=5, justify=tk.CENTER, state="readonly"
+        )
+        self.max_speed_level2_entry.grid(row=0, column=6, padx=2)
+        self.max_speed_level2_plus = tk.Button(
+            self.max_speed_frame, text="+", width=2,
+            command=lambda: self.adjust_speed(self.max_speed_level2, 0.5),
+            state="disabled", cursor="hand2"
+        )
+        self.max_speed_level2_plus.grid(row=0, column=7, padx=(2, 10))
+        
+        self.set_max_speed_btn = tk.Button(self.max_speed_frame, text="Set Max Speed", command=self.set_max_speed, state="disabled", cursor="hand2")
+        self.set_max_speed_btn.grid(row=0, column=8, padx=(10, 0))
+
+        # Status buttons
+        self.btn_frame = tk.Frame(self.control_frame)
+        self.btn_frame.grid(row=4, column=0, columnspan=3, pady=(10, 0))
+
+        self.read_battery_btn = tk.Button(self.btn_frame, text="🔋 Battery", command=self.read_battery, state="disabled", cursor="hand2")
+        self.read_battery_btn.pack(side=tk.LEFT, padx=5)
+
+        self.read_status_btn = tk.Button(self.btn_frame, text="📊 Status", command=self.read_status, state="disabled", cursor="hand2")
+        self.read_status_btn.pack(side=tk.LEFT, padx=5)
+
+        self.read_version_btn = tk.Button(self.btn_frame, text="ℹ Version", command=self.read_version, state="disabled", cursor="hand2")
+        self.read_version_btn.pack(side=tk.LEFT, padx=5)
+
+        self.read_profile_btn = tk.Button(self.btn_frame, text="⚙ Profile", command=self.read_profile, state="disabled", cursor="hand2")
+        self.read_profile_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.info_dump_btn = tk.Button(self.btn_frame, text="📋 Info Dump", command=self.info_dump, state="disabled", cursor="hand2")
+        self.info_dump_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Drive Test Section - grid layout for aligned rows
+        self.drive_test_frame = tk.LabelFrame(self.control_frame, text="Quick Drive Test", padx=10, pady=10, font=("", 9, "bold"))
+        self.drive_test_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0))
+        self.drive_test_frame.columnconfigure(0, weight=1)
+        self.drive_test_frame.columnconfigure(1, weight=1)
+
+        # Row 0: description spanning both columns, centered
+        self.drive_test_label = tk.Label(self.drive_test_frame, text="Test sequence: Forward → Backward → Left → Right")
+        self.drive_test_label.grid(row=0, column=0, columnspan=2, pady=(0, 5))
+
+        # Row 1: Run Drive Test button centered
+        self.drive_test_btn = tk.Button(self.drive_test_frame, text="Run Drive Test", command=self.run_drive_test, state="disabled", cursor="hand2")
+        self.drive_test_btn.grid(row=1, column=0, columnspan=2, pady=5)
+
+        # Row 2: shared motion tuning controls
+        self.motion_tuning_label = tk.Label(self.drive_test_frame, text="Motion tuning:", anchor=tk.E)
+        self.motion_tuning_label.grid(row=2, column=0, sticky=tk.E, padx=(0, 8), pady=3)
+
+        self.motion_tuning_frame = tk.Frame(self.drive_test_frame)
+        self.motion_tuning_frame.grid(row=2, column=1, sticky=tk.W, pady=3)
+
+        self.motion_speed_label = tk.Label(self.motion_tuning_frame, text="Speed:")
+        self.motion_speed_label.pack(side=tk.LEFT, padx=(0, 4))
+
+        self.motion_speed_var = tk.IntVar(value=self.MOTION_SPEED_DEFAULT)
+        self.motion_speed_scale = tk.Scale(
+            self.motion_tuning_frame,
+            from_=self.MOTION_SPEED_MIN,
+            to=self.MOTION_SPEED_MAX,
+            resolution=self.MOTION_SPEED_STEP,
+            orient=tk.HORIZONTAL,
+            length=120,
+            variable=self.motion_speed_var,
+            showvalue=True,
+        )
+        self.motion_speed_scale.pack(side=tk.LEFT, padx=(0, 8))
+
+        self.drive_step_duration_label = tk.Label(self.motion_tuning_frame, text="Step (s):")
+        self.drive_step_duration_label.pack(side=tk.LEFT, padx=(0, 4))
+
+        self.drive_step_duration_var = tk.DoubleVar(value=self.DRIVE_STEP_DURATION_DEFAULT)
+        self.drive_step_duration_scale = tk.Scale(
+            self.motion_tuning_frame,
+            from_=self.DRIVE_STEP_DURATION_MIN,
+            to=self.DRIVE_STEP_DURATION_MAX,
+            resolution=0.1,
+            orient=tk.HORIZONTAL,
+            length=120,
+            variable=self.drive_step_duration_var,
+            showvalue=True,
+        )
+        self.drive_step_duration_scale.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.turn_duration_label = tk.Label(self.motion_tuning_frame, text="Turn x:")
+        self.turn_duration_label.pack(side=tk.LEFT, padx=(0, 4))
+
+        self.turn_duration_factor_var = tk.DoubleVar(value=self.TURN_DURATION_FACTOR)
+        self.turn_duration_scale = tk.Scale(
+            self.motion_tuning_frame,
+            from_=self.TURN_DURATION_FACTOR_MIN,
+            to=self.TURN_DURATION_FACTOR_MAX,
+            resolution=self.TURN_DURATION_FACTOR_STEP,
+            orient=tk.HORIZONTAL,
+            length=110,
+            variable=self.turn_duration_factor_var,
+            showvalue=True,
+        )
+        self.turn_duration_scale.pack(side=tk.LEFT, padx=(0, 5))
+
+        # Row 3: single direction - label right, controls left
+        self.single_dir_label = tk.Label(self.drive_test_frame, text="Single direction:", anchor=tk.E)
+        self.single_dir_label.grid(row=3, column=0, sticky=tk.E, padx=(0, 8), pady=3)
+
+        self.single_dir_frame = tk.Frame(self.drive_test_frame)
+        self.single_dir_frame.grid(row=3, column=1, sticky=tk.W, pady=3)
+
+        self.single_dir_var = tk.StringVar(value="Forward")
+        self.single_dir_menu = tk.OptionMenu(self.single_dir_frame, self.single_dir_var, "Forward", "Backward")
+        self.single_dir_menu.config(width=10)
+        self.single_dir_menu.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.single_duration_label = tk.Label(self.single_dir_frame, text="Time (s):")
+        self.single_duration_label.pack(side=tk.LEFT, padx=(4, 4))
+
+        self.single_duration_var = tk.DoubleVar(value=self.SINGLE_DURATION_DEFAULT)
+        self.single_duration_scale = tk.Scale(
+            self.single_dir_frame,
+            from_=self.SINGLE_DURATION_MIN,
+            to=self.SINGLE_DURATION_MAX,
+            resolution=0.1,
+            orient=tk.HORIZONTAL,
+            length=120,
+            variable=self.single_duration_var,
+            showvalue=True,
+        )
+        self.single_duration_scale.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.single_dir_btn = tk.Button(self.single_dir_frame, text="Run", command=self.run_single_direction_test, state="disabled", cursor="hand2", width=8)
+        self.single_dir_btn.pack(side=tk.LEFT)
+
+        # Row 4: quick buttons - label right, buttons left
+        self.quick_label = tk.Label(self.drive_test_frame, text="Quick:", anchor=tk.E)
+        self.quick_label.grid(row=4, column=0, sticky=tk.E, padx=(0, 8), pady=3)
+
+        self.quick_move_frame = tk.Frame(self.drive_test_frame)
+        self.quick_move_frame.grid(row=4, column=1, sticky=tk.W, pady=3)
+
+        self.quick_duration_label = tk.Label(self.quick_move_frame, text="Time (s):")
+        self.quick_duration_label.pack(side=tk.LEFT, padx=(0, 4))
+
+        self.quick_duration_var = tk.DoubleVar(value=self.QUICK_DURATION_DEFAULT)
+        self.quick_duration_scale = tk.Scale(
+            self.quick_move_frame,
+            from_=self.QUICK_DURATION_MIN,
+            to=self.QUICK_DURATION_MAX,
+            resolution=0.1,
+            orient=tk.HORIZONTAL,
+            length=120,
+            variable=self.quick_duration_var,
+            showvalue=True,
+        )
+        self.quick_duration_scale.pack(side=tk.LEFT, padx=(0, 8))
+
+        self.quick_fwd_btn = tk.Button(self.quick_move_frame, text="Forward", command=lambda: self.run_short_movement("forward"), state="disabled", cursor="hand2", width=10)
+        self.quick_fwd_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.quick_bwd_btn = tk.Button(self.quick_move_frame, text="Backward", command=lambda: self.run_short_movement("backward"), state="disabled", cursor="hand2", width=10)
+        self.quick_bwd_btn.pack(side=tk.LEFT)
+
+        # Row 5: one-shot actions - label right, buttons left
+        self.one_shot_label = tk.Label(self.drive_test_frame, text="One-shot:", anchor=tk.E)
+        self.one_shot_label.grid(row=5, column=0, sticky=tk.E, padx=(0, 8), pady=3)
+
+        self.one_shot_frame = tk.Frame(self.drive_test_frame)
+        self.one_shot_frame.grid(row=5, column=1, sticky=tk.W, pady=3)
+
+        self.just_start_btn = tk.Button(
+            self.one_shot_frame,
+            text="Just Start",
+            command=self.run_just_start,
+            state="disabled",
+            cursor="hand2",
+            width=12,
+        )
+        self.just_start_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.just_stop_btn = tk.Button(
+            self.one_shot_frame,
+            text="Just Stop",
+            command=self.run_just_stop,
+            state="disabled",
+            cursor="hand2",
+            width=12,
+        )
+        self.just_stop_btn.pack(side=tk.LEFT)
+
+        # Row 6: status label centered
+        self.drive_test_status = tk.Label(self.drive_test_frame, text="")
+        self.drive_test_status.grid(row=6, column=0, columnspan=2, pady=(3, 0))
+
+        # Output Section
+        self.output_frame = tk.LabelFrame(self.main_frame, text="Output", padx=10, pady=10, font=("", 9, "bold"))
+        self.output_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
+        self.output_frame.columnconfigure(0, weight=1)
+        self.output_frame.rowconfigure(0, weight=1)
+
+        self.output = scrolledtext.ScrolledText(
+            self.output_frame,
+            height=15,
+            width=80,
+            wrap=tk.WORD,
+            relief=tk.FLAT,
+            borderwidth=2,
+        )
+        self.output.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # Small button panel for output actions (Clear, Copy, Save)
+        self.output_btn_frame = tk.Frame(self.output_frame)
+        self.output_btn_frame.grid(row=0, column=1, sticky=(tk.N, tk.E), padx=(8, 0))
+
+        self.clear_log_btn = tk.Button(self.output_btn_frame, text="Clear", command=self.clear_output, cursor="hand2", width=8)
+        self.clear_log_btn.pack(side=tk.TOP, pady=(0, 6))
+
+        self.copy_log_btn = tk.Button(self.output_btn_frame, text="Copy", command=self.copy_output, cursor="hand2", width=8)
+        self.copy_log_btn.pack(side=tk.TOP, pady=(0, 6))
+
+        self.save_log_btn = tk.Button(self.output_btn_frame, text="Save...", command=self.save_output_dialog, cursor="hand2", width=8)
+        self.save_log_btn.pack(side=tk.TOP)
+
+        # Status bar
+        self.status = tk.Label(self.main_frame, text="Ready", anchor=tk.W, relief=tk.SUNKEN, padx=5, pady=2)
+        self.status.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E))
+        
+        # System info panel
+        self.info_frame = tk.Frame(self.main_frame, relief=tk.SUNKEN, borderwidth=1, padx=5, pady=3)
+        self.info_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E))
+        
+        self.info_bluetooth_lbl = tk.Label(self.info_frame, text="Bluetooth: Detecting...", anchor=tk.W, font=("TkDefaultFont", 8))
+        self.info_bluetooth_lbl.pack(side=tk.LEFT, padx=5)
+        
+        self.info_input_lbl = tk.Label(self.info_frame, text="Input: None", anchor=tk.W, font=("TkDefaultFont", 8))
+        self.info_input_lbl.pack(side=tk.LEFT, padx=5)
+        
+        self.info_arch_lbl = tk.Label(self.info_frame, text="Mode: Legacy", anchor=tk.W, font=("TkDefaultFont", 8))
+        self.info_arch_lbl.pack(side=tk.LEFT, padx=5)
+
+        self.keyboard_btn = tk.Button(
+            self.info_frame,
+            text="Keyboard: OFF",
+            font=("TkDefaultFont", 8),
+            relief=tk.RIDGE,
+            padx=4,
+            command=self.toggle_keyboard,
+        )
+        self.keyboard_btn.pack(side=tk.LEFT, padx=8)
+
+        # Configure row weights for resizing
+        self.main_frame.rowconfigure(3, weight=1)
+        
+        # Detect system configuration
+        self.detect_bluetooth_mode()
+        self.detect_input_device()
+        
+        # Start periodic input device check
+        self.check_input_devices_periodically()
+
+    def _theme_widget(self, widget, widget_type="label", **kwargs):
+        """
+        Helper to apply theme to a widget based on its type.
+        
+        Args:
+            widget: The widget to theme
+            widget_type: Type of widget (label, button, entry, checkbox, optionmenu, frame)
+            **kwargs: Additional custom colors (e.g., fg="red" to override)
+        """
+        if not widget or not hasattr(widget, 'configure'):
+            return
+        
+        theme = self.THEMES[self.current_theme]
+        
+        config = {}
+        
+        if widget_type == "label":
+            config = {"bg": theme["bg"], "fg": theme["fg"]}
+        
+        elif widget_type == "button":
+            config = {
+                "bg": theme["button_bg"],
+                "fg": theme["button_fg"],
+                "activebackground": theme["select_bg"],
+                "activeforeground": theme["select_fg"],
+            }
+        
+        elif widget_type == "entry":
+            config = {
+                "bg": theme["entry_bg"],
+                "fg": theme["entry_fg"],
+                "insertbackground": theme["entry_fg"],
+                "selectbackground": theme["select_bg"],
+                "selectforeground": theme["select_fg"],
+                "readonlybackground": theme["entry_bg"],
+                "disabledbackground": theme["entry_bg"],
+                "disabledforeground": theme["entry_fg"],
+            }
+        
+        elif widget_type == "checkbox":
+            config = {
+                "bg": theme["bg"],
+                "fg": theme["fg"],
+                "activebackground": theme["bg"],
+                "activeforeground": theme["fg"],
+                "selectcolor": theme["entry_bg"],
+            }
+        
+        elif widget_type == "optionmenu":
+            config = {
+                "bg": theme["button_bg"],
+                "fg": theme["button_fg"],
+                "activebackground": theme["select_bg"],
+                "activeforeground": theme["select_fg"],
+                "highlightthickness": 0,
+            }
+            # Also theme the dropdown menu
+            try:
+                menu = widget["menu"]
+                menu.configure(
+                    bg=theme["button_bg"],
+                    fg=theme["button_fg"],
+                    activebackground=theme["select_bg"],
+                    activeforeground=theme["select_fg"]
+                )
+            except:
+                pass
+        
+        elif widget_type == "frame":
+            config = {"bg": theme["bg"]}
+        
+        elif widget_type == "labelframe":
+            config = {"bg": theme["bg"], "fg": theme["fg"]}
+
+        elif widget_type == "scale":
+            config = {
+                "bg": theme["bg"],
+                "fg": theme["fg"],
+                "highlightbackground": theme["bg"],
+                "activebackground": theme["select_bg"],
+                "troughcolor": theme["entry_bg"],
+            }
+        
+        # Override with any custom kwargs
+        config.update(kwargs)
+        
+        # Apply configuration
+        try:
+            widget.configure(**config)
+        except:
+            pass  # Some widgets don't support all options
+    
+    def apply_theme(self):
+        """Apply the current theme to all widgets"""
+        theme = self.THEMES[self.current_theme]
+
+        # Root window
+        self.root.configure(bg=theme["bg"])
+
+        # Main frame
+        self._theme_widget(self.main_frame, "frame")
+
+        # Title
+        self._theme_widget(self.title_frame, "frame")
+        self._theme_widget(self.title_label, "label")
+
+        # Theme button
+        if hasattr(self, "theme_btn"):
+            text = "☀ Light Mode" if self.current_theme == "dark" else "🌙 Dark Mode"
+            self._theme_widget(self.theme_btn, "button", text=text)
+
+        # Connection frame
+        self._theme_widget(self.conn_frame, "labelframe")
+        self._theme_widget(self.scan_frame, "frame")
+        self._theme_widget(self.scan_btn, "button")
+        self._theme_widget(self.filter_check, "checkbox")
+        self._theme_widget(self.m25_version_menu, "optionmenu")
+        self._theme_widget(self.scan_status_lbl, "label")
+        
+        # Device selection
+        self._theme_widget(self.lbl_left_device, "label")
+        self._theme_widget(self.lbl_right_device, "label")
+        self._theme_widget(self.left_device_frame, "frame")
+        self._theme_widget(self.right_device_frame, "frame")
+        self._theme_widget(self.left_device_menu, "optionmenu")
+        self._theme_widget(self.right_device_menu, "optionmenu")
+        
+        # MAC and Key entries
+        self._theme_widget(self.lbl_left_mac, "label")
+        self._theme_widget(self.lbl_left_key, "label")
+        self._theme_widget(self.lbl_right_mac, "label")
+        self._theme_widget(self.lbl_right_key, "label")
+        self._theme_widget(self.left_mac, "entry")
+        self._theme_widget(self.left_key, "entry")
+        self._theme_widget(self.right_mac, "entry")
+        self._theme_widget(self.right_key, "entry")
+        
+        # Core architecture checkboxes
+        if HAS_CORE and hasattr(self, "core_mode_check"):
+            self._theme_widget(self.core_mode_check, "checkbox")
+            
+            if hasattr(self, "deadman_disable_check"):
+                # Keep deadman checkbox red when enabled
+                if self.deadman_disable_var.get():
+                    self._theme_widget(self.deadman_disable_check, "checkbox", fg="red", activeforeground="red")
+                else:
+                    self._theme_widget(self.deadman_disable_check, "checkbox")
+
+        if hasattr(self, "raw_trace_check"):
+            self._theme_widget(self.raw_trace_check, "checkbox")
+        if hasattr(self, "raw_trace_save_check"):
+            self._theme_widget(self.raw_trace_save_check, "checkbox")
+        if hasattr(self, "raw_trace_file_label"):
+            self._theme_widget(self.raw_trace_file_label, "label")
+        if hasattr(self, "choose_trace_file_btn"):
+            self._theme_widget(self.choose_trace_file_btn, "button")
+        
+        self._theme_widget(self.connect_btn, "button")
+        self._theme_widget(self.connection_action_frame, "frame")
+        self._theme_widget(self.connection_state_lbl, "label")
+        self._update_connection_state_visual("connected" if self.connected else "disconnected")
+        
+        # Controls
+        self._theme_widget(self.control_frame, "labelframe")
+        self._theme_widget(self.assist_frame, "frame")
+        self._theme_widget(self.lbl_assist, "label")
+        self._theme_widget(self.assist_level_menu, "optionmenu")
+        self._theme_widget(self.set_level_btn, "button")
+        
+        self._theme_widget(self.profile_frame, "frame")
+        self._theme_widget(self.lbl_profile, "label")
+        self._theme_widget(self.profile_menu, "optionmenu")
+        self._theme_widget(self.set_profile_btn, "button")
+        
+        self._theme_widget(self.lbl_hill_hold, "label")
+        self._theme_widget(self.hill_hold_check, "checkbox")
+        
+        # Max speed controls
+        self._theme_widget(self.max_speed_frame, "frame")
+        self._theme_widget(self.lbl_max_speed, "label")
+        if hasattr(self, "max_speed_level1_entry"):
+            self._theme_widget(self.max_speed_level1_entry, "entry")
+        if hasattr(self, "max_speed_level2_entry"):
+            self._theme_widget(self.max_speed_level2_entry, "entry")
+        if hasattr(self, "profile_desc_frame"):
+            self._theme_widget(self.profile_desc_frame, "frame")
+        if hasattr(self, "profile_desc_text"):
+            theme = self.THEMES[self.current_theme]
+            self.profile_desc_text.config(
+                bg=theme["bg"],
+                fg=theme["fg"],
+                insertbackground=theme["fg"]
+            )
+            # Configure text tags with colors
+            self.profile_desc_text.tag_configure('profile_name', foreground=theme["text"]["info"], font=("TkDefaultFont", 10, "bold"))
+            self.profile_desc_text.tag_configure('level_info', foreground=theme["text"]["success"])
+            self.profile_desc_text.tag_configure('best_for', foreground=theme["text"]["warning"], font=("TkDefaultFont", 9, "italic"))
+        for widget in self.max_speed_frame.winfo_children():
+            if isinstance(widget, tk.Label):
+                self._theme_widget(widget, "label")
+            elif isinstance(widget, tk.Entry):
+                self._theme_widget(widget, "entry")
+            elif isinstance(widget, tk.Button):
+                self._theme_widget(widget, "button")
+        
+        # Status buttons
+        self._theme_widget(self.btn_frame, "frame")
+        for btn in (self.read_battery_btn, self.read_status_btn, self.read_version_btn, 
+                    self.read_profile_btn, self.info_dump_btn):
+            self._theme_widget(btn, "button")
+        
+        # Drive Test Section
+        if hasattr(self, "drive_test_frame"):
+            self._theme_widget(self.drive_test_frame, "labelframe")
+            self._theme_widget(self.drive_test_label, "label")
+            self._theme_widget(self.drive_test_btn, "button")
+            self._theme_widget(self.motion_tuning_frame, "frame")
+            self._theme_widget(self.motion_tuning_label, "label")
+            self._theme_widget(self.motion_speed_label, "label")
+            self._theme_widget(self.motion_speed_scale, "scale")
+            self._theme_widget(self.drive_step_duration_label, "label")
+            self._theme_widget(self.drive_step_duration_scale, "scale")
+            self._theme_widget(self.turn_duration_label, "label")
+            self._theme_widget(self.turn_duration_scale, "scale")
+            self._theme_widget(self.single_dir_frame, "frame")
+            self._theme_widget(self.single_dir_label, "label")
+            self._theme_widget(self.single_dir_menu, "optionmenu")
+            self._theme_widget(self.single_duration_label, "label")
+            self._theme_widget(self.single_duration_scale, "scale")
+            self._theme_widget(self.single_dir_btn, "button")
+            self._theme_widget(self.quick_move_frame, "frame")
+            self._theme_widget(self.quick_label, "label")
+            self._theme_widget(self.quick_duration_label, "label")
+            self._theme_widget(self.quick_duration_scale, "scale")
+            self._theme_widget(self.quick_fwd_btn, "button")
+            self._theme_widget(self.quick_bwd_btn, "button")
+            self._theme_widget(self.one_shot_frame, "frame")
+            self._theme_widget(self.one_shot_label, "label")
+            self._theme_widget(self.just_start_btn, "button")
+            self._theme_widget(self.just_stop_btn, "button")
+            self._theme_widget(self.drive_test_status, "label")
+        
+        # Output
+        self._theme_widget(self.output_frame, "labelframe")
+        if hasattr(self, "output"):
+            self.output.configure(
+                bg=theme["output_bg"],
+                fg=theme["output_fg"],
+                insertbackground=theme["output_fg"],
+                selectbackground=theme["select_bg"],
+                selectforeground=theme["select_fg"],
+            )
+            self._apply_output_tags()
+            # Theme output button panel if present
+            if hasattr(self, "output_btn_frame"):
+                self._theme_widget(self.output_btn_frame, "frame")
+            if hasattr(self, "clear_log_btn"):
+                self._theme_widget(self.clear_log_btn, "button")
+            if hasattr(self, "copy_log_btn"):
+                self._theme_widget(self.copy_log_btn, "button")
+            if hasattr(self, "save_log_btn"):
+                self._theme_widget(self.save_log_btn, "button")
+        
+        # Status bar
+        if hasattr(self, "status"):
+            self.status.configure(bg=theme["bg"])
+        
+        # System info panel
+        if hasattr(self, "info_frame"):
+            self._theme_widget(self.info_frame, "frame")
+        if hasattr(self, "info_bluetooth_lbl"):
+            self._theme_widget(self.info_bluetooth_lbl, "label")
+        if hasattr(self, "info_input_lbl"):
+            self._theme_widget(self.info_input_lbl, "label")
+        if hasattr(self, "info_arch_lbl"):
+            self._theme_widget(self.info_arch_lbl, "label")
+
+    def _apply_output_tags(self):
+        """Apply semantic tags to the output widget for the current theme"""
+        theme = self.THEMES[self.current_theme]
+        text = theme["text"]
+
+        # Keep tag config centralized. Use semantic names, not colors.
+        self.output.tag_configure("muted", foreground=text["muted"])
+        self.output.tag_configure("info", foreground=text["info"])
+        self.output.tag_configure("success", foreground=text["success"])
+        self.output.tag_configure("warning", foreground=text["warning"])
+        self.output.tag_configure("error", foreground=text["error"])
+        self.output.tag_configure("trace", foreground=text["info"])
+
+        # Timestamp and prefix are muted. Message uses level tag.
+        self.output.tag_configure("ts", foreground=text["muted"])
+        self.output.tag_configure("prefix", foreground=text["muted"])
+
+    def toggle_theme(self):
+        """Toggle between light and dark theme"""
+        self.current_theme = "light" if self.current_theme == "dark" else "dark"
+        self.apply_theme()
+        self.log("muted", f"Theme set: {self.current_theme}")
+        self.status_message("muted", f"Theme set: {self.current_theme}")
+    
+    def update_profile_description(self, *args):
+        """Update the profile description label when profile selection changes"""
+        profile_descriptions = {
+            "Standard": (
+                "Standard (Balanced, general use)\n"
+                "  Level 1: 45% torque, 4.0 km/h, medium sensitivity\n"
+                "  Level 2: 75% torque, 8.5 km/h\n"
+                "  Moderate startup, medium coasting\n"
+                "  Best for: Everyday use, beginners"
+            ),
+            "Active": (
+                "Active (Sporty, responsive)\n"
+                "  Level 1: 45% torque, 4.5 km/h, higher sensitivity\n"
+                "  Level 2: 90% torque, 8.5 km/h\n"
+                "  Fast startup, longer coasting\n"
+                "  Best for: Outdoor use, experienced users"
+            ),
+            "Sensitive": (
+                "Sensitive (High support, easy control)\n"
+                "  Level 1: 60% torque, 4.0 km/h\n"
+                "  Level 2: 95% torque, 8.5 km/h, high sensitivity\n"
+                "  Medium startup, longer coasting\n"
+                "  Best for: Users with limited upper body strength"
+            ),
+            "Soft": (
+                "Soft (Gentle, conservative)\n"
+                "  Level 1: 35% torque, 3.0 km/h, low sensitivity\n"
+                "  Level 2: 50% torque, 8.5 km/h\n"
+                "  Slower startup, requires more push force\n"
+                "  Best for: Beginners, crowded spaces, maximum control"
+            ),
+            "SensitivePlus": (
+                "SensitivePlus (Maximum assistance)\n"
+                "  Level 1: 65% torque, 5.0 km/h, highest sensitivity\n"
+                "  Level 2: 100% torque, 8.5 km/h\n"
+                "  Fastest response, longest coasting\n"
+                "  Best for: Users needing maximum motor support"
+            )
+        }
+        
+        # Profile default speeds (Level 1, Level 2)
+        profile_speeds = {
+            "Standard": (4.0, 8.5),
+            "Active": (4.5, 8.5),
+            "Sensitive": (4.0, 8.5),
+            "Soft": (3.0, 8.5),
+            "SensitivePlus": (5.0, 8.5)
+        }
+        
+        profile = self.profile_var.get()
+        description = profile_descriptions.get(profile, "")
+        
+        # Update max speed values to profile defaults (user can override)
+        if hasattr(self, 'max_speed_level1') and hasattr(self, 'max_speed_level2'):
+            speeds = profile_speeds.get(profile, (4.0, 8.5))
+            self.max_speed_level1.set(speeds[0])
+            self.max_speed_level2.set(speeds[1])
+        
+        if hasattr(self, 'profile_desc_text'):
+            self.profile_desc_text.config(state=tk.NORMAL)
+            self.profile_desc_text.delete(1.0, tk.END)
+            
+            # Add formatted text with colors
+            lines = description.split('\n')
+            if lines:
+                # First line - profile name (bold and colored)
+                self.profile_desc_text.insert(tk.END, lines[0] + '\n', 'profile_name')
+                # Remaining lines
+                for line in lines[1:]:
+                    if 'Best for:' in line:
+                        self.profile_desc_text.insert(tk.END, line + '\n', 'best_for')
+                    elif 'Level' in line:
+                        self.profile_desc_text.insert(tk.END, line + '\n', 'level_info')
+                    else:
+                        self.profile_desc_text.insert(tk.END, line + '\n')
+            
+            self.profile_desc_text.config(state=tk.DISABLED)
+    
+    def _make_ui_callbacks(self, test_status_widget=None):
+        """Return thread-safe (ui_log, ui_status, ui_test_status) closures for background threads."""
+        def ui_log(level_msg: str, msg: str) -> None:
+            self.root.after(0, lambda: self.log(level_msg, msg))
+
+        def ui_status(level_msg: str, msg: str) -> None:
+            self.root.after(0, lambda: self.status_message(level_msg, msg))
+
+        def ui_test_status(msg: str, color: str = "black") -> None:
+            if test_status_widget is not None:
+                self.root.after(0, lambda: test_status_widget.config(
+                    text=msg, foreground=color
+                ))
+
+        return ui_log, ui_status, ui_test_status
+
+    def update_system_info(self):
+        """Update system information labels"""
+        # Bluetooth mode - show actual per-wheel transport when connected
+        if self.connected and hasattr(self, '_left_transport') and hasattr(self, '_right_transport'):
+            lt = self._left_transport.upper()
+            rt = self._right_transport.upper()
+            bt_text = f"Bluetooth: {lt} (both)" if lt == rt else f"Bluetooth: L={lt} R={rt}"
+        else:
+            selected_version = describe_m25_version(self.get_selected_m25_version())
+            bt_text = f"Bluetooth: {self.bluetooth_mode} | {selected_version}"
+        if hasattr(self, 'info_bluetooth_lbl'):
+            self.info_bluetooth_lbl.config(text=bt_text)
+
+        # Input device
+        if self.keyboard_enabled:
+            input_text = "Input: Keyboard (active)" if self.connected else "Input: Keyboard (ready)"
+        else:
+            input_text = "Input: None"
+        if hasattr(self, 'info_input_lbl'):
+            self.info_input_lbl.config(text=input_text)
+        
+        # Architecture mode - check both checkbox state and actual usage
+        if HAS_CORE and hasattr(self, 'core_mode_var'):
+            # When connected, use actual state; otherwise use checkbox state
+            if self.connected:
+                arch = "Core" if self.use_core_architecture else "Legacy"
+            else:
+                arch = "Core (ready)" if self.core_mode_var.get() else "Legacy"
+        else:
+            arch = "Legacy (Core N/A)" if not HAS_CORE else "Legacy"
+        
+        arch_text = f"Mode: {arch}"
+        if hasattr(self, 'info_arch_lbl'):
+            self.info_arch_lbl.config(text=arch_text)
+    
+    def detect_bluetooth_mode(self):
+        """Detect which Bluetooth implementation is being used"""
+        modes = []
+        if HAS_BLE:
+            modes.append("BLE")
+        if HAS_RFCOMM:
+            modes.append("RFCOMM")
+        self.bluetooth_mode = "/".join(modes) if modes else "Unknown"
+        self.update_system_info()
+
+    def get_selected_m25_version(self):
+        """Return the selected M25 generation mode."""
+        return normalize_m25_version(self.m25_version_var.get())
+
+    # Keyboard driving
+
+    _KB_MOVEMENT = frozenset({"w", "up", "s", "down", "a", "left", "d", "right"})
+
+    def toggle_keyboard(self):
+        """Toggle keyboard driving input on/off."""
+        self.keyboard_enabled = not self.keyboard_enabled
+        if self.keyboard_enabled:
+            self._bind_keyboard()
+            self.keyboard_btn.config(text="Keyboard: ON")
+        else:
+            self._unbind_keyboard()
+            self.keyboard_btn.config(text="Keyboard: OFF")
+        self.update_system_info()
+
+    def _bind_keyboard(self):
+        """Bind driving keys to the root window."""
+        press_seqs = (
+            "<w>", "<W>", "<Up>",
+            "<s>", "<S>", "<Down>",
+            "<a>", "<A>", "<Left>",
+            "<d>", "<D>", "<Right>",
+            "<space>",
+        )
+        release_seqs = (
+            "<KeyRelease-w>", "<KeyRelease-W>", "<KeyRelease-Up>",
+            "<KeyRelease-s>", "<KeyRelease-S>", "<KeyRelease-Down>",
+            "<KeyRelease-a>", "<KeyRelease-A>", "<KeyRelease-Left>",
+            "<KeyRelease-d>", "<KeyRelease-D>", "<KeyRelease-Right>",
+        )
+        for seq in press_seqs:
+            self.root.bind(seq, self._on_kb_press)
+        for seq in release_seqs:
+            self.root.bind(seq, self._on_kb_release)
+
+    def _unbind_keyboard(self):
+        """Remove all keyboard driving bindings."""
+        for seq in (
+            "<w>", "<W>", "<Up>",
+            "<s>", "<S>", "<Down>",
+            "<a>", "<A>", "<Left>",
+            "<d>", "<D>", "<Right>",
+            "<space>",
+            "<KeyRelease-w>", "<KeyRelease-W>", "<KeyRelease-Up>",
+            "<KeyRelease-s>", "<KeyRelease-S>", "<KeyRelease-Down>",
+            "<KeyRelease-a>", "<KeyRelease-A>", "<KeyRelease-Left>",
+            "<KeyRelease-d>", "<KeyRelease-D>", "<KeyRelease-Right>",
+        ):
+            self.root.unbind(seq)
+        self._keyboard_active_keys.clear()
+
+    def _on_kb_press(self, event):
+        """Handle keyboard key-press events for driving."""
+        if not self.connected or not self.keyboard_enabled:
+            return
+        # Don't intercept typing in text entry fields
+        focused = self.root.focus_get()
+        if isinstance(focused, (tk.Entry, tk.Text)):
+            return
+
+        key = event.keysym.lower()
+
+        if key == "space":
+            # Stop - signal the drive thread to exit.
+            self._keyboard_active_keys.clear()
+            self._kb_stop_drive()
+            return
+
+        if key in self._keyboard_active_keys:
+            return  # Suppress OS key-repeat; we drive until KeyRelease
+
+        self._keyboard_active_keys.add(key)
+        self._update_kb_drive()
+
+    def _on_kb_release(self, event):
+        """Handle keyboard key-release events for driving."""
+        key = event.keysym.lower()
+        self._keyboard_active_keys.discard(key)
+
+        if not (self._keyboard_active_keys & self._KB_MOVEMENT):
+            # No movement key held any more → stop
+            self._kb_stop_drive()
+        else:
+            # Some other key still held → re-evaluate direction
+            self._update_kb_drive()
+
+    def _update_kb_drive(self):
+        """Recompute desired speed from held keys; stop if no direction key is held."""
+        keys = self._keyboard_active_keys
+
+        # Require an explicit forward or backward key
+        if "w" in keys or "up" in keys:
+            forward = True
+        elif "s" in keys or "down" in keys:
+            forward = False
+        else:
+            # Only turn keys held - no drive (no turn-in-place)
+            self._kb_stop_drive()
+            return
+
+        # Asymmetric speed for turns
+        if "a" in keys or "left" in keys:
+            left_pct, right_pct = 0.3, 1.0
+        elif "d" in keys or "right" in keys:
+            left_pct, right_pct = 1.0, 0.3
+        else:
+            left_pct, right_pct = 1.0, 1.0
+
+        speed_mag = max(
+            self.MOTION_SPEED_MIN,
+            min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())),
+        )
+        direction = 1 if forward else -1
+        self._kb_desired_left = int(speed_mag * left_pct * direction)
+        self._kb_desired_right = int(speed_mag * right_pct * direction)
+
+        self._ensure_kb_thread_running()
+
+    def _kb_stop_drive(self):
+        """Zero the desired speed and signal the drive thread to exit."""
+        self._kb_desired_left = 0
+        self._kb_desired_right = 0
+        self._kb_stop_event.set()
+
+    def _ensure_kb_thread_running(self):
+        """Start the keyboard drive thread if not already alive."""
+        if self._kb_thread and self._kb_thread.is_alive():
+            return  # Running - desired speed already updated, nothing else to do
+
+        # Create a fresh stop event for this thread lifetime
+        stop_event = threading.Event()
+        self._kb_stop_event = stop_event
+
+        def _thread():
+            ui_log, _ui_status, _ = self._make_ui_callbacks()
+            try:
+                if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                    ui_log("error", "Keyboard drive: not connected")
+                    return
+
+                builder = ECSPacketBuilder()
+                remote_armed, _, _ = self._ensure_remote_mode_both(builder, ui_log)
+                if not remote_armed:
+                    ui_log("warning", "Keyboard drive: could not arm remote mode")
+                    return
+
+                # Key may have been released while arming was in progress
+                if stop_event.is_set() or (self._kb_desired_left == 0 and self._kb_desired_right == 0):
+                    return
+
+                self._prime_remote_motion(builder)
+
+                # Pulse using the shared desired speed until stopped or zeroed
+                while not stop_event.is_set():
+                    left = self._kb_desired_left
+                    right = self._kb_desired_right
+                    if left == 0 and right == 0:
+                        break  # Desired speed cleared by stop - exit loop
+                    self._write_remote_speed_both(builder, left, right)
+                    stop_event.wait(self.REMOTE_PULSE_INTERVAL_S)
+
+                # Explicit zero packet before disarming
+                self._write_remote_speed_both(builder, 0, 0)
+                time.sleep(self.REMOTE_STOP_DURATION_S)
+
+            except Exception as exc:
+                ui_log("error", f"Keyboard drive error: {exc}")
+            finally:
+                try:
+                    builder2 = ECSPacketBuilder()
+                    self._set_remote_mode_both(builder2, False)
+                except Exception:
+                    pass
+
+        self._kb_thread = threading.Thread(target=_thread, daemon=True)
+        self._kb_thread.start()
+
+    def _ensure_event_loop(self):
+        """Create a private event loop for BLE tasks when needed."""
+        if not self.event_loop or self.event_loop.is_closed():
+            self.event_loop = asyncio.new_event_loop()
+        return self.event_loop
+
+    def _detect_transport_for_wheel(self, mac, selected_version, loop):
+        """Choose BLE or RFCOMM for one wheel based on explicit mode or BLE probing."""
+        preferred = preferred_transport_for_version(selected_version)
+        if preferred == TRANSPORT_BLE:
+            if not HAS_BLE:
+                raise RuntimeError("BLE transport requested, but bleak is not available")
+            return TRANSPORT_BLE, "explicit M25V2 selection"
+
+        if preferred == TRANSPORT_RFCOMM:
+            if IS_WINDOWS:
+                raise RuntimeError("M25V1 RFCOMM mode is not supported on Windows in this app")
+            if not HAS_RFCOMM:
+                raise RuntimeError("RFCOMM transport requested, but PyBluez/socket support is not available")
+            return TRANSPORT_RFCOMM, "explicit M25V1 selection"
+
+        if IS_WINDOWS:
+            if not HAS_BLE:
+                raise RuntimeError("BLE transport is required on Windows but not available")
+            return TRANSPORT_BLE, "auto: Windows BLE only"
+
+        if HAS_BLE and detect_m25_ble_profile:
+            profile = loop.run_until_complete(detect_m25_ble_profile(mac, timeout=5))
+            if profile == "M25V2" or (profile and profile.startswith("Fake")):
+                return TRANSPORT_BLE, f"auto detected {profile}"
+            if profile == "M25V1":
+                return TRANSPORT_RFCOMM, "auto detected M25V1"
+
+        if HAS_RFCOMM:
+            return TRANSPORT_RFCOMM, "auto fallback to RFCOMM"
+        if HAS_BLE:
+            return TRANSPORT_BLE, "auto fallback to BLE"
+        raise RuntimeError("No usable Bluetooth transport available")
+
+    def _make_connection(self, transport_kind, address, key_bytes, name, loop):
+        """Create a wheel connection for the requested transport."""
+        if transport_kind == TRANSPORT_BLE:
+            return BLEConnectionAdapter(
+                address,
+                key_bytes,
+                name=name,
+                debug=False,
+                loop=loop,
+                log_callback=self.queue_raw_log,
+            )
+        if RFCOMMBluetoothConnection is None:
+            raise RuntimeError("RFCOMM transport unavailable")
+        return RFCOMMBluetoothConnection(
+            address,
+            key_bytes,
+            name=name,
+            debug=False,
+            log_callback=self.queue_raw_log,
+        )
+    
+    def detect_input_device(self):
+        """Detect connected input devices (gamepad/joystick)"""
+        try:
+            import pygame
+            pygame.init()
+            pygame.joystick.init()
+            
+            joystick_count = pygame.joystick.get_count()
+            if joystick_count > 0:
+                joystick = pygame.joystick.Joystick(0)
+                joystick.init()
+                self.input_device = joystick.get_name()
+                self.input_connected = True
+            else:
+                self.input_device = "Keyboard"
+                self.input_connected = False
+            
+            pygame.quit()
+        except ImportError:
+            self.input_device = "Keyboard"
+            self.input_connected = False
+        except Exception as e:
+            self.input_device = f"Error: {str(e)[:20]}"
+            self.input_connected = False
+        
+        self.update_system_info()
+    
+    def check_input_devices_periodically(self):
+        """Periodically check for input device changes"""
+        self.detect_input_device()
+        # Check every 5 seconds
+        self.root.after(5000, self.check_input_devices_periodically)
+
+    def load_credentials(self):
+        """Load credentials from environment variables"""
+        self.left_mac.insert(0, os.getenv("M25_LEFT_MAC", ""))
+        self.left_key.insert(0, os.getenv("M25_LEFT_KEY", ""))
+        self.right_mac.insert(0, os.getenv("M25_RIGHT_MAC", ""))
+        self.right_key.insert(0, os.getenv("M25_RIGHT_KEY", ""))
+
+        if self.left_mac.get() or self.right_mac.get():
+            self.log("info", "Credentials loaded from .env file")
+
+    def status_message(self, level, msg):
+        """Update status bar with semantic color"""
+        lvl = (level or "info").strip().lower()
+        if lvl not in self.LEVELS:
+            lvl = "info"
+
+        theme = self.THEMES[self.current_theme]
+        fg = theme["text"][lvl] if lvl in theme["text"] else theme["fg"]
+
+        self.status.config(text=msg, fg=fg)
+
+    def log(self, level, message):
+        """Append message to output log with semantic color"""
+        lvl = (level or "info").strip().lower()
+        if lvl not in self.LEVELS:
+            lvl = "info"
+
+        ts = datetime.now().strftime("%H:%M:%S")
+        prefix = {
+            "muted": "NOTE",
+            "info": "INFO",
+            "success": "OK",
+            "warning": "WARN",
+            "error": "ERR",
+        }[lvl]
+
+        self.output.insert(tk.END, "[", ("ts",))
+        self.output.insert(tk.END, ts, ("ts",))
+        self.output.insert(tk.END, "] ", ("ts",))
+        self.output.insert(tk.END, f"{prefix}: ", ("prefix",))
+        self.output.insert(tk.END, f"{message}\n", (lvl,))
+        self.output.see(tk.END)
+
+    def raw_log(self, message):
+        """Append a raw packet trace line without timestamps or prefixes."""
+        if not self.raw_trace_var.get():
+            return
+        self.output.insert(tk.END, f"{message}\n", ("trace",))
+        self.output.see(tk.END)
+        # Also optionally write trace lines to disk
+        try:
+            if getattr(self, "raw_trace_save_var", None) and self.raw_trace_save_var.get():
+                self._write_trace_to_file(message)
+        except Exception:
+            pass
+
+    def queue_raw_log(self, message):
+        """Thread-safe raw trace sink for background Bluetooth callbacks."""
+        if not self.raw_trace_var.get():
+            return
+        self.root.after(0, lambda: self.raw_log(message))
+
+    def _on_raw_trace_save_toggle(self):
+        """Handle toggling file-save for raw traces."""
+        if self.raw_trace_save_var.get():
+            # Enable saving; ensure we have a path
+            if not self.raw_trace_file_path.get():
+                # Prompt user to choose a file
+                self.open_trace_file_dialog()
+            else:
+                self._open_trace_file(self.raw_trace_file_path.get())
+        else:
+            self._close_trace_file()
+
+    def open_trace_file_dialog(self):
+        """Prompt for a file to save raw traces to and open it for append."""
+        path = filedialog.asksaveasfilename(
+            defaultextension=".log",
+            filetypes=[("Log files", "*.log"), ("All files", "*.*")],
+            title="Select raw trace log file",
+        )
+        if not path:
+            # User cancelled; disable save checkbox if it was just enabled
+            if not self.raw_trace_file_path.get():
+                self.raw_trace_save_var.set(False)
+            return
+        self.raw_trace_file_path.set(path)
+        self.raw_trace_file_label.config(text=os.path.basename(path))
+        if self.raw_trace_save_var.get():
+            self._open_trace_file(path)
+
+    def _open_trace_file(self, path):
+        """Open the trace file for appending and keep the handle."""
+        try:
+            # Close existing handle if any
+            self._close_trace_file()
+            self._trace_fp = open(path, "a", encoding="utf-8")
+        except Exception as e:
+            self.log("error", f"Unable to open trace file: {e}")
+            self.raw_trace_save_var.set(False)
+
+    def _close_trace_file(self):
+        try:
+            if getattr(self, "_trace_fp", None):
+                self._trace_fp.close()
+                self._trace_fp = None
+        except Exception:
+            pass
+
+    def _write_trace_to_file(self, message):
+        """Write a single trace line to the open trace file (if any)."""
+        try:
+            if getattr(self, "_trace_fp", None):
+                self._trace_fp.write(message + "\n")
+                self._trace_fp.flush()
+        except Exception:
+            # Swallow file write errors to avoid crashing UI
+            pass
+
+    def clear_output(self):
+        """Clear the output text pane."""
+        try:
+            self.output.config(state=tk.NORMAL)
+            self.output.delete(1.0, tk.END)
+        except Exception:
+            pass
+
+    def copy_output(self):
+        """Copy the entire output contents to the clipboard."""
+        try:
+            text = self.output.get(1.0, tk.END)
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.status_message("success", "Output copied to clipboard")
+        except Exception as e:
+            self.status_message("error", f"Copy failed: {e}")
+
+    def save_output_dialog(self):
+        """Prompt the user to save the current output to a file."""
+        try:
+            path = filedialog.asksaveasfilename(
+                defaultextension=".log",
+                filetypes=[("Log files", "*.log"), ("All files", "*.*")],
+                title="Save output to file",
+            )
+            if not path:
+                return
+            with open(path, "w", encoding="utf-8") as fp:
+                fp.write(self.output.get(1.0, tk.END))
+            self.status_message("success", f"Saved output to {os.path.basename(path)}")
+        except Exception as e:
+            self.status_message("error", f"Save failed: {e}")
+
+    def toggle_mpp_mode(self):
+        """Toggle M++ mode (8 km/h support)"""
+        enable_mpp = getattr(self, "enable_mpp", None)
+        if enable_mpp is None:
+            return
+        if enable_mpp.get():
+            self.log("info", "M++ mode enabled: Speeds up to 8.5 km/h available")
+            # Adjust current values if they would exceed new limit
+            if self.max_speed_level1.get() > 6.0:
+                self.max_speed_level1.set(6.0)
+            if self.max_speed_level2.get() > 6.0:
+                self.max_speed_level2.set(6.0)
+        else:
+            self.log("info", "M++ mode disabled: Speeds limited to 6.0 km/h")
+    
+    def adjust_speed(self, speed_var, delta):
+        """Adjust speed by delta, keeping within valid range"""
+        current = speed_var.get()
+        new_value = current + delta
+        # Clamp to valid range (2.0 to 8.5 km/h)
+        new_value = max(2.0, min(8.5, new_value))
+        speed_var.set(new_value)
+
+    def _set_remote_mode_both(self, builder, enabled: bool):
+        """Enable/disable remote mode on both wheels."""
+        if not self.ecs_remote or not self.left_conn or not self.right_conn:
+            return False, False
+
+        left_ok = self.ecs_remote.write_remote_mode(self.left_conn, builder, enabled)
+        right_ok = self.ecs_remote.write_remote_mode(self.right_conn, builder, enabled)
+        return left_ok, right_ok
+
+    def _read_drive_mode_both(self, builder):
+        """Read current drive-mode flags from both wheels for diagnostics."""
+        if not self.ecs_remote or not self.left_conn or not self.right_conn:
+            return None, None
+
+        left_mode = self.ecs_remote.read_value(
+            self.left_conn,
+            builder.build_read_drive_mode,
+            PARAM_ID_STATUS_DRIVE_MODE,
+            ResponseParser.parse_drive_mode,
+        )
+        right_mode = self.ecs_remote.read_value(
+            self.right_conn,
+            builder.build_read_drive_mode,
+            PARAM_ID_STATUS_DRIVE_MODE,
+            ResponseParser.parse_drive_mode,
+        )
+        return left_mode, right_mode
+
+    @staticmethod
+    def _remote_bit_active(mode):
+        """Return True when parsed drive mode indicates remote bit is active."""
+        return bool(mode and mode.get("remote"))
+
+    def _ensure_remote_mode_both(self, builder, ui_log=None):
+        """Try hard to arm remote mode on both wheels and verify readback.
+
+        Some firmware builds ACK write commands but only latch remote mode
+        after an explicit re-arm cycle. This helper retries and validates.
+        """
+        if not self.ecs_remote or not self.left_conn or not self.right_conn:
+            return False, None, None
+
+        left_mode = None
+        right_mode = None
+        mode_candidates = [DRIVE_MODE_BIT_REMOTE | DRIVE_MODE_BIT_CRUISE, DRIVE_MODE_BIT_REMOTE]
+
+        for attempt in range(1, self.REMOTE_ARM_ATTEMPTS + 1):
+            # Re-sync application mode handshake before each arm attempt.
+            left_init_ok = self.ecs_remote.init_connection(self.left_conn, builder)
+            right_init_ok = self.ecs_remote.init_connection(self.right_conn, builder)
+            if ui_log:
+                ui_log(
+                    "muted",
+                    f"Remote arm attempt {attempt}/{self.REMOTE_ARM_ATTEMPTS}: init left={left_init_ok}, right={right_init_ok}",
+                )
+
+            if attempt > 1:
+                # Force a clean edge before re-arming to satisfy strict firmware.
+                self._set_remote_mode_both(builder, False)
+                time.sleep(self.REMOTE_REARM_DELAY_S)
+
+            left_ok, right_ok = self._set_remote_mode_both(builder, True)
+            if ui_log:
+                ui_log(
+                    "muted",
+                    f"Remote arm attempt {attempt}/{self.REMOTE_ARM_ATTEMPTS}: write left={left_ok}, right={right_ok}",
+                )
+
+            if not (left_ok and right_ok):
+                time.sleep(self.REMOTE_REARM_DELAY_S)
+                continue
+
+            time.sleep(self.REMOTE_ARM_SETTLE_S)
+            left_mode, right_mode = self._read_drive_mode_both(builder)
+            if ui_log:
+                ui_log(
+                    "muted",
+                    f"Drive mode flags after enable attempt {attempt}: left={left_mode}, right={right_mode}",
+                )
+
+            if self._remote_bit_active(left_mode) and self._remote_bit_active(right_mode):
+                return True, left_mode, right_mode
+
+            # Additional fallback: force explicit mode sequence on each wheel.
+            # Some variants ACK generic helper writes but only latch after raw 0x06/0x04.
+            for mode in mode_candidates:
+                left_packet = builder.build_write_drive_mode(mode)
+                right_packet = builder.build_write_drive_mode(mode)
+                left_force_ok = self.ecs_remote.write_value(self.left_conn, left_packet, f"force_remote_left(0x{mode:02X})")
+                right_force_ok = self.ecs_remote.write_value(self.right_conn, right_packet, f"force_remote_right(0x{mode:02X})")
+                if ui_log:
+                    ui_log(
+                        "muted",
+                        f"Remote force mode 0x{mode:02X}: left={left_force_ok}, right={right_force_ok}",
+                    )
+
+            time.sleep(self.REMOTE_READBACK_RETRY_DELAY_S)
+            left_mode, right_mode = self._read_drive_mode_both(builder)
+            if ui_log:
+                ui_log(
+                    "muted",
+                    f"Drive mode flags after explicit force sequence: left={left_mode}, right={right_mode}",
+                )
+            if self._remote_bit_active(left_mode) and self._remote_bit_active(right_mode):
+                return True, left_mode, right_mode
+
+            time.sleep(self.REMOTE_REARM_DELAY_S)
+
+        return False, left_mode, right_mode
+
+    def _pulse_remote_speed(self, builder, left_speed: int, right_speed: int, duration_s: float, interval_s: float | None = None):
+        """Send remote speed repeatedly for a duration.
+        Wheels expect periodic speed updates while in remote mode.
+        """
+        if interval_s is None:
+            interval_s = self.REMOTE_PULSE_INTERVAL_S
+        if duration_s <= 0:
+            return self._write_remote_speed_both(builder, left_speed, right_speed)
+
+        end_time = time.monotonic() + duration_s
+        left_all_ok = True
+        right_all_ok = True
+
+        while True:
+            left_ok, right_ok = self._write_remote_speed_both(builder, left_speed, right_speed)
+            left_all_ok = left_all_ok and left_ok
+            right_all_ok = right_all_ok and right_ok
+            if time.monotonic() >= end_time:
+                break
+            time.sleep(interval_s)
+
+        return left_all_ok, right_all_ok
+
+    def _prime_remote_motion(self, builder) -> None:
+        """Give the wheel firmware a brief settle/prime phase after remote-mode enable."""
+        time.sleep(self.REMOTE_ARM_SETTLE_S)
+        self._pulse_remote_speed(builder, 0, 0, self.REMOTE_PRIME_DURATION_S)
+    
+    def run_drive_test(self):
+        """Run a quick drive test sequence"""
+        self.log("info", "Starting Quick Drive Test...")
+        self.status_message("info", "Running drive test...")
+        
+        if self.demo_mode:
+            self.log("warning", "Demo mode: Drive test simulated")
+            self.status_message("success", "Drive test completed (simulated)")
+            return
+        
+        # Real hardware test
+        def test_thread():
+            ui_log, ui_status, ui_test_status = self._make_ui_callbacks(self.drive_test_status)
+
+            try:
+                if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                    ui_log("error", "Not connected")
+                    ui_status("error", "Drive test failed: Not connected")
+                    return
+                
+                builder = ECSPacketBuilder()
+                test_speed = max(self.MOTION_SPEED_MIN, min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())))
+                test_duration = max(self.DRIVE_STEP_DURATION_MIN, min(self.DRIVE_STEP_DURATION_MAX, float(self.drive_step_duration_var.get())))
+                turn_speed = max(self.TURN_SPEED_MIN, int(test_speed * self.TURN_SPEED_FACTOR))
+                turn_duration_factor = max(
+                    self.TURN_DURATION_FACTOR_MIN,
+                    min(self.TURN_DURATION_FACTOR_MAX, float(self.turn_duration_factor_var.get())),
+                )
+
+                remote_armed, left_mode, right_mode = self._ensure_remote_mode_both(builder, ui_log)
+                if not remote_armed:
+                    ui_log("error", "Failed to latch remote mode on both wheels after force re-arm attempts")
+                    ui_log("warning", f"Final drive mode flags: left={left_mode}, right={right_mode}")
+                    ui_status("error", "Drive test failed: remote bit not active")
+                    return
+                self._prime_remote_motion(builder)
+                
+                # Test sequence in chair coordinates (left/right logical wheel speeds).
+                test_sequence = [
+                    ("Forward", test_speed, test_speed),
+                    ("Stop", 0, 0),
+                    ("Backward", -test_speed, -test_speed),
+                    ("Stop", 0, 0),
+                    ("Left Turn", -turn_speed, turn_speed),
+                    ("Stop", 0, 0),
+                    ("Right Turn", turn_speed, -turn_speed),
+                    ("Stop", 0, 0),
+                ]
+                
+                ui_log(
+                    "info",
+                    f"Drive test: {len([s for s in test_sequence if s[0] != 'Stop'])} movements at speed {test_speed}, turn {turn_speed}, step {test_duration:.1f}s, turn x{turn_duration_factor:.1f}"
+                )
+                
+                for i, (label, left_speed, right_speed) in enumerate(test_sequence):
+                    ui_test_status(f"Step {i+1}/{len(test_sequence)}: {label}")
+                    ui_log("info", f"  -> {label} (L:{left_speed}, R:{right_speed})")
+
+                    # Stream speed commands during each movement window.
+                    if label == "Stop":
+                        duration = self.DRIVE_STEP_DURATION_MIN
+                    elif "Turn" in label:
+                        duration = test_duration * turn_duration_factor
+                    else:
+                        duration = test_duration
+                    left_ok, right_ok = self._pulse_remote_speed(builder, left_speed, right_speed, duration)
+                    
+                    if not (left_ok and right_ok):
+                        ui_log("warning", f"  Warning: Partial command failure: Left={left_ok}, Right={right_ok}")
+                    
+                # Final stop
+                ui_log("info", "  -> Final stop")
+                self._pulse_remote_speed(builder, 0, 0, self.REMOTE_STOP_DURATION_S)
+                
+                ui_test_status("Drive test completed")
+                ui_log("success", "Drive test completed successfully")
+                ui_status("success", "Drive test completed")
+                
+            except Exception as e:
+                ui_log("error", f"Drive test failed: {e}")
+                ui_status("error", "Drive test failed")
+                ui_test_status("Test failed")
+                
+                # Emergency stop on error
+                try:
+                    builder = ECSPacketBuilder()
+                    self._pulse_remote_speed(builder, 0, 0, self.REMOTE_STOP_DURATION_S)
+                except:
+                    pass
+            finally:
+                try:
+                    builder = ECSPacketBuilder()
+                    self._set_remote_mode_both(builder, False)
+                except Exception:
+                    pass
+        
+        threading.Thread(target=test_thread, daemon=True).start()
+
+    def run_single_direction_test(self):
+        """Run a single direction test (user-chosen: Forward or Backward)"""
+        direction = self.single_dir_var.get()
+        test_duration = max(self.SINGLE_DURATION_MIN, min(self.SINGLE_DURATION_MAX, float(self.single_duration_var.get())))
+        self.log("info", f"Single direction test: {direction}")
+        self.status_message("info", f"Running {direction} test ({test_duration:.1f}s)...")
+
+        if self.demo_mode:
+            self.log("warning", f"Demo mode: {direction} test simulated")
+            self.status_message("success", f"{direction} test completed (simulated)")
+            return
+
+        def test_thread():
+            ui_log, ui_status, ui_test_status = self._make_ui_callbacks(self.drive_test_status)
+
+            try:
+                if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                    ui_log("error", "Not connected")
+                    ui_status("error", "Test failed: Not connected")
+                    return
+
+                builder = ECSPacketBuilder()
+                test_speed = max(self.MOTION_SPEED_MIN, min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())))
+                speed = test_speed if direction == "Forward" else -test_speed
+
+                remote_armed, left_mode, right_mode = self._ensure_remote_mode_both(builder, ui_log)
+                if not remote_armed:
+                    ui_log("error", "Failed to latch remote mode on both wheels after force re-arm attempts")
+                    ui_log("warning", f"Final drive mode flags: left={left_mode}, right={right_mode}")
+                    ui_status("error", "Test failed: remote bit not active")
+                    return
+                self._prime_remote_motion(builder)
+
+                ui_test_status(f"{direction}...")
+                ui_log("info", f"  -> {direction} (speed: {speed}, {test_duration:.1f}s)")
+
+                self._pulse_remote_speed(builder, speed, speed, test_duration)
+                self._pulse_remote_speed(builder, 0, 0, self.REMOTE_STOP_DURATION_S)
+
+                ui_test_status(f"{direction} test done")
+                ui_log("success", f"{direction} test completed")
+                ui_status("success", f"{direction} test completed")
+
+            except Exception as e:
+                ui_log("error", f"Single direction test failed: {e}")
+                ui_status("error", "Test failed")
+                ui_test_status("Test failed")
+                try:
+                    builder = ECSPacketBuilder()
+                    self._pulse_remote_speed(builder, 0, 0, self.REMOTE_STOP_DURATION_S)
+                except:
+                    pass
+            finally:
+                try:
+                    builder = ECSPacketBuilder()
+                    self._set_remote_mode_both(builder, False)
+                except Exception:
+                    pass
+
+        threading.Thread(target=test_thread, daemon=True).start()
+
+    def run_short_movement(self, direction: str):
+        """Send a short burst in the given direction (forward or backward)."""
+        if self.demo_mode:
+            self.log("warning", f"Demo mode: quick {direction} simulated")
+            return
+
+        quick_duration = max(self.QUICK_DURATION_MIN, min(self.QUICK_DURATION_MAX, float(self.quick_duration_var.get())))
+
+        def move_thread():
+            ui_log, _ui_status, ui_test_status = self._make_ui_callbacks(self.drive_test_status)
+
+            try:
+                if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                    ui_log("error", "Not connected")
+                    return
+
+                builder = ECSPacketBuilder()
+                speed_mag = max(self.MOTION_SPEED_MIN, min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())))
+                speed = speed_mag if direction == "forward" else -speed_mag
+                label = "Forward" if direction == "forward" else "Backward"
+
+                remote_armed, left_mode, right_mode = self._ensure_remote_mode_both(builder, ui_log)
+                if not remote_armed:
+                    ui_log("error", "Failed to latch remote mode on both wheels after force re-arm attempts")
+                    ui_log("warning", f"Final drive mode flags: left={left_mode}, right={right_mode}")
+                    return
+                self._prime_remote_motion(builder)
+
+                ui_test_status(f"Quick {label}...")
+                ui_log("info", f"  -> Quick {label} ({quick_duration:.1f}s)")
+
+                self._pulse_remote_speed(builder, speed, speed, quick_duration)
+                self._pulse_remote_speed(builder, 0, 0, self.REMOTE_STOP_DURATION_S)
+
+                ui_test_status(f"Quick {label} done")
+
+            except Exception as e:
+                ui_log("error", f"Quick movement failed: {e}")
+                ui_test_status("Movement failed")
+                try:
+                    builder = ECSPacketBuilder()
+                    self._pulse_remote_speed(builder, 0, 0, self.REMOTE_STOP_DURATION_S)
+                except:
+                    pass
+            finally:
+                try:
+                    builder = ECSPacketBuilder()
+                    self._set_remote_mode_both(builder, False)
+                except Exception:
+                    pass
+
+        threading.Thread(target=move_thread, daemon=True).start()
+
+    def run_just_start(self):
+        """Send a single forward drive command without repeating it."""
+        self._run_one_shot_drive("start")
+
+    def run_just_stop(self):
+        """Send a single stop command without repeating it."""
+        self._run_one_shot_drive("stop")
+
+    def _run_one_shot_drive(self, action: str):
+        """Send one remote-speed packet for a start or stop action."""
+        if self.demo_mode:
+            self.log("warning", f"Demo mode: one-shot {action} simulated")
+            return
+
+        def action_thread():
+            ui_log, ui_status, ui_test_status = self._make_ui_callbacks(self.drive_test_status)
+
+            try:
+                if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                    ui_log("error", "Not connected")
+                    ui_status("error", "One-shot action failed: Not connected")
+                    return
+
+                builder = ECSPacketBuilder()
+                speed_mag = max(self.MOTION_SPEED_MIN, min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())))
+                speed = speed_mag if action == "start" else 0
+
+                remote_armed, left_mode, right_mode = self._ensure_remote_mode_both(builder, ui_log)
+                if not remote_armed:
+                    ui_log("error", "Failed to latch remote mode on both wheels after force re-arm attempts")
+                    ui_log("warning", f"Final drive mode flags: left={left_mode}, right={right_mode}")
+                    ui_status("error", "One-shot action failed: remote bit not active")
+                    return
+
+                label = "Just Start" if action == "start" else "Just Stop"
+                ui_test_status(label)
+                ui_log("info", f"  -> {label} (single packet, L:{speed}, R:{speed})")
+
+                self._write_remote_speed_both(builder, speed, speed)
+
+                ui_test_status(f"{label} sent")
+                ui_log("success", f"{label} command sent")
+                ui_status("success", f"{label} sent")
+
+            except Exception as e:
+                ui_log("error", f"One-shot action failed: {e}")
+                ui_status("error", "One-shot action failed")
+                ui_test_status("One-shot failed")
+            finally:
+                try:
+                    builder = ECSPacketBuilder()
+                    self._set_remote_mode_both(builder, False)
+                except Exception:
+                    pass
+
+        threading.Thread(target=action_thread, daemon=True).start()
+
+    def _write_remote_speed_both(self, builder, left_speed, right_speed):
+        """Send logical chair speeds to both wheels.
+
+        Left wheel must be sign-inverted relative to chair coordinates.
+        """
+        if not self.ecs_remote or not self.left_conn or not self.right_conn:
+            return False, False
+
+        left_ok = self.ecs_remote.write_remote_speed(self.left_conn, builder, -left_speed)
+        right_ok = self.ecs_remote.write_remote_speed(self.right_conn, builder, right_speed)
+        return left_ok, right_ok
+
+    def on_window_close(self):
+        """Ask whether to disconnect before closing."""
+        if self.connected:
+            result = messagebox.askyesno(
+                "Disconnect?",
+                "Disconnect from the wheels before closing?"
+            )
+            if result:
+                # Yes → send disconnect, then close when done
+                self._close_after_disconnect = True
+                self.disconnect(skip_confirmation=True)
+            else:
+                # No → close immediately without sending disconnect
+                self.root.destroy()
+            return
+
+        self.root.destroy()
+
+    def enable_controls(self, enabled=True):
+        """Enable or disable control buttons"""
+        state = "normal" if enabled else "disabled"
+        self.set_level_btn.config(state=state)
+        self.set_profile_btn.config(state=state)
+        self.hill_hold_check.config(state=state)
+        self.max_speed_level1_minus.config(state=state)
+        self.max_speed_level1_plus.config(state=state)
+        self.max_speed_level2_minus.config(state=state)
+        self.max_speed_level2_plus.config(state=state)
+        self.set_max_speed_btn.config(state=state)
+        self.read_battery_btn.config(state=state)
+        self.read_status_btn.config(state=state)
+        self.read_version_btn.config(state=state)
+        self.read_profile_btn.config(state=state)
+        self.info_dump_btn.config(state=state)
+        self.drive_test_btn.config(state=state)
+        self.single_dir_btn.config(state=state)
+        self.quick_fwd_btn.config(state=state)
+        self.quick_bwd_btn.config(state=state)
+        self.just_start_btn.config(state=state)
+        self.just_stop_btn.config(state=state)
+    
+    def toggle_deadman_disable(self):
+        """Toggle deadman requirement with confirmation"""
+        if self.deadman_disable_var.get():
+            # Enabling - show warning
+            confirm = messagebox.askyesno(
+                "SAFETY WARNING",
+                "Disabling the deadman requirement removes a critical safety feature!\n\n"
+                "Without deadman control:\n"
+                "- The wheelchair may move without active control\n"
+                "- You lose the ability to quickly stop by releasing a button\n"
+                "- Risk of unintended movement increases significantly\n\n"
+                "This should ONLY be used for testing in a controlled environment.\n\n"
+                "Are you ABSOLUTELY SURE you want to disable the deadman requirement?",
+                icon='warning'
+            )
+            
+            if not confirm:
+                # User said no, revert the checkbox
+                self.deadman_disable_var.set(False)
+                return
+            
+            self.deadman_disabled = True
+            self.log("warning", "DEADMAN REQUIREMENT DISABLED - USE EXTREME CAUTION")
+            self.status_message("warning", "Deadman disabled")
+            # Make checkbox red to indicate danger
+            if HAS_CORE:
+                theme = self.THEMES[self.current_theme]
+                self.deadman_disable_check.config(
+                    fg="red",
+                    activeforeground="red",
+                    font=("", 9, "bold")
+                )
+        else:
+            # Disabling - safe, no confirmation needed
+            self.deadman_disabled = False
+            self.log("success", "Deadman requirement re-enabled")
+            self.status_message("success", "Deadman enabled")
+            if HAS_CORE:
+                # Reset checkbox appearance
+                theme = self.THEMES[self.current_theme]
+                self.deadman_disable_check.config(
+                    fg=theme["fg"],
+                    activeforeground=theme["fg"],
+                    font=("", 9, "normal")
+                )
+        
+        # Update system info display
+        self.update_system_info()
+
+    def toggle_connection(self):
+        """Toggle between connect and disconnect"""
+        if self.connected:
+            self.disconnect()
+        else:
+            self.connect()
+
+    def _update_connection_state_visual(self, state: str):
+        """Make the connection state obvious with a colored status label."""
+        if not hasattr(self, "connection_state_lbl"):
+            return
+
+        theme = self.THEMES[self.current_theme]
+        if state == "connected":
+            text = "● Connected"
+            color = theme["text"]["success"]
+        elif state == "error":
+            text = "● Connection error"
+            color = theme["text"]["error"]
+        else:
+            text = "● Disconnected"
+            color = theme["text"]["muted"]
+
+        self.connection_state_lbl.config(text=text, fg=color, bg=theme["bg"])
+    
+    def disconnect(self, skip_confirmation: bool = False):
+        """Disconnect from M25 wheels"""
+        if not (self.skip_disconnect_confirmation or skip_confirmation):
+            # Confirm disconnection
+            confirm = messagebox.askyesno(
+                "Confirm Disconnect",
+                "Are you sure you want to disconnect from the wheels?"
+            )
+
+            if not confirm:
+                return
+        
+        self.log("info", "Disconnecting from wheels...")
+        self.status_message("info", "Disconnecting...")
+        
+        def disconnect_thread():
+            import time
+            try:
+                if self.demo_mode:
+                    # Simulate disconnection in demo mode
+                    time.sleep(1)
+                    self.root.after(0, self.disconnection_complete)
+                else:
+                    # Real hardware disconnection
+                    if self.left_conn:
+                        self.left_conn.disconnect()
+                    if self.right_conn:
+                        self.right_conn.disconnect()
+                    
+                    # Clear connection objects
+                    self.left_conn = None
+                    self.right_conn = None
+                    self.ecs_remote = None
+                    
+                    self.root.after(0, self.disconnection_complete)
+            except Exception as e:
+                self.root.after(0, self.disconnection_error, str(e))
+        
+        threading.Thread(target=disconnect_thread, daemon=True).start()
+    
+    def disconnection_error(self, error_msg):
+        """Handle disconnection error"""
+        self.log("error", f"Disconnection failed: {error_msg}")
+        self.status_message("error", "Disconnection failed")
+        self._update_connection_state_visual("error")
+        messagebox.showerror("Disconnection Error", f"Failed to disconnect:\n{error_msg}")
+    
+    def disconnection_complete(self):
+        """Handle disconnection completion"""
+        self.connected = False
+        self.connect_btn.config(text="Connect")
+        self._update_connection_state_visual("disconnected")
+        self.enable_controls(False)
+        self.log("success", "Disconnected successfully.")
+        self.status_message("success", "Disconnected")
+        # Revert Bluetooth label to static form
+        self._left_transport = None
+        self._right_transport = None
+        self.update_system_info()
+
+        if self._close_after_disconnect:
+            self._close_after_disconnect = False
+            self.root.after(50, self.root.destroy)
+
+    def connect(self):
+        """Connect to M25 wheels"""
+        left_mac = self.left_mac.get().strip()
+        left_key = self.left_key.get().strip()
+        right_mac = self.right_mac.get().strip()
+        right_key = self.right_key.get().strip()
+
+        if not left_mac or not left_key:
+            messagebox.showerror("Error", "Please enter left wheel MAC address and key")
+            self.log("error", "Missing left wheel MAC or key.")
+            self.status_message("error", "Missing left wheel MAC or key")
+            return
+
+        if not right_mac or not right_key:
+            messagebox.showerror("Error", "Please enter right wheel MAC address and key")
+            self.log("error", "Missing right wheel MAC or key.")
+            self.status_message("error", "Missing right wheel MAC or key")
+            return
+
+        # Detect demo mode
+        self.demo_mode = left_mac.upper() == "AA:BB:CC:DD:EE:FF" or right_mac.upper() == "AA:BB:CC:DD:EE:FF"
+        
+        if self.demo_mode:
+            self.log("warning", "DEMO MODE detected (MAC: AA:BB:CC:DD:EE:FF)")
+            self.log("info", "Running in simulation mode - no real hardware connection")
+        else:
+            if not HAS_BLUETOOTH:
+                messagebox.showerror("Error", "Bluetooth modules not available.\nInstall required packages.")
+                self.log("error", "Bluetooth modules not available")
+                self.status_message("error", "Bluetooth modules not available")
+                return
+            self.log("info", "Connecting to wheels...")
+        
+        self.log("muted", f"Left:  {left_mac}")
+        self.log("muted", f"Right: {right_mac}")
+        self.log("muted", f"Mode:  {describe_m25_version(self.get_selected_m25_version())}")
+        self.status_message("info", "Connecting..." if not self.demo_mode else "Connecting (Demo Mode)...")
+
+        def connect_thread():
+            try:
+                if self.demo_mode:
+                    # Simulate connection in demo mode
+                    time.sleep(2)
+                    self.root.after(0, self.connection_complete, True, self.demo_mode)
+                else:
+                    # Parse encryption keys
+                    try:
+                        left_key_bytes = parse_key(left_key)
+                        right_key_bytes = parse_key(right_key)
+                    except Exception as e:
+                        self.root.after(0, self.connection_error, f"Invalid encryption key: {e}")
+                        return
+
+                    selected_version = self.get_selected_m25_version()
+                    loop = self._ensure_event_loop() if HAS_BLE else None
+
+                    left_transport, left_reason = self._detect_transport_for_wheel(left_mac, selected_version, loop)
+                    right_transport, right_reason = self._detect_transport_for_wheel(right_mac, selected_version, loop)
+
+                    self.log("info", f"Left wheel transport: {left_transport} ({left_reason})")
+                    self.log("info", f"Right wheel transport: {right_transport} ({right_reason})")
+
+                    self.left_conn = self._make_connection(left_transport, left_mac, left_key_bytes, "left", loop)
+                    self.right_conn = self._make_connection(right_transport, right_mac, right_key_bytes, "right", loop)
+                    self.connected_transport_summary = f"L={left_transport}, R={right_transport}"
+                    self._left_transport = left_transport
+                    self._right_transport = right_transport
+                    
+                    # Connect to wheels
+                    if not self.left_conn.connect():
+                        self.root.after(0, self.connection_error, f"Failed to connect to left wheel at {left_mac}")
+                        return
+                    
+                    if not self.right_conn.connect():
+                        self.left_conn.disconnect()
+                        self.root.after(0, self.connection_error, f"Failed to connect to right wheel at {right_mac}")
+                        return
+                    
+                    # Create ECS Remote helper
+                    self.ecs_remote = ECSRemote(
+                        self.left_conn,
+                        self.right_conn,
+                        verbose=False,
+                        retries=2,
+                        log_callback=self.queue_raw_log,
+                    )
+                    
+                    self.root.after(0, self.connection_complete, True, False)
+                    
+            except Exception as e:
+                self.root.after(0, self.connection_error, str(e))
+
+        threading.Thread(target=connect_thread, daemon=True).start()
+
+    def connection_error(self, error_msg):
+        """Handle connection error"""
+        self.log("error", f"Connection failed: {error_msg}")
+        self.status_message("error", "Connection failed")
+        self._update_connection_state_visual("error")
+        messagebox.showerror("Connection Error", f"Failed to connect to wheels:\n{error_msg}")
+
+    def connection_complete(self, success, demo_mode=False):
+        """Handle connection result"""
+        if success:
+            self.connected = True
+            if demo_mode:
+                self.log("success", "Connected in DEMO MODE - using simulated hardware")
+                self.status_message("warning", "Connected (Demo Mode)")
+            else:
+                self.log("success", f"Connected successfully ({self.connected_transport_summary}).")
+                self.status_message("success", "Connected")
+            self.connect_btn.config(text="Disconnect")
+            self._update_connection_state_visual("connected")
+            self.enable_controls(True)
+            
+            # Update system info to reflect connection state
+            self.update_system_info()
+        else:
+            self.log("error", "Connection failed.")
+            self.status_message("error", "Connection failed")
+            messagebox.showerror("Error", "Failed to connect to wheels")
+
+    def set_assist_level(self):
+        """Set assist level"""
+        level_str = self.assist_level_var.get()
+        level = self.assist_levels.index(level_str)
+        level_names = ["Normal (Level 1)", "Outdoor (Level 2)", "Learning (Level 3)"]
+        self.log("info", f"Setting assist level: {level_names[level]}")
+        self.status_message("info", f"Setting assist level to {level + 1}...")
+
+        if self.demo_mode:
+            self.log("warning", "Demo mode: Assist level change simulated")
+            self.status_message("success", f"Assist level set to {level + 1}")
+        else:
+            # Real hardware command using ECSRemote
+            def write_thread():
+                ui_log, ui_status, _ = self._make_ui_callbacks()
+
+                try:
+                    if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                        ui_log("error", "Not connected")
+                        return
+                    
+                    builder = ECSPacketBuilder()
+                    
+                    # Write to left wheel
+                    left_ok = self.ecs_remote.write_assist_level(self.left_conn, builder, level)
+                    if left_ok:
+                        ui_log("success", "Left wheel: Assist level set")
+                    else:
+                        ui_log("warning", "Left wheel: Failed to set assist level")
+                    
+                    # Write to right wheel
+                    right_ok = self.ecs_remote.write_assist_level(self.right_conn, builder, level)
+                    if right_ok:
+                        ui_log("success", "Right wheel: Assist level set")
+                    else:
+                        ui_log("warning", "Right wheel: Failed to set assist level")
+                    
+                    if left_ok and right_ok:
+                        ui_status("success", f"Assist level set to {level + 1}")
+                    else:
+                        ui_status("warning", "Assist level partially set")
+                    
+                except Exception as e:
+                    ui_log("error", f"Assist level change failed: {e}")
+                    ui_status("error", "Assist level change failed")
+            
+            threading.Thread(target=write_thread, daemon=True).start()
+
+    def set_drive_profile(self):
+        """Set drive profile"""
+        profile_name = self.profile_var.get()
+        
+        # Map profile name to ID
+        from m25_protocol_data import (
+            PROFILE_ID_STANDARD, PROFILE_ID_SENSITIVE, PROFILE_ID_SOFT,
+            PROFILE_ID_ACTIVE, PROFILE_ID_SENSITIVE_PLUS
+        )
+        
+        profile_map = {
+            "Standard": PROFILE_ID_STANDARD,
+            "Sensitive": PROFILE_ID_SENSITIVE,
+            "Soft": PROFILE_ID_SOFT,
+            "Active": PROFILE_ID_ACTIVE,
+            "SensitivePlus": PROFILE_ID_SENSITIVE_PLUS,
+        }
+        
+        profile_id = profile_map.get(profile_name)
+        if profile_id is None:
+            self.log("error", f"Unknown profile: {profile_name}")
+            return
+        
+        self.log("info", f"Setting drive profile: {profile_name}")
+        self.status_message("info", f"Setting profile to {profile_name}...")
+
+        if self.demo_mode:
+            self.log("warning", "Demo mode: Profile change simulated")
+            self.status_message("success", f"Profile set to {profile_name}")
+        else:
+            # Real hardware command using ECSRemote
+            def write_thread():
+                ui_log, ui_status, _ = self._make_ui_callbacks()
+
+                try:
+                    if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                        ui_log("error", "Not connected")
+                        return
+                    
+                    builder = ECSPacketBuilder()
+                    
+                    # Build write profile packet
+                    packet = builder.build_write_drive_profile(profile_id)
+                    
+                    # Write to left wheel
+                    left_ok = self.ecs_remote.write_value(self.left_conn, packet, "write_drive_profile")
+                    if left_ok:
+                        ui_log("success", "Left wheel: Profile set")
+                    else:
+                        ui_log("warning", "Left wheel: Failed to set profile")
+                    
+                    # Write to right wheel
+                    right_ok = self.ecs_remote.write_value(self.right_conn, packet, "write_drive_profile")
+                    if right_ok:
+                        ui_log("success", "Right wheel: Profile set")
+                    else:
+                        ui_log("warning", "Right wheel: Failed to set profile")
+                    
+                    if left_ok and right_ok:
+                        ui_status("success", f"Profile set to {profile_name}")
+                    else:
+                        ui_status("warning", "Profile partially set")
+                    
+                except Exception as e:
+                    ui_log("error", f"Profile change failed: {e}")
+                    ui_status("error", "Profile change failed")
+            
+            threading.Thread(target=write_thread, daemon=True).start()
+
+    def toggle_hill_hold(self):
+        """Toggle hill hold on or off"""
+        enabled = self.hill_hold.get()
+        state = "ON" if enabled else "OFF"
+        self.log("info", f"Setting hill hold: {state}")
+        self.status_message("info", f"Setting hill hold {state}...")
+
+        if self.demo_mode:
+            self.log("warning", "Demo mode: Hill hold change simulated")
+            self.status_message("success", f"Hill hold set to {state}")
+        else:
+            # Real hardware command using ECSRemote
+            def write_thread():
+                ui_log, ui_status, _ = self._make_ui_callbacks()
+
+                try:
+                    if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                        ui_log("error", "Not connected")
+                        return
+                    
+                    builder = ECSPacketBuilder()
+                    
+                    # Write to left wheel
+                    left_ok = self.ecs_remote.write_auto_hold(self.left_conn, builder, enabled)
+                    if left_ok:
+                        ui_log("success", f"Left wheel: Hill hold {state}")
+                    else:
+                        ui_log("warning", f"Left wheel: Failed to set hill hold")
+                    
+                    # Write to right wheel
+                    right_ok = self.ecs_remote.write_auto_hold(self.right_conn, builder, enabled)
+                    if right_ok:
+                        ui_log("success", f"Right wheel: Hill hold {state}")
+                    else:
+                        ui_log("warning", f"Right wheel: Failed to set hill hold")
+                    
+                    if left_ok and right_ok:
+                        ui_status("success", f"Hill hold set to {state}")
+                    else:
+                        ui_status("warning", "Hill hold partially set")
+                    # TODO: Verify if both wheels need to succeed for hill hold to be effective
+                    
+                except Exception as e:
+                    ui_log("error", f"Hill hold change failed: {e}")
+                    ui_status("error", "Hill hold change failed")
+            
+            threading.Thread(target=write_thread, daemon=True).start()
+
+    def set_max_speed(self):
+        """Set max speed for Level 1 and Level 2"""
+        level1_speed = self.max_speed_level1.get()
+        level2_speed = self.max_speed_level2.get()
+        self.log("info", f"Setting max speeds: Level 1={level1_speed} km/h, Level 2={level2_speed} km/h")
+        self.status_message("info", "Setting max speeds...")
+
+        if self.demo_mode:
+            self.log("warning", "Demo mode: Max speed change simulated")
+            self.status_message("success", f"Max speeds set")
+        else:
+            # Real hardware command using ECSRemote
+            def write_thread():
+                ui_log, ui_status, _ = self._make_ui_callbacks()
+
+                try:
+                    if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                        ui_log("error", "Not connected")
+                        return
+                    
+                    builder = ECSPacketBuilder()
+                    results = []
+                    
+                    # Write Level 1 max speed to left wheel
+                    left1_ok = self.ecs_remote.write_max_speed(self.left_conn, builder, 1, level1_speed)
+                    results.append(("Left wheel Level 1", left1_ok))
+                    ui_log("success" if left1_ok else "warning", 
+                           f"Left wheel Level 1: {level1_speed} km/h" if left1_ok else "Left wheel Level 1: Failed")
+                    
+                    # Write Level 2 max speed to left wheel
+                    left2_ok = self.ecs_remote.write_max_speed(self.left_conn, builder, 2, level2_speed)
+                    results.append(("Left wheel Level 2", left2_ok))
+                    ui_log("success" if left2_ok else "warning",
+                           f"Left wheel Level 2: {level2_speed} km/h" if left2_ok else "Left wheel Level 2: Failed")
+                    
+                    # Write Level 1 max speed to right wheel
+                    right1_ok = self.ecs_remote.write_max_speed(self.right_conn, builder, 1, level1_speed)
+                    results.append(("Right wheel Level 1", right1_ok))
+                    ui_log("success" if right1_ok else "warning",
+                           f"Right wheel Level 1: {level1_speed} km/h" if right1_ok else "Right wheel Level 1: Failed")
+                    
+                    # Write Level 2 max speed to right wheel
+                    right2_ok = self.ecs_remote.write_max_speed(self.right_conn, builder, 2, level2_speed)
+                    results.append(("Right wheel Level 2", right2_ok))
+                    ui_log("success" if right2_ok else "warning",
+                           f"Right wheel Level 2: {level2_speed} km/h" if right2_ok else "Right wheel Level 2: Failed")
+                    
+                    all_ok = all(ok for _, ok in results)
+                    if all_ok:
+                        ui_status("success", "Max speeds set successfully")
+                    else:
+                        failed = [name for name, ok in results if not ok]
+                        ui_status("warning", f"Max speed partially set (failed: {', '.join(failed)})")
+                    
+                except Exception as e:
+                    ui_log("error", f"Max speed change failed: {e}")
+                    ui_status("error", "Max speed change failed")
+            
+            threading.Thread(target=write_thread, daemon=True).start()
+
+    def read_battery(self):
+        """Read battery status"""
+        self.log("info", "Reading battery status...")
+        self.status_message("info", "Reading battery...")
+        
+        if self.demo_mode:
+            # Demo mode - simulated values
+            self.log("muted", "Left wheel:  85%")
+            self.log("muted", "Right wheel: 83%")
+            self.status_message("success", "Battery read complete")
+        else:
+            # Real hardware reading using ECSRemote
+            def read_thread():
+                ui_log, ui_status, _ = self._make_ui_callbacks()
+
+                try:
+                    if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                        ui_log("error", "Not connected")
+                        return
+                    
+                    builder = ECSPacketBuilder()
+                    
+                    # Read left wheel battery
+                    left_soc = self.ecs_remote.read_value(
+                        self.left_conn,
+                        builder.build_read_soc,
+                        PARAM_ID_STATUS_SOC,
+                        ResponseParser.parse_soc
+                    )
+                    left_battery = f"{left_soc}%" if left_soc is not None else "??%"
+                    
+                    # Read right wheel battery
+                    right_soc = self.ecs_remote.read_value(
+                        self.right_conn,
+                        builder.build_read_soc,
+                        PARAM_ID_STATUS_SOC,
+                        ResponseParser.parse_soc
+                    )
+                    right_battery = f"{right_soc}%" if right_soc is not None else "??%"
+                    
+                    ui_log("muted", f"Left wheel:  {left_battery}")
+                    ui_log("muted", f"Right wheel: {right_battery}")
+                    ui_status("success", "Battery read complete")
+                    
+                except Exception as e:
+                    ui_log("error", f"Battery read failed: {e}")
+                    ui_status("error", "Battery read failed")
+            
+            threading.Thread(target=read_thread, daemon=True).start()
+
+    def read_status(self):
+        """Read full status"""
+        self.log("info", "Reading full status...")
+        self.status_message("info", "Reading status...")
+
+        if self.demo_mode:
+            self.log("muted", "Assist Level: 1 (Normal)")
+            self.log("muted", "Hill Hold: OFF")
+            self.log("muted", "Drive Profile: Standard")
+            self.status_message("success", "Status read complete")
+        else:
+            # Real hardware reading using ECSRemote
+            def read_thread():
+                ui_log, ui_status, _ = self._make_ui_callbacks()
+
+                try:
+                    if not self.ecs_remote or not self.left_conn:
+                        ui_log("error", "Not connected")
+                        return
+                    
+                    builder = ECSPacketBuilder()
+                    
+                    # Read assist level from left wheel
+                    assist = self.ecs_remote.read_value(
+                        self.left_conn,
+                        builder.build_read_assist_level,
+                        PARAM_ID_STATUS_ASSIST_LEVEL,
+                        ResponseParser.parse_assist_level
+                    )
+                    assist_info = f"{assist['value']} ({assist['name']})" if assist else "??"
+                    
+                    # Read drive mode from left wheel
+                    mode = self.ecs_remote.read_value(
+                        self.left_conn,
+                        builder.build_read_drive_mode,
+                        PARAM_ID_STATUS_DRIVE_MODE,
+                        ResponseParser.parse_drive_mode
+                    )
+                    hill_hold = "ON" if (mode and mode['auto_hold']) else ("OFF" if mode else "??")
+                    
+                    # Read drive profile from left wheel
+                    profile = self.ecs_remote.read_value(
+                        self.left_conn,
+                        builder.build_read_drive_profile,
+                        PARAM_ID_STATUS_DRIVE_PROFILE,
+                        ResponseParser.parse_drive_profile
+                    )
+                    profile_info = profile['name'] if profile else "??"
+
+                    duo = self.ecs_remote.read_value(
+                        self.left_conn,
+                        builder.build_read_duo_drive_params,
+                        PARAM_ID_STATUS_DUO_DRIVE_PARAMS,
+                        ResponseParser.parse_duo_drive_params
+                    )
+                    duo_info = (
+                        f"side={duo['mounting_name']}, sens={duo['speed_sensibility']}, dynamic={duo['steering_dynamic']}"
+                        if duo else "??"
+                    )
+                    
+                    ui_log("muted", f"Assist Level: {assist_info}")
+                    ui_log("muted", f"Hill Hold: {hill_hold}")
+                    ui_log("muted", f"Drive Profile: {profile_info}")
+                    ui_log("muted", f"DuoDrive: {duo_info}")
+                    ui_status("success", "Status read complete")
+                    
+                except Exception as e:
+                    ui_log("error", f"Status read failed: {e}")
+                    ui_status("error", "Status read failed")
+            
+            threading.Thread(target=read_thread, daemon=True).start()
+
+    def read_version(self):
+        """Read firmware version"""
+        self.log("info", "Reading firmware version...")
+        self.status_message("info", "Reading version...")
+
+        if self.demo_mode:
+            self.log("muted", "Firmware: v2.5.1")
+            self.log("muted", "Hardware: M25V1")
+            self.status_message("success", "Version read complete")
+        else:
+            # Real hardware reading using ECSRemote
+            def read_thread():
+                ui_log, ui_status, _ = self._make_ui_callbacks()
+
+                try:
+                    if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                        ui_log("error", "Not connected")
+                        return
+
+                    builder = ECSPacketBuilder()
+
+                    # Read left wheel version
+                    left_ver = self.ecs_remote.read_value(
+                        self.left_conn,
+                        builder.build_read_sw_version,
+                        PARAM_ID_STATUS_SW_VERSION,
+                        ResponseParser.parse_sw_version
+                    )
+                    if left_ver:
+                        ui_log("success", f"Left wheel: {left_ver['version_str']}")
+                    else:
+                        ui_log("warning", "Left wheel: Unable to read version")
+
+                    # Read right wheel version
+                    right_ver = self.ecs_remote.read_value(
+                        self.right_conn,
+                        builder.build_read_sw_version,
+                        PARAM_ID_STATUS_SW_VERSION,
+                        ResponseParser.parse_sw_version
+                    )
+                    if right_ver:
+                        ui_log("success", f"Right wheel: {right_ver['version_str']}")
+                    else:
+                        ui_log("warning", "Right wheel: Unable to read version")
+
+                    ui_log("muted", "Hardware: M25V2")
+                    ui_status("success", "Version read complete")
+
+                except Exception as e:
+                    ui_log("error", f"Version read failed: {e}")
+                    ui_status("error", "Version read failed")
+
+            threading.Thread(target=read_thread, daemon=True).start()
+
+    def read_profile(self):
+        """Read drive profile"""
+        self.log("info", "Reading drive profile...")
+        self.status_message("info", "Reading profile...")
+
+        if self.demo_mode:
+            self.log("muted", "Active Profile: Standard")
+            self.log("muted", "Available: Customized, Standard, Sensitive, Soft, Active, Sensitive+")
+            self.status_message("success", "Profile read complete")
+        else:
+            # Real hardware reading using ECSRemote
+            def read_thread():
+                ui_log, ui_status, _ = self._make_ui_callbacks()
+
+                try:
+                    if not self.ecs_remote or not self.left_conn:
+                        ui_log("error", "Not connected")
+                        return
+                    
+                    builder = ECSPacketBuilder()
+                    
+                    # Read active profile from left wheel
+                    profile = self.ecs_remote.read_value(
+                        self.left_conn,
+                        builder.build_read_drive_profile,
+                        PARAM_ID_STATUS_DRIVE_PROFILE,
+                        ResponseParser.parse_drive_profile
+                    )
+                    
+                    if profile:
+                        ui_log("success", f"Active Profile: {profile['name']}")
+                    else:
+                        ui_log("warning", "Active Profile: Unable to read")
+                    
+                    # Show available profiles
+                    from m25_protocol_data import PROFILE_NAMES
+                    available = ", ".join(PROFILE_NAMES.values())
+                    ui_log("muted", f"Available: {available}")
+                    ui_status("success", "Profile read complete")
+                    
+                except Exception as e:
+                    ui_log("error", f"Profile read failed: {e}")
+                    ui_status("error", "Profile read failed")
+            
+            threading.Thread(target=read_thread, daemon=True).start()
+
+
+    def info_dump(self):
+        """Get comprehensive info dump from both wheels"""
+        self.log("info", "=== Starting comprehensive info dump ===")
+        self.status_message("info", "Reading all available data...")
+        
+        if self.demo_mode:
+            # Demo mode comprehensive dump
+            self.log("warning", "DEMO MODE - Simulated values")
+            self.log("info", "")
+            self.log("success", "=== LEFT WHEEL ===")
+            self.log("muted", "Firmware: V03.005.001")
+            self.log("muted", "Battery: 85%")
+            self.log("muted", "Assist Level: 1 (Normal)")
+            self.log("muted", "Hill Hold: OFF")
+            self.log("muted", "Drive Profile: Standard")
+            self.log("muted", "Distance: 1234.5 km")
+            self.log("info", "")
+            self.log("success", "=== RIGHT WHEEL ===")
+            self.log("muted", "Firmware: V03.005.001")
+            self.log("muted", "Battery: 83%")
+            self.log("muted", "Assist Level: 1 (Normal)")
+            self.log("muted", "Hill Hold: OFF")
+            self.log("muted", "Drive Profile: Standard")
+            self.log("muted", "Distance: 1234.7 km")
+            self.log("info", "")
+            self.log("success", "=== Info dump complete ===")
+            self.status_message("success", "Info dump complete")
+        else:
+            # Real hardware comprehensive dump using ECSRemote
+            def dump_thread():
+                ui_log, ui_status, _ = self._make_ui_callbacks()
+
+                def read_from_wheel(conn, wheel_name):
+                    """Read all available info from one wheel using ECSRemote"""
+                    ui_log("success", f"\n=== {wheel_name} ===")
+                    builder = ECSPacketBuilder()
+                    
+                    # Version
+                    version = self.ecs_remote.read_value(
+                        conn, builder.build_read_sw_version, PARAM_ID_STATUS_SW_VERSION, ResponseParser.parse_sw_version
+                    )
+                    if version:
+                        ui_log("muted", f"Firmware: {version['version_str']}")
+                    
+                    # Battery
+                    soc = self.ecs_remote.read_value(
+                        conn, builder.build_read_soc, PARAM_ID_STATUS_SOC, ResponseParser.parse_soc
+                    )
+                    if soc is not None:
+                        ui_log("muted", f"Battery: {soc}%")
+                    
+                    # Assist Level
+                    level = self.ecs_remote.read_value(
+                        conn, builder.build_read_assist_level, PARAM_ID_STATUS_ASSIST_LEVEL, ResponseParser.parse_assist_level
+                    )
+                    if level:
+                        ui_log("muted", f"Assist Level: {level['value']} ({level['name']})")
+                    
+                    # Drive Mode (for Hill Hold)
+                    mode = self.ecs_remote.read_value(
+                        conn, builder.build_read_drive_mode, PARAM_ID_STATUS_DRIVE_MODE, ResponseParser.parse_drive_mode
+                    )
+                    if mode:
+                        hill_hold = "ON" if mode['auto_hold'] else "OFF"
+                        ui_log("muted", f"Hill Hold: {hill_hold}")
+                    
+                    # Drive Profile
+                    profile = self.ecs_remote.read_value(
+                        conn, builder.build_read_drive_profile, PARAM_ID_STATUS_DRIVE_PROFILE, ResponseParser.parse_drive_profile
+                    )
+                    if profile:
+                        ui_log("muted", f"Drive Profile: {profile['name']}")
+                    
+                    # Cruise Values (distance)
+                    cruise = self.ecs_remote.read_value(
+                        conn, builder.build_read_cruise_values, PARAM_ID_CRUISE_VALUES, ResponseParser.parse_cruise_values
+                    )
+                    if cruise:
+                        ui_log("muted", f"Distance: {cruise['distance_km']:.1f} km")
+
+                    # DuoDrive parameters can carry policy knobs on some firmware builds.
+                    duo = self.ecs_remote.read_value(
+                        conn, builder.build_read_duo_drive_params, PARAM_ID_STATUS_DUO_DRIVE_PARAMS, ResponseParser.parse_duo_drive_params
+                    )
+                    if duo:
+                        ui_log(
+                            "muted",
+                            f"DuoDrive: side={duo['mounting_name']}, sens={duo['speed_sensibility']}, dynamic={duo['steering_dynamic']}"
+                        )
+                    
+                    # Drive Parameters for Level 1
+                    params = self.ecs_remote.read_profile_params(conn, builder, 0)
+                    if params:
+                        ui_log("muted", "Level 1 Parameters:")
+                        ui_log("muted", f"  Max Torque: {params['max_torque']}%")
+                        ui_log("muted", f"  Max Speed: {params['max_speed']:.1f} km/h")
+                        ui_log("muted", f"  P-Factor: {params['p_factor']}")
+                        ui_log("muted", f"  Speed Bias: {params['speed_bias']}")
+
+                try:
+                    if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                        ui_log("error", "Not connected")
+                        return
+                    
+                    # Read from both wheels
+                    read_from_wheel(self.left_conn, "LEFT WHEEL")
+                    read_from_wheel(self.right_conn, "RIGHT WHEEL")
+                    
+                    ui_log("info", "")
+                    ui_log("success", "=== Info dump complete ===")
+                    ui_status("success", "Info dump complete")
+                    
+                except Exception as e:
+                    ui_log("error", f"Info dump failed: {e}")
+                    ui_status("error", "Info dump failed")
+            
+            threading.Thread(target=dump_thread, daemon=True).start()
+
+    def scan_devices(self):
+        """Scan for Bluetooth devices"""
+        if not HAS_BLUETOOTH:
+            messagebox.showerror("Error", "Bluetooth support not available.\nInstall bleak: pip install bleak")
+            self.log("error", "Bluetooth support not available.")
+            self.status_message("error", "Bluetooth support not available")
+            return
+
+        selected_version = self.get_selected_m25_version()
+
+        # Show Windows limitation warning
+        if IS_WINDOWS and selected_version != M25_VERSION_V1:
+            result = messagebox.showinfo(
+                "Windows BLE Scanning",
+                "IMPORTANT: On Windows, only devices that are already paired in \n"
+                "Windows Bluetooth settings will appear in the scan.\n\n"
+                "To see your M25 wheels:\n"
+                "1. Open Settings > Bluetooth & devices\n"
+                "2. Make sure wheels are powered on\n"
+                "3. Click 'Add device' and pair them first\n"
+                "4. Then scan again in this app\n\n"
+                "This is a Windows BLE API limitation, not a bug.",
+                icon="info"
+            )
+
+        filter_enabled = self.filter_m25.get()
+        scan_type = "M25 wheels" if filter_enabled else "all Bluetooth devices"
+        self.log("info", f"Scanning for {scan_type} using {describe_m25_version(selected_version)}...")
+        if IS_WINDOWS and selected_version != M25_VERSION_V1:
+            self.log("muted", "Note: Only paired devices will appear (Windows limitation)")
+        self.scan_status_lbl.config(text="Scanning...")
+        self.scan_btn.config(state="disabled")
+        self.status_message("info", "Scanning for devices...")
+
+        def scan_thread():
+            try:
+                devices = []
+                seen = set()
+
+                def add_devices(found):
+                    for addr, name in found:
+                        if addr not in seen:
+                            seen.add(addr)
+                            devices.append((addr, name))
+
+                if selected_version == M25_VERSION_V2:
+                    if not HAS_BLE or not ble_scan_devices:
+                        raise RuntimeError("BLE scanning not available")
+                    add_devices(ble_scan_devices(duration=10, filter_m25=filter_enabled))
+                elif selected_version == M25_VERSION_V1:
+                    if IS_WINDOWS:
+                        raise RuntimeError("M25V1 RFCOMM scanning is not supported on Windows in this app")
+                    from m25_bluetooth import scan_devices as rfcomm_scan_devices
+                    add_devices(rfcomm_scan_devices(duration=10, filter_m25=filter_enabled))
+                else:
+                    if HAS_BLE and ble_scan_devices:
+                        add_devices(ble_scan_devices(duration=5, filter_m25=filter_enabled))
+                    if not IS_WINDOWS and HAS_RFCOMM:
+                        from m25_bluetooth import scan_devices as rfcomm_scan_devices
+                        add_devices(rfcomm_scan_devices(duration=5, filter_m25=filter_enabled))
+                
+                self.root.after(0, self.scan_complete, devices)
+            except Exception as e:
+                self.root.after(0, self.scan_error, str(e))
+
+        threading.Thread(target=scan_thread, daemon=True).start()
+
+    def scan_complete(self, devices):
+        """Handle scan completion"""
+        self.scanned_devices = devices
+        self.scan_btn.config(state="normal")
+
+        if not devices:
+            self.log("warning", "No devices found.")
+            if IS_WINDOWS:
+                self.log("muted", "Remember: Only paired devices appear on Windows.")
+                self.log("muted", "Pair devices in Windows Settings > Bluetooth & devices first.")
+            self.scan_status_lbl.config(text="No devices found")
+            self.status_message("warning", "Scan complete, no devices found")
+            return
+
+        device_type = "device(s)" if not self.filter_m25.get() else "M25 device(s)"
+        self.log("success", f"Found {len(devices)} {device_type}:")
+        for addr, name in devices:
+            self.log("muted", f"[{addr}] {name}")
+
+        device_options = [f"{name} ({addr})" for addr, name in devices]
+
+        menu = self.left_device_menu["menu"]
+        menu.delete(0, "end")
+        menu.add_command(label="", command=lambda: self.left_device_var.set(""))
+        for option in device_options:
+            menu.add_command(label=option, command=lambda val=option: self.left_device_var.set(val))
+
+        menu = self.right_device_menu["menu"]
+        menu.delete(0, "end")
+        menu.add_command(label="", command=lambda: self.right_device_var.set(""))
+        for option in device_options:
+            menu.add_command(label=option, command=lambda val=option: self.right_device_var.set(val))
+
+        self.scan_status_lbl.config(text=f"Found {len(devices)} device(s)")
+        self.status_message("success", f"Scan complete, found {len(devices)} device(s)")
+
+    def scan_error(self, error):
+        """Handle scan error"""
+        self.scan_btn.config(state="normal")
+        self.scan_status_lbl.config(text="Scan failed")
+        self.log("error", f"Scan error: {error}")
+        self.status_message("error", "Scan failed")
+        messagebox.showerror("Scan Error", f"Failed to scan for devices:\n{error}")
+
+    def on_left_device_selected(self, selection):
+        """Handle left device selection"""
+        if not selection:
+            return
+
+        if "(" in selection and ")" in selection:
+            mac = selection.split("(")[1].split(")")[0]
+            self.left_mac.delete(0, tk.END)
+            self.left_mac.insert(0, mac)
+            self.log("info", f"Selected left wheel: {selection}")
+            self.status_message("info", "Left wheel selected")
+
+    def on_right_device_selected(self, selection):
+        """Handle right device selection"""
+        if not selection:
+            return
+
+        if "(" in selection and ")" in selection:
+            mac = selection.split("(")[1].split(")")[0]
+            self.right_mac.delete(0, tk.END)
+            self.right_mac.insert(0, mac)
+            self.log("info", f"Selected right wheel: {selection}")
+            self.status_message("info", "Right wheel selected")
+
+
+def main(default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=False, keyboard=False):
+    """Launch the GUI application"""
+
+    missing = []
+
+    try:
+        import tkinter  # noqa: F401
+    except ImportError:
+        missing.append("tkinter (should be included with Python)")
+
+    if not HAS_DOTENV:
+        print("Warning: python-dotenv not installed")
+        print("Install with: pip install python-dotenv")
+        print("Continuing without .env support...\n")
+
+    if missing:
+        print("ERROR: Missing required modules:")
+        for mod in missing:
+            print(f"  - {mod}")
+        sys.exit(1)
+
+    cli_parser = argparse.ArgumentParser(add_help=False)
+    cli_parser.add_argument(
+        "--m25-version",
+        default=default_m25_version,
+        choices=[M25_VERSION_AUTO, M25_VERSION_V1, M25_VERSION_V2],
+        help="Select wheel generation: auto, v1 (RFCOMM), or v2 (BLE)",
+    )
+    cli_parser.add_argument(
+        "--skip-disconnect-confirmation",
+        action="store_true",
+        help="Disconnect immediately without confirmation dialog",
+    )
+    cli_parser.add_argument(
+        "--keyboard",
+        action="store_true",
+        help="Enable keyboard driving on startup (W/A/S/D + arrows + Space)",
+    )
+    args, _ = cli_parser.parse_known_args()
+
+    root = tk.Tk()
+    app = M25GUI(
+        root,
+        default_m25_version=args.m25_version,
+        skip_disconnect_confirmation=(args.skip_disconnect_confirmation or skip_disconnect_confirmation),
+        keyboard=(args.keyboard or keyboard),
+    )
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
