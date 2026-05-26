@@ -20,9 +20,6 @@ windows = [
     "winrt-Windows.Networking.Sockets>=2.0.0",
     "winrt-Windows.Storage.Streams>=2.0.0",
 ]
-linux = [
-    "pybluez2",
-]
 dev = [
     "pytest>=7.0.0",
 ]

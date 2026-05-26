@@ -212,7 +212,10 @@ This script automates the setup process by:
 After successful setup:
   1. Edit .env file with your wheel details
   2. Convert QR code: python m25_qr_to_key.py 'YourQRCodeString'
-  3. Launch GUI: python m25_gui.py
+    3. Launch GUI: .venv/bin/python m25_gui.py
+
+If you want to use plain `python`, activate the virtual environment in your
+current shell first with: source .venv/bin/activate
 
 For more information, see:
   - doc/usage-setup.md
@@ -270,7 +273,7 @@ ok "  pip, setuptools, and wheel upgraded"
 
 # [6/7] deps
 step "[6/7] Installing project dependencies..."
-"$VENV_PYTHON" -m pip install -e ".[linux]"
+"$VENV_PYTHON" -m pip install -e "."
 ok "  Dependencies installed"
 
 step "      Verifying installed packages..."
