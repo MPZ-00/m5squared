@@ -39,11 +39,13 @@ from m25_protocol_data import (
     PARAM_ID_READ_DRIVE_PROFILE, PARAM_ID_STATUS_DRIVE_PROFILE,
     PARAM_ID_READ_DRIVE_PROFILE_PARAMS, PARAM_ID_STATUS_DRIVE_PROFILE_PARAMS,
     PARAM_ID_READ_CRUISE_VALUES, PARAM_ID_CRUISE_VALUES,
+    PARAM_ID_READ_DUO_DRIVE_PARAMS, PARAM_ID_STATUS_DUO_DRIVE_PARAMS,
     # Parameter IDs - Version
     PARAM_ID_READ_SW_VERSION, PARAM_ID_STATUS_SW_VERSION,
     # Parameter IDs - Write commands
     PARAM_ID_WRITE_ASSIST_LEVEL, PARAM_ID_WRITE_DRIVE_MODE,
     PARAM_ID_WRITE_DRIVE_PROFILE, PARAM_ID_WRITE_DRIVE_PROFILE_PARAMS,
+    PARAM_ID_WRITE_REMOTE_SPEED,
     # Drive mode flags
     DRIVE_MODE_BIT_AUTO_HOLD, DRIVE_MODE_BIT_CRUISE, DRIVE_MODE_BIT_REMOTE,
     # Profile IDs and names
@@ -86,6 +88,10 @@ class ECSPacketBuilder(PacketBuilderBase):
         """Build READ_CRUISE_VALUES packet (contains distance, speed, etc)"""
         return self.build_packet(SERVICE_ID_APP_MGMT, PARAM_ID_READ_CRUISE_VALUES)
 
+    def build_read_duo_drive_params(self):
+        """Build READ_DUO_DRIVE_PARAMS packet."""
+        return self.build_packet(SERVICE_ID_APP_MGMT, PARAM_ID_READ_DUO_DRIVE_PARAMS)
+
     def build_read_sw_version(self):
         """Build READ_SW_VERSION packet (firmware version)"""
         return self.build_packet(SERVICE_ID_VERSION_MGMT, PARAM_ID_READ_SW_VERSION)
@@ -100,14 +106,17 @@ class ECSPacketBuilder(PacketBuilderBase):
         return self.build_packet(SERVICE_ID_APP_MGMT, PARAM_ID_WRITE_ASSIST_LEVEL,
                                  bytes([level]))
 
-    def build_write_drive_mode(self, auto_hold):
+    def build_write_drive_mode(self, mode):
         """Build WRITE_DRIVE_MODE packet (auto hold / hill hold)
 
         Args:
-            auto_hold: True/1 = enable, False/0 = disable
+            mode: Drive mode bitmask. Accepts bool for backward compatibility.
         """
+        mode_value = int(mode)
+        if mode_value < 0 or mode_value > 0xFF:
+            raise ValueError(f"Drive mode {mode_value} out of range (0-255)")
         return self.build_packet(SERVICE_ID_APP_MGMT, PARAM_ID_WRITE_DRIVE_MODE,
-                                 bytes([1 if auto_hold else 0]))
+                                 bytes([mode_value]))
 
     def build_write_drive_profile(self, profile_id):
         """Build WRITE_DRIVE_PROFILE packet (select profile)
@@ -117,6 +126,22 @@ class ECSPacketBuilder(PacketBuilderBase):
         """
         return self.build_packet(SERVICE_ID_APP_MGMT, PARAM_ID_WRITE_DRIVE_PROFILE,
                                  bytes([profile_id]))
+    
+    def build_write_remote_speed(self, speed):
+        """Build WRITE_REMOTE_SPEED packet (send motor speed command)
+        
+        Args:
+            speed: signed 16-bit speed value (-32768 to 32767)
+                   Typically use range like -100 to 100 for percentage-based control
+        """
+        # Convert to signed 16-bit big-endian
+        if speed < -32768 or speed > 32767:
+            raise ValueError(f"Speed {speed} out of range (-32768 to 32767)")
+        
+        # Pack as signed 16-bit big-endian
+        payload = speed.to_bytes(2, byteorder='big', signed=True)
+        return self.build_packet(SERVICE_ID_APP_MGMT, PARAM_ID_WRITE_REMOTE_SPEED,
+                                 payload)
 
     def build_write_drive_profile_params(self, assist_level, max_torque, max_speed,
                                           p_factor, speed_bias, speed_factor,
@@ -258,22 +283,53 @@ class ResponseParser:
 
     @staticmethod
     def parse_sw_version(payload):
-        """Parse STATUS_SW_VERSION response (4 bytes)
+        """Parse SW version payload.
 
-        Format: dev_state(char), major, minor, patch
-        Example: 0x56030500 = "V03.005.000"
+        Supported formats:
+        - 4 bytes: dev_state, major, minor, patch
+        Example: 0x56 0x03 0x05 0x00 -> V03.005.000
+
+        - 3 bytes: major, minor, patch
+        Example: 0x03 0x05 0x00 -> V03.005.000
         """
-        if len(payload) >= 4:
-            dev_state = chr(payload[0]) if 0x20 <= payload[0] <= 0x7E else '?'
-            major = payload[1]
-            minor = payload[2]
-            patch = payload[3]
-            version_str = f"{dev_state}{major:02d}.{minor:03d}.{patch:03d}"
+        if len(payload) == 4:
+            dev_state_byte, major, minor, patch = payload
+
+            if not 0x20 <= dev_state_byte <= 0x7E:
+                return None
+
+            prefix = chr(dev_state_byte)
+
+        elif len(payload) == 3:
+            major, minor, patch = payload
+            prefix = "V"
+
+        else:
+            return None
+
+        return {
+            "version_str": f"{prefix}{major:02d}.{minor:03d}.{patch:03d}",
+            "major": major,
+            "minor": minor,
+            "patch": patch,
+        }
+
+    @staticmethod
+    def parse_duo_drive_params(payload):
+        """Parse STATUS_DUO_DRIVE_PARAMS response (3 bytes)."""
+        if len(payload) >= 3:
+            mounting_side = payload[0]
+            steering_dynamic = payload[2]
+            mounting_name = {
+                0: "Unknown",
+                1: "Right",
+                2: "Left",
+            }.get(mounting_side, f"Unknown({mounting_side})")
             return {
-                'version_str': version_str,
-                'major': major,
-                'minor': minor,
-                'patch': patch
+                'mounting_side': mounting_side,
+                'mounting_name': mounting_name,
+                'speed_sensibility': payload[1],
+                'steering_dynamic': steering_dynamic,
             }
         return None
 
@@ -283,11 +339,22 @@ class ECSRemote:
     # Delay between commands (ms)
     COMMAND_DELAY = 0.15  # 150ms
 
-    def __init__(self, left_conn, right_conn, verbose=False, retries=2):
+    def __init__(self, left_conn, right_conn, verbose=False, retries=2, log_callback=None):
         self.left_conn = left_conn
         self.right_conn = right_conn
         self.verbose = verbose
         self.retries = retries
+        self.log_callback = log_callback
+
+    def _trace(self, message):
+        if self.log_callback:
+            try:
+                self.log_callback(message)
+                return
+            except Exception:
+                pass
+        if self.verbose:
+            print(message, file=sys.stderr)
 
     def init_connection(self, conn, builder):
         """Send connection init (WRITE_SYSTEM_MODE = 0x01)"""
@@ -309,6 +376,9 @@ class ECSRemote:
 
         for attempt in range(self.retries + 1):
             packet = build_method()
+            requested_tid = packet[POS_TELEGRAM_ID] if len(packet) > POS_TELEGRAM_ID else None
+            requested_service_id = packet[POS_SERVICE_ID] if len(packet) > POS_SERVICE_ID else None
+            requested_param_id = packet[POS_PARAM_ID] if len(packet) > POS_PARAM_ID else None
             response = conn.transact(packet)
 
             if response is None:
@@ -322,15 +392,48 @@ class ECSRemote:
                 last_error = "invalid response"
                 continue
 
+            response_tid = header.get('telegram_id')
+            if requested_tid is not None and response_tid is not None and response_tid != requested_tid:
+                last_error = f"telegram mismatch req=0x{requested_tid:02X} resp=0x{response_tid:02X}"
+                if attempt < self.retries:
+                    time.sleep(0.05)
+                continue
+
             if ResponseParser.is_nack(header):
                 last_error = f"NACK 0x{header['param_id']:02X}"
                 break  # Don't retry NACKs
 
-            if header['param_id'] != expected_param_id:
-                last_error = f"unexpected param_id 0x{header['param_id']:02X}"
+            # M25 variants differ in read response format:
+            # - Some return STATUS_* param IDs (expected_param_id)
+            # - Some echo the READ_* param ID back
+            # - Some return ACK with payload containing the value
+            param_id = header['param_id']
+            payload = header['payload']
+
+            if param_id == expected_param_id or (requested_param_id is not None and param_id == requested_param_id):
+                parsed = parse_method(payload)
+                if parsed is not None:
+                    return parsed
+                last_error = "parser returned no data"
                 continue
 
-            return parse_method(header['payload'])
+            if ResponseParser.is_ack(header) and payload:
+                parsed = parse_method(payload)
+                if parsed is not None:
+                    return parsed
+                last_error = "ACK payload parse failed"
+                continue
+
+            # Extra compatibility path for variants that reply on the same service
+            # with non-standard param IDs but a parseable payload.
+            if requested_service_id is not None and header.get('service_id') == requested_service_id and payload:
+                parsed = parse_method(payload)
+                if parsed is not None:
+                    return parsed
+                last_error = "same-service payload parse failed"
+                continue
+
+            last_error = f"unexpected param_id 0x{param_id:02X}"
 
         if self.verbose and last_error:
             print(f"  {build_method.__name__}: {last_error}", file=sys.stderr)
@@ -343,6 +446,7 @@ class ECSRemote:
             True if ACK received, False otherwise
         """
         last_error = None
+        requested_tid = packet[POS_TELEGRAM_ID] if len(packet) > POS_TELEGRAM_ID else None
 
         for attempt in range(self.retries + 1):
             response = conn.transact(packet)
@@ -358,6 +462,13 @@ class ECSRemote:
                 last_error = "invalid response"
                 continue
 
+            response_tid = header.get('telegram_id')
+            if requested_tid is not None and response_tid is not None and response_tid != requested_tid:
+                last_error = f"telegram mismatch req=0x{requested_tid:02X} resp=0x{response_tid:02X}"
+                if attempt < self.retries:
+                    time.sleep(0.05)
+                continue
+
             if ResponseParser.is_nack(header):
                 last_error = f"NACK 0x{header['param_id']:02X}"
                 break  # Don't retry NACKs
@@ -370,6 +481,68 @@ class ECSRemote:
         if self.verbose and last_error:
             print(f"  {command_name}: {last_error}", file=sys.stderr)
         return False
+
+    def write_remote_mode(self, conn, builder, enabled):
+        """Set remote control drive mode on a wheel.
+
+        Args:
+            enabled: True enables remote mode, False switches back to normal mode.
+
+        Returns:
+            True if wheel acknowledged the command.
+        """
+        self.init_connection(conn, builder)
+        time.sleep(self.COMMAND_DELAY)
+        if not enabled:
+            packet = builder.build_write_drive_mode(0x00)
+            return self.write_value(conn, packet, "write_remote_mode")
+
+        # Compatibility: many variants move more reliably when cruise+remote is armed
+        # first, while others accept remote-only. Try cruise+remote first, then fallback.
+        candidate_modes = [DRIVE_MODE_BIT_REMOTE | DRIVE_MODE_BIT_CRUISE, DRIVE_MODE_BIT_REMOTE]
+        for mode in candidate_modes:
+            packet = builder.build_write_drive_mode(mode)
+            if self.write_value(conn, packet, f"write_remote_mode(0x{mode:02X})"):
+                return True
+        return False
+
+    def write_remote_speed(self, conn, builder, speed):
+        """Send one remote speed command; missing ACK on BLE is treated as success."""
+        wheel_name = getattr(conn, "name", "wheel")
+        wheel_label = wheel_name[:1].upper() + wheel_name[1:]
+        self._trace(f"[D][MOTOR] -> {wheel_label} {speed}")
+        packet = builder.build_write_remote_speed(speed)
+        service_id = packet[POS_SERVICE_ID] if len(packet) > POS_SERVICE_ID else 0
+        param_id = packet[POS_PARAM_ID] if len(packet) > POS_PARAM_ID else 0
+        telegram_id = packet[POS_TELEGRAM_ID] if len(packet) > POS_TELEGRAM_ID else 0
+        payload = packet[POS_PAYLOAD:] if len(packet) > POS_PAYLOAD else b""
+        self._trace(
+            f"[D][TX] {wheel_label} WRITE_REMOTE_SPEED svc=0x{service_id:02X} param=0x{param_id:02X} tg=0x{telegram_id:02X} payloadLen={len(payload)}"
+        )
+        self._trace(f"[D][TX] remote_speed raw={speed} payload={' '.join(f'{byte:02X}' for byte in payload)}")
+
+        # RFCOMM connection exposes send_packet() for fire-and-forget writes.
+        send_packet = getattr(conn, "send_packet", None)
+        if callable(send_packet):
+            try:
+                send_packet(packet)
+                return True
+            except Exception as e:
+                if self.verbose:
+                    print(f"  write_remote_speed: send_packet failed ({e})", file=sys.stderr)
+                return False
+
+        # Generic fallback (BLE adapter): short transact, non-ACK is acceptable.
+        response = conn.transact(packet, timeout=0.15)
+        if response is None:
+            return True
+
+        header = ResponseParser.parse_header(response)
+        if header and ResponseParser.is_nack(header):
+            if self.verbose:
+                print(f"  write_remote_speed: NACK 0x{header['param_id']:02X}", file=sys.stderr)
+            return False
+        return True
 
     def write_assist_level(self, conn, builder, level):
         """Set assist level on a wheel
@@ -487,7 +660,8 @@ class ECSRemote:
         time.sleep(self.COMMAND_DELAY)
 
         # Drive profile parameters for current assist level
-        current_level = status['assist_level']['value'] if status.get('assist_level') else 0
+        assist_status = status.get('assist_level')
+        current_level = assist_status['value'] if isinstance(assist_status, dict) and 'value' in assist_status else 0
         params = self.read_value(conn, lambda: builder.build_read_drive_profile_params(current_level),
                                  PARAM_ID_STATUS_DRIVE_PROFILE_PARAMS, ResponseParser.parse_drive_profile_params)
         status['profile_params'] = params
@@ -497,6 +671,12 @@ class ECSRemote:
         cruise = self.read_value(conn, builder.build_read_cruise_values,
                                  PARAM_ID_CRUISE_VALUES, ResponseParser.parse_cruise_values)
         status['cruise_values'] = cruise
+        time.sleep(self.COMMAND_DELAY)
+
+        # DuoDrive params (possible remote-safety-related policy indicators)
+        duo = self.read_value(conn, builder.build_read_duo_drive_params,
+                      PARAM_ID_STATUS_DUO_DRIVE_PARAMS, ResponseParser.parse_duo_drive_params)
+        status['duo_drive'] = duo
         time.sleep(self.COMMAND_DELAY)
 
         # Firmware version
@@ -572,6 +752,13 @@ class ECSRemote:
             lines.append(f"  Distance:          {cruise['distance_km']:.2f} km")
         else:
             lines.append(f"  Distance:          --")
+
+        # DuoDrive params (not fully decoded, but useful for diagnosis)
+        duo = status.get('duo_drive')
+        if duo:
+            lines.append(
+                f"  DuoDrive:          side={duo['mounting_name']}, sens={duo['speed_sensibility']}, dynamic={duo['steering_dynamic']}"
+            )
 
         # Firmware version
         version = status.get('sw_version')
@@ -655,9 +842,9 @@ Examples:
                         help='Left wheel Bluetooth address (XX:XX:XX:XX:XX:XX)')
     parser.add_argument('--right-addr', metavar='ADDR',
                         help='Right wheel Bluetooth address (XX:XX:XX:XX:XX:XX)')
-    parser.add_argument('--left-key', metavar='HEX',
+    parser.add_argument('--left-key', metavar='HEX', required=True,
                         help='Left wheel AES key (hex, from m25_qr_to_key.py)')
-    parser.add_argument('--right-key', metavar='HEX',
+    parser.add_argument('--right-key', metavar='HEX', required=True,
                         help='Right wheel AES key (hex, from m25_qr_to_key.py)')
     parser.add_argument('--left-only', action='store_true',
                         help='Only connect to left wheel')
@@ -697,10 +884,12 @@ Examples:
             print(f"ERROR: --set-max-speed must be between 2.0 and 8.5 km/h")
             sys.exit(1)
 
-    # Dry run mode (needs both keys) --> this should probably fixed someday, but is fine for now.
+    # Parse and validate keys
+    left_key = parse_key(args.left_key, "left-key")
+    right_key = parse_key(args.right_key, "right-key")
+
+    # Dry run mode
     if args.dry_run:
-        left_key = parse_key(args.left_key, "left-key")
-        right_key = parse_key(args.right_key, "right-key")
         dry_run_demo(left_key, right_key)
         return
 
@@ -719,18 +908,6 @@ Examples:
     if connect_right and not args.right_addr:
         print("ERROR: Must specify --right-addr (or use --left-only)")
         sys.exit(1)
-
-    # Validate keys
-    if connect_left and not args.left_key:
-        print("ERROR: Must specify --left-key (or use --right-only)")
-        sys.exit(1)
-    if connect_right and not args.right_key:
-        print("ERROR: Must specify --right-key (or use --left-only)")
-        sys.exit(1)
-
-    # Parse keys (only the ones we need / specified)
-    left_key = parse_key(args.left_key, "left-key") if connect_left else None
-    right_key = parse_key(args.right_key, "right-key") if connect_right else None
 
     left_conn = None
     right_conn = None

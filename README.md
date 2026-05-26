@@ -1,54 +1,64 @@
-# m5squared aka. wheelchair.py
+# m5squared
 
 **Your wheelchair, your rules.**
 
-Python toolkit for the Alber e-motion M25 power-assist wheels. Because paying €595 for a Bluetooth remote that does less than a Python script is absurd.
+Python toolkit for the Alber e-motion M25 power-assist wheels. It started as a fork of [roll2own/m5squared](https://github.com/roll2own/m5sqared) and grew into a Python-focused control and analysis stack.
 
-Presented at 39C3 Hamburg: *["Pwn2Roll: Who Needs a 595€ Remote When You Have wheelchair.py?"](https://media.ccc.de/v/39c3-pwn2roll-who-needs-a-599-remote-when-you-have-wheelchair-py)*
+Presented at 39C3 Hamburg: *["Pwn2Roll: Who Needs a 595€ Remote When You Have wheelchair.py?"](https://media.ccc.de/v/39c3-pwn2roll-who-needs-a-595-remote-when-you-have-wheelchair-py)*
+
+## Overview
+
+This repository contains the Python control stack for the M25 protocol. It focuses on protocol handling, transport abstractions, a GUI control surface, and supporting utilities for analysis and testing.
+
+The project keeps the control stack split into clear layers:
+
+- Core control logic with mapper and supervisor components
+- Transport abstraction for BLE, mock devices, and future transports
+- GUI and CLI tools for interactive control and diagnostics
+- Protocol utilities for encryption, decryption, packet framing, and analysis
 
 ## What This Does
 
-- **Decrypt the "encrypted" Bluetooth protocol:** AES-128-CBC, nothing fancy
-- **Replace the €595 ECS remote:** Same features, zero cost, more control
-- **Bypass all of the in-app purchases:** All the "premium" features, free
-    - Currently we support out-of-the-box: ECS remote, speed increase to 8.5km/h, parking mode. *Cruise* mode and the push counter are possible in theory, but not tested yet. Stay tuned, this will be tested soonish (it's also the ground work for replacing the knob-style remote).
-- **Access dealer-only parameters:** Your wheels, your data
+- Decrypt and inspect the M25 Bluetooth protocol.
+- Send protocol commands to read status and change settings.
+- Provide a modular Python architecture with safer control flow.
+- Support Windows and Linux Bluetooth backends.
+- Offer mock and demo tooling for development and testing.
 
-### Legal Stuff Corner aka. *The "We Told You So" Section*
+## The 595 Euro Remote vs. This Script
 
-- Warranty and Gewährleistung: Using unofficial tools may void them. The manufacturer or reseller will likely not be thrilled if you mention wheelchair.py during a service appointment.
-- The Speedenings: 8.5 km/h is faster than 6 km/h. Physics applies. In Germany, electric wheelchairs above 6 km/h require registration when using in the public. This is also the case when one's using the paid feature in the official app. But if you want to break the law, you can do it with our tools, for free.
-- Ownership: If your Krankenkasse paid for the device, they technically own it. You're poking at insurance property. They might have opinions, or they might never notice. We don't judge here.
-- Safety: These wheels move a human. Cats have nine lives and always land on their feet, you might not have those features. Misconfigured parameters do things.
-
-## The €595 Remote vs. This Script
-
-| Feature                 | Official ECS Remote | wheelchair.py |
-| ----------------------- | ------------------- | ------------- |
-| Price                   | €595                | Free          |
-| Read battery            | Yes                 | Yes           |
-| Change assist level     | Yes                 | Yes           |
-| Toggle hill hold        | Yes                 | Yes           |
-| Read raw sensor data    | No                  | Yes           |
-| Adjust drive parameters | No                  | Yes           |
-| Works on Linux          | No                  | Obviously     |
+| Feature | Official ECS Remote | m5squared |
+| --- | --- | --- |
+| Price | 595 euro | Free |
+| Read battery | Yes | Yes |
+| Change assist level | Yes | Yes |
+| Toggle hill hold | Yes | Yes |
+| Read raw sensor data | No | Yes |
+| Adjust drive parameters | No | Yes |
+| Works on Linux | No | Yes |
 
 ## Quick Start
 
-**Easiest Way (All Platforms):**
+### Easiest Setup on Linux
+
+```bash
+./setup-linux.sh
+```
+
+That script sets up the local environment, installs the project, and prepares the common Linux dependencies.
+
+### Run the Tools
 
 ```bash
 # Windows: Double-click start.bat
-# Linux/Mac: ./start.sh
+# Linux/macOS: ./start.sh
 # Or:
 python launch.py
 ```
 
-The GUI includes optional core architecture support with safety features, plus an optional (but cautioned) deadman disable mode for controlled testing.
-
 See [QUICKSTART.md](QUICKSTART.md) for more options and details.
 
-**Traditional Setup:**
+### Manual Setup
 
 ```bash
 # Setup (Ubuntu/Debian)
@@ -65,77 +75,55 @@ python m25_ecs.py --left-addr AA:BB:CC:DD:EE:FF --right-addr 11:22:33:44:55:66 \
                   --left-key HEXKEY --right-key HEXKEY
 ```
 
-## Windows Setup
-### 1. Install Python 3.12
-- Download and install Python 3.12 from python.org  
-- Enable “Add Python to PATH” during setup  
-- Verify:
-  - `py -3.12 --version`
+## Architecture
 
-### 2. Create a virtual environment
-```powershell
-cd C:\path\to\your\m5squared
-py -3.12 -m venv .venv
-```
+This project uses a layered control architecture.
 
-### 3. Allow PowerShell script execution (current session only)
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-```
+- Application layer: GUI, CLI, and demo entry points.
+- Control layer: mapper, supervisor, and state handling.
+- Protocol layer: m25_protocol.py and m25_crypto.py.
+- Transport layer: BLE, mock, and other transport adapters.
 
-Optional, persistent for your user:
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
-```
+### Key Components
 
-### 4. Activate the virtual environment
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-### 5. Upgrade pip
-```powershell
-python -m pip install --upgrade pip
-```
-
-### 6. Install the project in editable mode
-```powershell
-pip install -e .
-```
-
+- core/mapper.py: transforms input events into protocol commands.
+- core/supervisor.py: safety state machine and control guardrails.
+- core/transport/: unified interface for BLE, mock devices, and future transports.
+- core/README.md: deeper reference for the shared control core.
 
 ## Tools
 
-| Script                      | What it does                                      | 
-| --------------------------- | ------------------------------------------------- |
-| `m25_qr_to_key.py`          | QR code → AES key (their encoding is... creative) |
-| `m25_ecs.py`                | The main event: read status, change settings      |
-| `m25_gui.py`                | GUI interface for Windows/Linux (NEW)             |
-| `m25_decrypt.py`            | Decrypt captured Bluetooth packets                |
-| `m25_encrypt.py`            | Encrypt packets for transmission                  |
-| `m25_analyzer.py`           | Make sense of the packet soup                     |
-| `m25_parking.py`            | Remote movement control (use responsibly)         |
-| `m25_bluetooth.py`          | Scan, connect, send/receive (Linux)               |
-| `m25_bluetooth_windows.py`  | Windows Bluetooth support via Bleak               |
+| Script | What it does |
+| --- | --- |
+| m25_qr_to_key.py | QR code to AES key conversion |
+| m25_ecs.py | Read status and change settings |
+| m25_gui.py | GUI interface for the Python control stack |
+| launch.py | Unified launcher for GUI and CLI entry points |
+| m25_decrypt.py | Decrypt captured Bluetooth packets |
+| m25_encrypt.py | Encrypt packets for transmission |
+| m25_analyzer.py | Inspect packet streams |
+| m25_parking.py | Remote movement control |
+| m25_bluetooth.py | Linux Bluetooth scan/connect/send/receive |
+| m25_bluetooth_windows.py | Windows Bluetooth support via Bleak |
 
 ## Getting Your Keys
 
 Each wheel has a QR code sticker. That's your key to the kingdom.
 
-1. Scan the QR code (22 characters of proprietary encoding)
-2. Run: `python m25_qr_to_key.py "ABCD1234..."`
-3. Get a 16-byte hex key
-4. Use it with `--left-key` / `--right-key`
+1. Scan the QR code (22 characters of proprietary encoding).
+2. Run `python m25_qr_to_key.py "ABCD1234..."`.
+3. Get a 16-byte hex key.
+4. Use it with `--left-key` / `--right-key`.
 
 Both wheels have different keys. Yes, you need both.
 
-Once you've saved your keys, consider taping over the QR codes. They're the keys to your wheels.
+Once you've saved your keys, consider taping over the QR codes.
 
 ## Protocol TL;DR
 
 Bluetooth SPP on channel 6. Packets look like:
 
-```
+```text
 [0xEF] [length:2] [IV encrypted with ECB:16] [payload encrypted with CBC:n] [CRC:2]
 ```
 
@@ -143,11 +131,16 @@ Why encrypt the IV with ECB first? Nobody knows. But it works.
 
 ## Requirements
 
-- Python 3.8+
-- `pycryptodome` - For the crypto
-- `python-dotenv` - For .env file support
-- **Linux:** `bluez` / `python3-bluez` - For Bluetooth
-- **Windows:** `bleak` - For Bluetooth (installed automatically)
+### Python Dependencies
+
+- Python 3.8+ (3.12 recommended)
+- pycryptodome for AES encryption and decryption
+- python-dotenv for configuration management
+- bluez / python3-bluez for native Linux Bluetooth support
+- bleak for cross-platform BLE
+- pygame for optional gamepad input during testing
+
+All Python dependencies are specified in [pyproject.toml](pyproject.toml) and install automatically with `pip install -e .`.
 
 ## Configuration
 
@@ -158,9 +151,10 @@ cp .env.example .env
 ```
 
 Edit `.env` and fill in:
+
 - `M25_LEFT_MAC` - Left wheel MAC address
-- `M25_LEFT_KEY` - Left wheel encryption key (from QR code)
-- `M25_RIGHT_MAC` - Right wheel MAC address  
+- `M25_LEFT_KEY` - Left wheel encryption key
+- `M25_RIGHT_MAC` - Right wheel MAC address
 - `M25_RIGHT_KEY` - Right wheel encryption key
 
 The `.env` file is gitignored and won't be committed.
@@ -175,16 +169,20 @@ This is for **your own wheels**. Don't be creepy.
 
 ## Links
 
-- Protocol docs: [`doc/` directory](https://github.com/roll2own/m5squared/tree/main/doc)
-- Supplementary resources (media, manuals, talk materials and other non-codey stuff: [m5squared-resource repo](https://github.com/roll2own/m5squared-resources)
-- 39C3 Talk: *["Pwn2Roll: Who Needs a 595€ Remote When You Have wheelchair.py?"](https://media.ccc.de/v/39c3-pwn2roll-who-needs-a-599-remote-when-you-have-wheelchair-py)*
-
 ### Media Coverage
 
 - [[DE] Warum eine Multiple-Sklerose-Erkrankte ihren Rollstuhl hackte](https://www.spiegel.de/netzwelt/hackerkonferenz-39c3-warum-eine-multiple-sklerose-erkrankte-ihren-rollstuhl-hackte-a-169573b3-dbc9-4aed-bc33-1cc39cee6971)
 - [[DE] Wie eine Multiple-Sklerose-Erkrankte die Paywall ihres Rollstuhls knackte](https://www.derstandard.at/story/3000000302326/wie-eine-multiple-sklerose-erkrankte-die-paywall-ihres-rollstuhls-knackte)
 - [[DE] 39C3: Rollstuhl-Security – Wenn ein QR-Code alle Schutzmechanismen aushebelt](https://www.heise.de/news/39C3-Rollstuhl-Security-Wenn-ein-QR-Code-alle-Schutzmechanismen-aushebelt-11126816.html)
 - [[EN] Louis Rossmann: Wheelchairs have paywalls and digital locks now (YouTube video)](https://www.youtube.com/watch?v=5yWcXPDJQ7k)
+
+
+### Repository Links
+
+- Upstream project: [roll2own/m5squared](https://github.com/roll2own/m5squared)
+- Supplementary resources: [m5squared-resources](https://github.com/roll2own/m5squared-resources)
+- Architecture docs: [core/README.md](core/README.md)
+- Project docs: [doc/](doc/)
 
 ## Security, Safety and Common Sense
 
@@ -195,3 +193,13 @@ The security model here is identical to what the official apps use: if you don't
 That said, this only applies to your own equipment. Using these tools on someone else's wheelchair without explicit consent isn't just unethical, it might cause serious safety issues. Also: creepy.
 
 The author(s) take responsible disclosure seriously. These are mobility devices that people depend on every day, and that should come before making a point.
+
+## Development
+
+- Core protocol and transport work
+- GUI and CLI improvements
+- Logging and diagnostics cleanup
+- Documentation updates
+- Test coverage and tooling
+
+Pull requests are welcome, especially for transport reliability improvements, protocol handling fixes, cross-platform BLE bug fixes, documentation, and examples.

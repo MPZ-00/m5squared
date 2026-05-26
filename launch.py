@@ -4,6 +4,7 @@ m5squared Launcher - Easy start for wheelchair control
 
 Usage:
     python launch.py              # Start GUI
+    python launch.py --m25-version v2   # Start GUI for BLE-only M25V2 wheels
     python launch.py --gamepad    # Start with gamepad control
     python launch.py --mock       # Start with mock transport (testing)
     python launch.py --demo       # Run core demo
@@ -25,14 +26,16 @@ def setup_logging(level: str = "INFO") -> None:
     )
 
 
-def launch_gui(rfcomm: bool = False) -> None:
-    """Launch the GUI application"""
+def launch_gui(m25_version: str = "auto", skip_disconnect_confirmation: bool = False, keyboard: bool = False, raw_trace: bool = False) -> None:
+    """Launch the GUI application."""
     print("Starting m5squared GUI...")
-    if rfcomm:
-        print("Using RFCOMM mode (classic Bluetooth)")
-        sys.argv.append('--rfcomm')
     from m25_gui import main
-    main()
+    main(
+        default_m25_version=m25_version,
+        skip_disconnect_confirmation=skip_disconnect_confirmation,
+        keyboard=keyboard,
+        raw_trace=raw_trace,
+    )
 
 
 def launch_gamepad(use_mock: bool = False) -> None:
@@ -95,8 +98,8 @@ def launch_gamepad(use_mock: bool = False) -> None:
             # Connect (using mock addresses for now)
             print("Connecting to vehicles...")
             supervisor.request_connect(
-                left_addr="MOCK:LEFT" if use_mock else None,
-                right_addr="MOCK:RIGHT" if use_mock else None,
+                left_addr="MOCK:LEFT" if use_mock else "MOCK:LEFT",  # Placeholder for real address
+                right_addr="MOCK:RIGHT" if use_mock else "MOCK:RIGHT",  # Placeholder for real address
                 left_key=b"mock_key_left_16",
                 right_key=b"mock_key_rght_16"
             )
@@ -137,11 +140,18 @@ def main():
         epilog="""
 Examples:
   python launch.py              Start GUI
+    python launch.py --m25-version v2     Start GUI in BLE-only M25V2 mode
   python launch.py --gamepad --mock    Test gamepad with mock transport
   python launch.py --demo       Run core demo
         """
     )
     
+    parser.add_argument(
+        "--m25-version",
+        default="auto",
+        choices=["auto", "v1", "v2"],
+        help="Select wheel generation: auto, v1 (RFCOMM), or v2 (BLE)"
+    )
     parser.add_argument(
         "--gamepad",
         action="store_true",
@@ -164,16 +174,26 @@ Examples:
         help="Set logging level"
     )
     parser.add_argument(
-        "--rfcomm",
+        "--skip-disconnect-confirmation",
         action="store_true",
-        help="Force classic Bluetooth RFCOMM (Linux only, GUI mode)"
+        help="Disconnect immediately without confirmation dialog (GUI mode)",
     )
-    
+    parser.add_argument(
+        "--keyboard",
+        action="store_true",
+        help="Enable keyboard driving on startup (W/A/S/D + arrows + Space)",
+    )
+    parser.add_argument(
+        "--raw-trace",
+        action="store_true",
+        help="Enable raw SPP packet trace on startup",
+    )
+
     args = parser.parse_args()
-    
+
     # Setup logging
     setup_logging(args.log_level)
-    
+
     # Route to appropriate launcher
     if args.demo:
         launch_demo()
@@ -181,7 +201,12 @@ Examples:
         launch_gamepad(use_mock=args.mock)
     else:
         # Default to GUI
-        launch_gui(rfcomm=args.rfcomm)
+        launch_gui(
+            m25_version=args.m25_version,
+            skip_disconnect_confirmation=args.skip_disconnect_confirmation,
+            keyboard=args.keyboard,
+            raw_trace=args.raw_trace,
+        )
 
 
 if __name__ == "__main__":
