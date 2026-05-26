@@ -730,12 +730,12 @@ class M25GUI:
         self.kb_drive_frame = tk.Frame(self.drive_test_frame)
         self.kb_drive_frame.grid(row=7, column=1, sticky=tk.W, pady=3)
 
-        self.kb_fwd_btn = tk.Button(self.kb_drive_frame, text="^ Fwd", width=8, cursor="hand2", state="disabled")
+        self.kb_fwd_btn = tk.Button(self.kb_drive_frame, text="▲ Fwd", width=8, cursor="hand2", state="disabled")
         self.kb_fwd_btn.pack(side=tk.LEFT, padx=(0, 3))
         self.kb_fwd_btn.bind("<ButtonPress-1>", lambda e: self._dpad_press("fwd"))
         self.kb_fwd_btn.bind("<ButtonRelease-1>", lambda e: self._dpad_release())
 
-        self.kb_left_btn = tk.Button(self.kb_drive_frame, text="< Left", width=8, cursor="hand2", state="disabled")
+        self.kb_left_btn = tk.Button(self.kb_drive_frame, text="◄ Left", width=8, cursor="hand2", state="disabled")
         self.kb_left_btn.pack(side=tk.LEFT, padx=(0, 3))
         self.kb_left_btn.bind("<ButtonPress-1>", lambda e: self._dpad_press("left"))
         self.kb_left_btn.bind("<ButtonRelease-1>", lambda e: self._dpad_release())
@@ -743,12 +743,12 @@ class M25GUI:
         self.kb_stop_btn = tk.Button(self.kb_drive_frame, text="Stop", width=6, cursor="hand2", state="disabled", command=self._dpad_stop)
         self.kb_stop_btn.pack(side=tk.LEFT, padx=(0, 3))
 
-        self.kb_right_btn = tk.Button(self.kb_drive_frame, text="Right >", width=8, cursor="hand2", state="disabled")
+        self.kb_right_btn = tk.Button(self.kb_drive_frame, text="Right ►", width=8, cursor="hand2", state="disabled")
         self.kb_right_btn.pack(side=tk.LEFT, padx=(0, 3))
         self.kb_right_btn.bind("<ButtonPress-1>", lambda e: self._dpad_press("right"))
         self.kb_right_btn.bind("<ButtonRelease-1>", lambda e: self._dpad_release())
 
-        self.kb_bwd_btn = tk.Button(self.kb_drive_frame, text="v Bwd", width=8, cursor="hand2", state="disabled")
+        self.kb_bwd_btn = tk.Button(self.kb_drive_frame, text="▼ Bwd", width=8, cursor="hand2", state="disabled")
         self.kb_bwd_btn.pack(side=tk.LEFT)
         self.kb_bwd_btn.bind("<ButtonPress-1>", lambda e: self._dpad_press("bwd"))
         self.kb_bwd_btn.bind("<ButtonRelease-1>", lambda e: self._dpad_release())
@@ -2207,20 +2207,20 @@ class M25GUI:
         threading.Thread(target=disarm_thread, daemon=True).start()
 
     def run_just_start(self):
-        """Send a single forward drive command (kept for backward compat)."""
-        self._run_one_shot_drive("start_fwd")
+        """Start continuous forward drive (backward compat alias)."""
+        self._dpad_press("fwd")
 
     def run_just_start_fwd(self):
-        """Send a single forward drive command."""
-        self._run_one_shot_drive("start_fwd")
+        """Start continuous forward drive (same path as d-pad hold)."""
+        self._dpad_press("fwd")
 
     def run_just_start_bwd(self):
-        """Send a single backward drive command."""
-        self._run_one_shot_drive("start_bwd")
+        """Start continuous backward drive (same path as d-pad hold)."""
+        self._dpad_press("bwd")
 
     def run_just_stop(self):
-        """Send a single stop command."""
-        self._run_one_shot_drive("stop")
+        """Stop continuous drive and disarm."""
+        self._dpad_stop()
 
     def _run_one_shot_drive(self, action: str):
         """Send one remote-speed packet for an arm+drive or stop action."""
