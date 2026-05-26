@@ -376,6 +376,7 @@ class M25GUI:
     def __init__(self, root, default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=False):
         self.root = root
         self.root.title("m5squared - Wheelchair Controller")
+        self.root.resizable(True, True)
         self.skip_disconnect_confirmation = bool(skip_disconnect_confirmation)
         self.raw_trace_var = tk.BooleanVar(value=False)
         self.raw_trace_save_var = tk.BooleanVar(value=False)
@@ -453,13 +454,56 @@ class M25GUI:
     def create_widgets(self):
         """Create all GUI elements"""
 
-        # Main container
-        self.main_frame = tk.Frame(self.root, padx=10, pady=10)
-        self.main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-
-        # Configure grid weights
+        # Main scrollable container
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
+        self.scroll_container = tk.Frame(self.root)
+        self.scroll_container.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.scroll_container.columnconfigure(0, weight=1)
+        self.scroll_container.rowconfigure(0, weight=1)
+
+        self.canvas = tk.Canvas(self.scroll_container, highlightthickness=0, borderwidth=0)
+        self.canvas.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        self.scrollbar = ttk.Scrollbar(self.scroll_container, orient=tk.VERTICAL, command=self.canvas.yview)
+        self.scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        self.main_frame = tk.Frame(self.canvas, padx=10, pady=10)
+        self.main_window = self.canvas.create_window((0, 0), window=self.main_frame, anchor="nw")
+
+        def _update_scrollregion(_event):
+            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+        def _sync_frame_width(event):
+            self.canvas.itemconfigure(self.main_window, width=event.width)
+
+        def _on_mousewheel(event):
+            if getattr(event, "num", None) == 4:
+                self.canvas.yview_scroll(-1, "units")
+            elif getattr(event, "num", None) == 5:
+                self.canvas.yview_scroll(1, "units")
+            elif getattr(event, "delta", 0):
+                steps = int(-1 * (event.delta / 120))
+                if steps:
+                    self.canvas.yview_scroll(steps, "units")
+
+        def _bind_mousewheel(_event):
+            self.canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            self.canvas.bind_all("<Button-4>", _on_mousewheel)
+            self.canvas.bind_all("<Button-5>", _on_mousewheel)
+
+        def _unbind_mousewheel(_event):
+            self.canvas.unbind_all("<MouseWheel>")
+            self.canvas.unbind_all("<Button-4>")
+            self.canvas.unbind_all("<Button-5>")
+
+        self.main_frame.bind("<Configure>", _update_scrollregion)
+        self.canvas.bind("<Configure>", _sync_frame_width)
+        self.canvas.bind("<Enter>", _bind_mousewheel)
+        self.canvas.bind("<Leave>", _unbind_mousewheel)
+
+        # Configure grid weights
         self.main_frame.columnconfigure(1, weight=1)
 
         # Title
