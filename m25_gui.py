@@ -373,7 +373,7 @@ class M25GUI:
     TURN_DURATION_FACTOR_MAX = 4.0
     TURN_DURATION_FACTOR_STEP = 0.1
 
-    def __init__(self, root, default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=False):
+    def __init__(self, root, default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=False, keyboard=False):
         self.root = root
         self.root.title("m5squared - Wheelchair Controller")
         self.root.resizable(True, True)
@@ -417,6 +417,14 @@ class M25GUI:
         self.bluetooth_mode = "Unknown"
         self.input_device = "None"
         self.input_connected = False
+        self._left_transport = None
+        self._right_transport = None
+
+        # Keyboard driving state
+        self.keyboard_enabled = False
+        self._keyboard_active_keys: set = set()
+        self._kb_stop_event = threading.Event()
+        self._kb_stop_event.set()  # starts in "stopped" state
 
         # Theme state
         self.current_theme = "dark"
@@ -438,6 +446,10 @@ class M25GUI:
         
         # Initialize profile description with default profile
         self.update_profile_description()
+
+        # Enable keyboard driving if requested via CLI
+        if keyboard:
+            self.toggle_keyboard()
 
         self.log("info", "Ready.")
         self.status_message("info", "Ready")
@@ -1002,6 +1014,16 @@ class M25GUI:
         self.info_arch_lbl = tk.Label(self.info_frame, text="Mode: Legacy", anchor=tk.W, font=("TkDefaultFont", 8))
         self.info_arch_lbl.pack(side=tk.LEFT, padx=5)
 
+        self.keyboard_btn = tk.Button(
+            self.info_frame,
+            text="Keyboard: OFF",
+            font=("TkDefaultFont", 8),
+            relief=tk.RIDGE,
+            padx=4,
+            command=self.toggle_keyboard,
+        )
+        self.keyboard_btn.pack(side=tk.LEFT, padx=8)
+
         # Configure row weights for resizing
         self.main_frame.rowconfigure(3, weight=1)
         
@@ -1391,17 +1413,46 @@ class M25GUI:
             
             self.profile_desc_text.config(state=tk.DISABLED)
     
+    def _make_ui_callbacks(self, test_status_widget=None):
+        """Return thread-safe (ui_log, ui_status, ui_test_status) closures.
+
+        Intended for use at the top of background thread functions so every
+        thread gets the same safe wrappers without repeating the definitions.
+        All three callbacks schedule their Tk update on the main thread via
+        root.after(0, ...) and are safe to call from any worker thread.
+        """
+        def ui_log(level_msg: str, msg: str) -> None:
+            self.root.after(0, lambda: self.log(level_msg, msg))
+
+        def ui_status(level_msg: str, msg: str) -> None:
+            self.root.after(0, lambda: self.status_message(level_msg, msg))
+
+        def ui_test_status(msg: str, color: str = "black") -> None:
+            if test_status_widget is not None:
+                self.root.after(0, lambda: test_status_widget.config(
+                    text=msg, foreground=color
+                ))
+
+        return ui_log, ui_status, ui_test_status
+
     def update_system_info(self):
         """Update system information labels"""
-        # Bluetooth mode
-        selected_version = describe_m25_version(self.get_selected_m25_version())
-        bt_text = f"Bluetooth: {self.bluetooth_mode} | {selected_version}"
+        # Bluetooth mode — show actual per-wheel transport when connected
+        if self.connected and hasattr(self, '_left_transport') and hasattr(self, '_right_transport'):
+            lt = self._left_transport.upper()
+            rt = self._right_transport.upper()
+            bt_text = f"Bluetooth: {lt} (both)" if lt == rt else f"Bluetooth: L={lt} R={rt}"
+        else:
+            selected_version = describe_m25_version(self.get_selected_m25_version())
+            bt_text = f"Bluetooth: {self.bluetooth_mode} | {selected_version}"
         if hasattr(self, 'info_bluetooth_lbl'):
             self.info_bluetooth_lbl.config(text=bt_text)
-        
+
         # Input device
-        input_status = "Connected" if self.input_connected else "None"
-        input_text = f"Input: {self.input_device} ({input_status})"
+        if self.keyboard_enabled:
+            input_text = "Input: Keyboard (active)" if self.connected else "Input: Keyboard (ready)"
+        else:
+            input_text = "Input: None"
         if hasattr(self, 'info_input_lbl'):
             self.info_input_lbl.config(text=input_text)
         
@@ -1432,6 +1483,171 @@ class M25GUI:
     def get_selected_m25_version(self):
         """Return the selected M25 generation mode."""
         return normalize_m25_version(self.m25_version_var.get())
+
+    # ------------------------------------------------------------------
+    # Keyboard driving
+    # ------------------------------------------------------------------
+
+    _KB_MOVEMENT = frozenset({"w", "up", "s", "down", "a", "left", "d", "right"})
+
+    def toggle_keyboard(self):
+        """Toggle keyboard driving input on/off."""
+        self.keyboard_enabled = not self.keyboard_enabled
+        if self.keyboard_enabled:
+            self._bind_keyboard()
+            self.keyboard_btn.config(text="Keyboard: ON")
+        else:
+            self._unbind_keyboard()
+            self.keyboard_btn.config(text="Keyboard: OFF")
+        self.update_system_info()
+
+    def _bind_keyboard(self):
+        """Bind driving keys to the root window."""
+        press_seqs = (
+            "<w>", "<W>", "<Up>",
+            "<s>", "<S>", "<Down>",
+            "<a>", "<A>", "<Left>",
+            "<d>", "<D>", "<Right>",
+            "<space>",
+        )
+        release_seqs = (
+            "<KeyRelease-w>", "<KeyRelease-W>", "<KeyRelease-Up>",
+            "<KeyRelease-s>", "<KeyRelease-S>", "<KeyRelease-Down>",
+            "<KeyRelease-a>", "<KeyRelease-A>", "<KeyRelease-Left>",
+            "<KeyRelease-d>", "<KeyRelease-D>", "<KeyRelease-Right>",
+        )
+        for seq in press_seqs:
+            self.root.bind(seq, self._on_kb_press)
+        for seq in release_seqs:
+            self.root.bind(seq, self._on_kb_release)
+
+    def _unbind_keyboard(self):
+        """Remove all keyboard driving bindings."""
+        for seq in (
+            "<w>", "<W>", "<Up>",
+            "<s>", "<S>", "<Down>",
+            "<a>", "<A>", "<Left>",
+            "<d>", "<D>", "<Right>",
+            "<space>",
+            "<KeyRelease-w>", "<KeyRelease-W>", "<KeyRelease-Up>",
+            "<KeyRelease-s>", "<KeyRelease-S>", "<KeyRelease-Down>",
+            "<KeyRelease-a>", "<KeyRelease-A>", "<KeyRelease-Left>",
+            "<KeyRelease-d>", "<KeyRelease-D>", "<KeyRelease-Right>",
+        ):
+            self.root.unbind(seq)
+        self._keyboard_active_keys.clear()
+
+    def _on_kb_press(self, event):
+        """Handle keyboard key-press events for driving."""
+        if not self.connected or not self.keyboard_enabled:
+            return
+        # Don't intercept typing in text entry fields
+        focused = self.root.focus_get()
+        if isinstance(focused, (tk.Entry, tk.Text)):
+            return
+
+        key = event.keysym.lower()
+
+        if key == "space":
+            # One-shot stop — cancel any ongoing keyboard drive first
+            self._kb_stop_drive()
+            self._keyboard_active_keys.clear()
+            self.run_just_stop()
+            return
+
+        if key in self._keyboard_active_keys:
+            return  # Suppress OS key-repeat; we drive until KeyRelease
+
+        self._keyboard_active_keys.add(key)
+        self._update_kb_drive()
+
+    def _on_kb_release(self, event):
+        """Handle keyboard key-release events for driving."""
+        key = event.keysym.lower()
+        self._keyboard_active_keys.discard(key)
+
+        if not (self._keyboard_active_keys & self._KB_MOVEMENT):
+            # No movement key held any more → stop
+            self._kb_stop_drive()
+        else:
+            # Some other key still held → re-evaluate direction
+            self._update_kb_drive()
+
+    def _update_kb_drive(self):
+        """Compute (forward, left_pct, right_pct) from held keys and start pulsing."""
+        keys = self._keyboard_active_keys
+
+        # Require an explicit forward or backward key
+        if "w" in keys or "up" in keys:
+            forward = True
+        elif "s" in keys or "down" in keys:
+            forward = False
+        else:
+            return  # Only turn keys held — do nothing (no turn-in-place for now)
+
+        # Asymmetric speed for turns
+        if "a" in keys or "left" in keys:
+            left_pct, right_pct = 0.3, 1.0
+        elif "d" in keys or "right" in keys:
+            left_pct, right_pct = 1.0, 0.3
+        else:
+            left_pct, right_pct = 1.0, 1.0
+
+        self._start_kb_drive(forward, left_pct, right_pct)
+
+    def _kb_stop_drive(self):
+        """Signal the running keyboard drive thread to stop."""
+        self._kb_stop_event.set()
+
+    def _start_kb_drive(self, forward: bool, left_pct: float, right_pct: float):
+        """Stop any current keyboard drive and start a new pulsing thread."""
+        # Signal the old thread to exit
+        self._kb_stop_event.set()
+
+        stop_event = threading.Event()  # fresh event for this thread
+        self._kb_stop_event = stop_event
+
+        def _thread():
+            ui_log, ui_status, _ = self._make_ui_callbacks()
+            builder = ECSPacketBuilder()
+            speed_mag = max(
+                self.MOTION_SPEED_MIN,
+                min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())),
+            )
+            direction = 1 if forward else -1
+            left_speed = int(speed_mag * left_pct * direction)
+            right_speed = int(speed_mag * right_pct * direction)
+
+            try:
+                if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                    ui_log("error", "Keyboard drive: not connected")
+                    return
+
+                remote_armed, _, _ = self._ensure_remote_mode_both(builder, ui_log)
+                if not remote_armed:
+                    ui_log("error", "Keyboard drive: could not arm remote mode")
+                    return
+                self._prime_remote_motion(builder)
+
+                # Pulse speed until stop_event is set
+                while not stop_event.is_set():
+                    self._write_remote_speed_both(builder, left_speed, right_speed)
+                    stop_event.wait(self.REMOTE_PULSE_INTERVAL_S)
+
+                # Send explicit zero before exiting
+                self._write_remote_speed_both(builder, 0, 0)
+                time.sleep(self.REMOTE_STOP_DURATION_S)
+
+            except Exception as exc:
+                ui_log("error", f"Keyboard drive error: {exc}")
+            finally:
+                try:
+                    builder2 = ECSPacketBuilder()
+                    self._set_remote_mode_both(builder2, False)
+                except Exception:
+                    pass
+
+        threading.Thread(target=_thread, daemon=True).start()
 
     def _ensure_event_loop(self):
         """Create a private event loop for BLE tasks when needed."""
@@ -1852,14 +2068,7 @@ class M25GUI:
         
         # Real hardware test
         def test_thread():
-            def ui_log(level_msg: str, msg: str) -> None:
-                self.root.after(0, lambda: self.log(level_msg, msg))
-
-            def ui_status(level_msg: str, msg: str) -> None:
-                self.root.after(0, lambda: self.status_message(level_msg, msg))
-            
-            def ui_test_status(msg: str) -> None:
-                self.root.after(0, lambda: self.drive_test_status.config(text=msg))
+            ui_log, ui_status, ui_test_status = self._make_ui_callbacks(self.drive_test_status)
 
             try:
                 if not self.ecs_remote or not self.left_conn or not self.right_conn:
@@ -1958,12 +2167,7 @@ class M25GUI:
             return
 
         def test_thread():
-            def ui_log(level_msg, msg):
-                self.root.after(0, lambda: self.log(level_msg, msg))
-            def ui_status(level_msg, msg):
-                self.root.after(0, lambda: self.status_message(level_msg, msg))
-            def ui_test_status(msg):
-                self.root.after(0, lambda: self.drive_test_status.config(text=msg))
+            ui_log, ui_status, ui_test_status = self._make_ui_callbacks(self.drive_test_status)
 
             try:
                 if not self.ecs_remote or not self.left_conn or not self.right_conn:
@@ -2020,10 +2224,7 @@ class M25GUI:
         quick_duration = max(self.QUICK_DURATION_MIN, min(self.QUICK_DURATION_MAX, float(self.quick_duration_var.get())))
 
         def move_thread():
-            def ui_log(level_msg, msg):
-                self.root.after(0, lambda: self.log(level_msg, msg))
-            def ui_test_status(msg):
-                self.root.after(0, lambda: self.drive_test_status.config(text=msg))
+            ui_log, _ui_status, ui_test_status = self._make_ui_callbacks(self.drive_test_status)
 
             try:
                 if not self.ecs_remote or not self.left_conn or not self.right_conn:
@@ -2082,14 +2283,7 @@ class M25GUI:
             return
 
         def action_thread():
-            def ui_log(level_msg, msg):
-                self.root.after(0, lambda: self.log(level_msg, msg))
-
-            def ui_status(level_msg, msg):
-                self.root.after(0, lambda: self.status_message(level_msg, msg))
-
-            def ui_test_status(msg):
-                self.root.after(0, lambda: self.drive_test_status.config(text=msg))
+            ui_log, ui_status, ui_test_status = self._make_ui_callbacks(self.drive_test_status)
 
             try:
                 if not self.ecs_remote or not self.left_conn or not self.right_conn:
@@ -2144,10 +2338,19 @@ class M25GUI:
         return left_ok, right_ok
 
     def on_window_close(self):
-        """Disconnect cleanly before closing the window."""
+        """Ask whether to disconnect before closing."""
         if self.connected:
-            self._close_after_disconnect = True
-            self.disconnect(skip_confirmation=True)
+            result = messagebox.askyesno(
+                "Disconnect?",
+                "Disconnect from the wheels before closing?"
+            )
+            if result:
+                # Yes → send disconnect, then close when done
+                self._close_after_disconnect = True
+                self.disconnect(skip_confirmation=True)
+            else:
+                # No → close immediately without sending disconnect
+                self.root.destroy()
             return
 
         self.root.destroy()
@@ -2304,6 +2507,10 @@ class M25GUI:
         self.enable_controls(False)
         self.log("success", "Disconnected successfully.")
         self.status_message("success", "Disconnected")
+        # Revert Bluetooth label to static form
+        self._left_transport = None
+        self._right_transport = None
+        self.update_system_info()
 
         if self._close_after_disconnect:
             self._close_after_disconnect = False
@@ -2374,6 +2581,8 @@ class M25GUI:
                     self.left_conn = self._make_connection(left_transport, left_mac, left_key_bytes, "left", loop)
                     self.right_conn = self._make_connection(right_transport, right_mac, right_key_bytes, "right", loop)
                     self.connected_transport_summary = f"L={left_transport}, R={right_transport}"
+                    self._left_transport = left_transport
+                    self._right_transport = right_transport
                     
                     # Connect to wheels
                     if not self.left_conn.connect():
@@ -2443,11 +2652,7 @@ class M25GUI:
         else:
             # Real hardware command using ECSRemote
             def write_thread():
-                def ui_log(level_msg: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.log(level_msg, msg))
-
-                def ui_status(level_msg: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.status_message(level_msg, msg))
+                ui_log, ui_status, _ = self._make_ui_callbacks()
 
                 try:
                     if not self.ecs_remote or not self.left_conn or not self.right_conn:
@@ -2513,11 +2718,7 @@ class M25GUI:
         else:
             # Real hardware command using ECSRemote
             def write_thread():
-                def ui_log(level_msg: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.log(level_msg, msg))
-
-                def ui_status(level_msg: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.status_message(level_msg, msg))
+                ui_log, ui_status, _ = self._make_ui_callbacks()
 
                 try:
                     if not self.ecs_remote or not self.left_conn or not self.right_conn:
@@ -2567,11 +2768,7 @@ class M25GUI:
         else:
             # Real hardware command using ECSRemote
             def write_thread():
-                def ui_log(level_msg: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.log(level_msg, msg))
-
-                def ui_status(level_msg: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.status_message(level_msg, msg))
+                ui_log, ui_status, _ = self._make_ui_callbacks()
 
                 try:
                     if not self.ecs_remote or not self.left_conn or not self.right_conn:
@@ -2619,11 +2816,7 @@ class M25GUI:
         else:
             # Real hardware command using ECSRemote
             def write_thread():
-                def ui_log(level_msg: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.log(level_msg, msg))
-
-                def ui_status(level_msg: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.status_message(level_msg, msg))
+                ui_log, ui_status, _ = self._make_ui_callbacks()
 
                 try:
                     if not self.ecs_remote or not self.left_conn or not self.right_conn:
@@ -2683,11 +2876,7 @@ class M25GUI:
         else:
             # Real hardware reading using ECSRemote
             def read_thread():
-                def ui_log(level_msg: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.log(level_msg, msg))
-
-                def ui_status(level_msg: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.status_message(level_msg, msg))
+                ui_log, ui_status, _ = self._make_ui_callbacks()
 
                 try:
                     if not self.ecs_remote or not self.left_conn or not self.right_conn:
@@ -2737,11 +2926,7 @@ class M25GUI:
         else:
             # Real hardware reading using ECSRemote
             def read_thread():
-                def ui_log(level_msg: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.log(level_msg, msg))
-
-                def ui_status(level_msg: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.status_message(level_msg, msg))
+                ui_log, ui_status, _ = self._make_ui_callbacks()
 
                 try:
                     if not self.ecs_remote or not self.left_conn:
@@ -2812,11 +2997,7 @@ class M25GUI:
         else:
             # Real hardware reading using ECSRemote
             def read_thread():
-                def ui_log(level_msg: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.log(level_msg, msg))
-
-                def ui_status(level_msg: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.status_message(level_msg, msg))
+                ui_log, ui_status, _ = self._make_ui_callbacks()
 
                 try:
                     if not self.ecs_remote or not self.left_conn or not self.right_conn:
@@ -2870,11 +3051,7 @@ class M25GUI:
         else:
             # Real hardware reading using ECSRemote
             def read_thread():
-                def ui_log(level_msg: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.log(level_msg, msg))
-
-                def ui_status(level_msg: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.status_message(level_msg, msg))
+                ui_log, ui_status, _ = self._make_ui_callbacks()
 
                 try:
                     if not self.ecs_remote or not self.left_conn:
@@ -2939,11 +3116,7 @@ class M25GUI:
         else:
             # Real hardware comprehensive dump using ECSRemote
             def dump_thread():
-                def ui_log(level_msg: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.log(level_msg, msg))
-
-                def ui_status(level_msg: str, msg: str) -> None:
-                    self.root.after(0, lambda: self.status_message(level_msg, msg))
+                ui_log, ui_status, _ = self._make_ui_callbacks()
 
                 def read_from_wheel(conn, wheel_name):
                     """Read all available info from one wheel using ECSRemote"""
@@ -3167,7 +3340,7 @@ class M25GUI:
             self.status_message("info", "Right wheel selected")
 
 
-def main(default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=False):
+def main(default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=False, keyboard=False):
     """Launch the GUI application"""
 
     missing = []
@@ -3200,6 +3373,11 @@ def main(default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=Fals
         action="store_true",
         help="Disconnect immediately without confirmation dialog",
     )
+    cli_parser.add_argument(
+        "--keyboard",
+        action="store_true",
+        help="Enable keyboard driving on startup (W/A/S/D + arrows + Space)",
+    )
     args, _ = cli_parser.parse_known_args()
 
     root = tk.Tk()
@@ -3207,6 +3385,7 @@ def main(default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=Fals
         root,
         default_m25_version=args.m25_version,
         skip_disconnect_confirmation=(args.skip_disconnect_confirmation or skip_disconnect_confirmation),
+        keyboard=(args.keyboard or keyboard),
     )
     root.mainloop()
 

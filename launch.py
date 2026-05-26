@@ -26,13 +26,14 @@ def setup_logging(level: str = "INFO") -> None:
     )
 
 
-def launch_gui(m25_version: str = "auto", skip_disconnect_confirmation: bool = False) -> None:
+def launch_gui(m25_version: str = "auto", skip_disconnect_confirmation: bool = False, keyboard: bool = False) -> None:
     """Launch the GUI application"""
     print("Starting m5squared GUI...")
     from m25_gui import main
     main(
         default_m25_version=m25_version,
         skip_disconnect_confirmation=skip_disconnect_confirmation,
+        keyboard=keyboard,
     )
 
 
@@ -176,12 +177,17 @@ Examples:
         action="store_true",
         help="Disconnect immediately without confirmation dialog (GUI mode)",
     )
-    
+    parser.add_argument(
+        "--keyboard",
+        action="store_true",
+        help="Enable keyboard driving on startup (W/A/S/D + arrows + Space)",
+    )
+
     args = parser.parse_args()
-    
+
     # Setup logging
     setup_logging(args.log_level)
-    
+
     # Route to appropriate launcher
     if args.demo:
         launch_demo()
@@ -192,6 +198,7 @@ Examples:
         launch_gui(
             m25_version=args.m25_version,
             skip_disconnect_confirmation=args.skip_disconnect_confirmation,
+            keyboard=args.keyboard,
         )
 
 
