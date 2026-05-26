@@ -105,7 +105,6 @@ This project uses a layered control architecture.
 | m25_parking.py | Remote movement control |
 | m25_bluetooth.py | Linux Bluetooth scan/connect/send/receive |
 | m25_bluetooth_windows.py | Windows Bluetooth support via Bleak |
-| m25_bluetooth_winrt.py | Windows WinRT Bluetooth support |
 
 ## Getting Your Keys
 
@@ -139,7 +138,6 @@ Why encrypt the IV with ECB first? Nobody knows. But it works.
 - python-dotenv for configuration management
 - bluez / python3-bluez for native Linux Bluetooth support
 - bleak for cross-platform BLE
-- winrt-runtime / winrt-Windows.Devices.Bluetooth for optional Windows WinRT support
 - pygame for optional gamepad input during testing
 
 All Python dependencies are specified in [pyproject.toml](pyproject.toml) and install automatically with `pip install -e .`.

@@ -13,13 +13,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-windows = [
-    "winrt-Windows.Devices.Bluetooth>=2.0.0",
-    "winrt-Windows.Devices.Bluetooth.Rfcomm>=2.0.0",
-    "winrt-Windows.Networking>=2.0.0",
-    "winrt-Windows.Networking.Sockets>=2.0.0",
-    "winrt-Windows.Storage.Streams>=2.0.0",
-]
+# Windows-specific optional runtime dependencies removed; use `bleak` for cross-platform BLE support.
+windows = []
 dev = [
     "pytest>=7.0.0",
 ]
