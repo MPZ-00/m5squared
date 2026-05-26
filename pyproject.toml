@@ -20,32 +20,12 @@ windows = [
     "winrt-Windows.Networking.Sockets>=2.0.0",
     "winrt-Windows.Storage.Streams>=2.0.0",
 ]
-linux = [
-    "pybluez2",
-]
 dev = [
     "pytest>=7.0.0",
 ]
 gui = [
     # tkinter is included with Python on most systems
     # On Linux, install: python3-tk (Debian/Ubuntu) or python3-tkinter (Fedora/RHEL)
-]
-
-[tool.setuptools]
-py-modules = [
-    "m25_analyzer",
-    "m25_bluetooth",
-    "m25_crypto",
-    "m25_decrypt",
-    "m25_ecs",
-    "m25_ecs_driveprofiles",
-    "m25_encrypt",
-    "m25_parking",
-    "m25_protocol",
-    "m25_protocol_data",
-    "m25_qr_to_key",
-    "m25_spp",
-    "m25_utils",
 ]
 
 [project.urls]
