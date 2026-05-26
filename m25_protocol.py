@@ -8,6 +8,8 @@ CRC-16, byte stuffing, frame markers. Nothing fancy, but it works.
 HEADER_MARKER = 0xEF          # All packets start with this. How original.
 HEADER_SIZE = 3
 MAX_FRAME_LENGTH = 293
+# Smallest possible frame: 3-byte header + 16-byte encrypted IV + 16-byte encrypted payload block
+# (AES-CBC + PKCS7 always emits at least one full block) + 2-byte CRC = 37 bytes.
 MIN_PACKET_LENGTH = 37
 IV_SIZE = 16
 CRC_SIZE = 2

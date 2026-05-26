@@ -24,6 +24,17 @@ Nothing exotic, but they did add some... creative choices.
 - **Encrypted Data**: The actual payload, CBC encrypted
 - **CRC-16**: Just in case the encryption wasn't enough
 
+### Why the Smallest Packet Is 37 Bytes
+
+Think of a packet like a sealed envelope with a tamper seal:
+
+- 3 bytes for the envelope label at the front
+- 16 bytes for the encrypted IV, which is the one-time random starter used by the cipher
+- 16 bytes for the encrypted payload block, even when the command itself is tiny, because AES works in 16-byte blocks and padding fills the last block
+- 2 bytes for the checksum at the end
+
+That adds up to 37 bytes minimum. In other words, even a very small command still needs the full security wrapping around it. Some packets can be longer if the real command data is larger, and byte stuffing can add a little more when a payload byte happens to look like the frame marker.
+
 ### Byte Stuffing
 
 Because 0xEF can appear in data too:
@@ -117,6 +128,17 @@ Why not just print the hex key? Where's the fun in that?
 4. Remove PKCS7 padding
 5. Verify CRC-16
 6. Parse the SPP data
+
+## Plain-English Summary
+
+The wheels do not listen to human words or button names. They listen to short encrypted messages over Bluetooth.
+
+Each message has two parts:
+
+- A small outer wrapper so the wheels know where a message starts and ends
+- A secured inner message that says things like "set drive mode", "send speed", or "read battery"
+
+When the GUI sends a motion command, it usually does two things: first it gets the wheels into the right mode, then it sends the speed command. The new one-shot buttons in the GUI only send one speed packet, which makes them useful for quick tests, but they are not the same as continuous driving.
 
 ## CRC-16
 

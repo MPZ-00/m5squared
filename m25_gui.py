@@ -915,9 +915,36 @@ class M25GUI:
         self.quick_bwd_btn = tk.Button(self.quick_move_frame, text="Backward", command=lambda: self.run_short_movement("backward"), state="disabled", cursor="hand2", width=10)
         self.quick_bwd_btn.pack(side=tk.LEFT)
 
-        # Row 5: status label centered
+        # Row 5: one-shot actions - label right, buttons left
+        self.one_shot_label = tk.Label(self.drive_test_frame, text="One-shot:", anchor=tk.E)
+        self.one_shot_label.grid(row=5, column=0, sticky=tk.E, padx=(0, 8), pady=3)
+
+        self.one_shot_frame = tk.Frame(self.drive_test_frame)
+        self.one_shot_frame.grid(row=5, column=1, sticky=tk.W, pady=3)
+
+        self.just_start_btn = tk.Button(
+            self.one_shot_frame,
+            text="Just Start",
+            command=self.run_just_start,
+            state="disabled",
+            cursor="hand2",
+            width=12,
+        )
+        self.just_start_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.just_stop_btn = tk.Button(
+            self.one_shot_frame,
+            text="Just Stop",
+            command=self.run_just_stop,
+            state="disabled",
+            cursor="hand2",
+            width=12,
+        )
+        self.just_stop_btn.pack(side=tk.LEFT)
+
+        # Row 6: status label centered
         self.drive_test_status = tk.Label(self.drive_test_frame, text="")
-        self.drive_test_status.grid(row=5, column=0, columnspan=2, pady=(3, 0))
+        self.drive_test_status.grid(row=6, column=0, columnspan=2, pady=(3, 0))
 
         # Output Section
         self.output_frame = tk.LabelFrame(self.main_frame, text="Output", padx=10, pady=10, font=("", 9, "bold"))
@@ -1208,6 +1235,10 @@ class M25GUI:
             self._theme_widget(self.quick_duration_scale, "scale")
             self._theme_widget(self.quick_fwd_btn, "button")
             self._theme_widget(self.quick_bwd_btn, "button")
+            self._theme_widget(self.one_shot_frame, "frame")
+            self._theme_widget(self.one_shot_label, "label")
+            self._theme_widget(self.just_start_btn, "button")
+            self._theme_widget(self.just_stop_btn, "button")
             self._theme_widget(self.drive_test_status, "label")
         
         # Output
@@ -2023,6 +2054,70 @@ class M25GUI:
 
         threading.Thread(target=move_thread, daemon=True).start()
 
+    def run_just_start(self):
+        """Send a single forward drive command without repeating it."""
+        self._run_one_shot_drive("start")
+
+    def run_just_stop(self):
+        """Send a single stop command without repeating it."""
+        self._run_one_shot_drive("stop")
+
+    def _run_one_shot_drive(self, action: str):
+        """Send one remote-speed packet for a start or stop action."""
+        if self.demo_mode:
+            self.log("warning", f"Demo mode: one-shot {action} simulated")
+            return
+
+        def action_thread():
+            def ui_log(level_msg, msg):
+                self.root.after(0, lambda: self.log(level_msg, msg))
+
+            def ui_status(level_msg, msg):
+                self.root.after(0, lambda: self.status_message(level_msg, msg))
+
+            def ui_test_status(msg):
+                self.root.after(0, lambda: self.drive_test_status.config(text=msg))
+
+            try:
+                if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                    ui_log("error", "Not connected")
+                    ui_status("error", "One-shot action failed: Not connected")
+                    return
+
+                builder = ECSPacketBuilder()
+                speed_mag = max(self.MOTION_SPEED_MIN, min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())))
+                speed = speed_mag if action == "start" else 0
+
+                remote_armed, left_mode, right_mode = self._ensure_remote_mode_both(builder, ui_log)
+                if not remote_armed:
+                    ui_log("error", "Failed to latch remote mode on both wheels after force re-arm attempts")
+                    ui_log("warning", f"Final drive mode flags: left={left_mode}, right={right_mode}")
+                    ui_status("error", "One-shot action failed: remote bit not active")
+                    return
+
+                label = "Just Start" if action == "start" else "Just Stop"
+                ui_test_status(label)
+                ui_log("info", f"  -> {label} (single packet, L:{speed}, R:{speed})")
+
+                self._write_remote_speed_both(builder, speed, speed)
+
+                ui_test_status(f"{label} sent")
+                ui_log("success", f"{label} command sent")
+                ui_status("success", f"{label} sent")
+
+            except Exception as e:
+                ui_log("error", f"One-shot action failed: {e}")
+                ui_status("error", "One-shot action failed")
+                ui_test_status("One-shot failed")
+            finally:
+                try:
+                    builder = ECSPacketBuilder()
+                    self._set_remote_mode_both(builder, False)
+                except Exception:
+                    pass
+
+        threading.Thread(target=action_thread, daemon=True).start()
+
     def _write_remote_speed_both(self, builder, left_speed, right_speed):
         """Send logical chair speeds to both wheels.
 
@@ -2055,6 +2150,8 @@ class M25GUI:
         self.single_dir_btn.config(state=state)
         self.quick_fwd_btn.config(state=state)
         self.quick_bwd_btn.config(state=state)
+        self.just_start_btn.config(state=state)
+        self.just_stop_btn.config(state=state)
     
     def toggle_deadman_disable(self):
         """Toggle deadman requirement with confirmation"""
