@@ -17,8 +17,7 @@ Features:
 """
 
 import tkinter as tk
-import tkinter.filedialog
-from tkinter import ttk, scrolledtext, messagebox
+from tkinter import filedialog, ttk, scrolledtext, messagebox
 import argparse
 import os
 import sys
@@ -381,7 +380,7 @@ class M25GUI:
         self.raw_trace_var = tk.BooleanVar(value=False)
         self.raw_trace_save_var = tk.BooleanVar(value=False)
         self.raw_trace_file_path = tk.StringVar(value="")
-        self._trace_fp = None
+        self._trace_fp: Any = None
         
         # Set window size to use max screen height
         screen_width = root.winfo_screenwidth()
@@ -1818,7 +1817,7 @@ class M25GUI:
 
     def open_trace_file_dialog(self):
         """Prompt for a file to save raw traces to and open it for append."""
-        path = tk.filedialog.asksaveasfilename(
+        path = filedialog.asksaveasfilename(
             defaultextension=".log",
             filetypes=[("Log files", "*.log"), ("All files", "*.*")],
             title="Select raw trace log file",
@@ -1882,7 +1881,7 @@ class M25GUI:
     def save_output_dialog(self):
         """Prompt the user to save the current output to a file."""
         try:
-            path = tk.filedialog.asksaveasfilename(
+            path = filedialog.asksaveasfilename(
                 defaultextension=".log",
                 filetypes=[("Log files", "*.log"), ("All files", "*.*")],
                 title="Save output to file",
