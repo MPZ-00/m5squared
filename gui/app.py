@@ -1262,8 +1262,9 @@ class M25GUI:
             self.root.after(0, lambda: self.status_message(level_msg, msg))
 
         def ui_test_status(msg: str, color: str = "black") -> None:
-            if test_status_widget is not None:
-                self.root.after(0, lambda: test_status_widget.config(
+            widget = test_status_widget
+            if widget is not None:
+                self.root.after(0, lambda widget=widget, msg=msg, color=color: widget.config(
                     text=msg, foreground=color
                 ))
 
@@ -1272,7 +1273,7 @@ class M25GUI:
     def update_system_info(self):
         """Update system information labels"""
         # Bluetooth mode - show actual per-wheel transport when connected
-        if self.connected and hasattr(self, '_left_transport') and hasattr(self, '_right_transport'):
+        if self.connected and self._left_transport is not None and self._right_transport is not None:
             lt = self._left_transport.upper()
             rt = self._right_transport.upper()
             bt_text = f"Bluetooth: {lt} (both)" if lt == rt else f"Bluetooth: L={lt} R={rt}"
