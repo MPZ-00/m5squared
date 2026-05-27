@@ -191,6 +191,12 @@ class M25BluetoothBLE:
                 pass
         if self.debug:
             print(message, file=sys.stderr)
+
+    def _on_ble_disconnected(self, client) -> None:
+        """Called by Bleak when the OS signals an unexpected BLE disconnect."""
+        if self.connected:
+            self.connected = False
+            self._trace(f"[{self.name}] BLE link dropped (device callback)")
         
     async def scan(self, duration: int = 10, filter_m25: bool = False) -> List[Tuple[str, str]]:
         """
@@ -257,6 +263,9 @@ class M25BluetoothBLE:
         try:
             self.client = BleakClient(addr, timeout=timeout)
             await self.client.connect()
+            # Register OS-level disconnect callback so we learn about drops immediately.
+            if hasattr(self.client, "set_disconnected_callback"):
+                self.client.set_disconnected_callback(self._on_ble_disconnected)
             self.connected = self.client.is_connected
             
             if self.connected:
@@ -351,8 +360,13 @@ class M25BluetoothBLE:
             
         except Exception as e:
             print(f"[{self.name}] Send error: {e}", file=sys.stderr)
+            # Hard GATT errors leave the BleakClient in an unusable state.
+            # Mark disconnected so callers stop attempting further operations.
+            err_s = str(e).lower()
+            if any(k in err_s for k in ("gatt", "service discovery", "unlikely", "not connected", "disconnected")):
+                self.connected = False
             return False
-    
+
     async def send_async(self, encrypted_data: bytes) -> bool:
         """
         Send already-encrypted data

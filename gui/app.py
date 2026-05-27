@@ -2698,7 +2698,46 @@ class M25GUI:
         left_ok = self.ecs_remote.write_remote_speed(self.left_conn, builder, -left_speed)
         right_ok = self.ecs_remote.write_remote_speed(self.right_conn, builder, right_speed)
         self._record_packet_stat()
+
+        # Detect hard BLE link drop propagated up from the transport layer.
+        if not getattr(self.left_conn, "connected", True) or \
+                not getattr(self.right_conn, "connected", True):
+            self.root.after(0, self._on_ble_link_lost)
+
         return left_ok, right_ok
+
+    def _on_ble_link_lost(self):
+        """Handle unexpected BLE disconnection detected during driving."""
+        if not self.connected:
+            return  # Already handled or clean disconnect in progress
+        broken = []
+        if not getattr(self.left_conn, "connected", True):
+            broken.append("left")
+        if not getattr(self.right_conn, "connected", True):
+            broken.append("right")
+        which = " + ".join(broken) if broken else "unknown"
+        self.log("error", f"BLE link lost ({which} wheel) - reconnect required")
+        self.log("warning", "If the wheels don't respond after reconnect, power-cycle them")
+        self.status_message("error", f"BLE lost ({which}) - click Connect to retry")
+        # Stop any active driving immediately
+        self._kb_stop_drive()
+        self._stop_oneshot_continuous()
+        self._is_armed = False
+        self._set_arm_state("--")
+        # Clean up in background then restore GUI to disconnected state
+        left, right = self.left_conn, self.right_conn
+        self.left_conn = None
+        self.right_conn = None
+        self.ecs_remote = None
+        def _cleanup():
+            for conn in (left, right):
+                if conn:
+                    try:
+                        conn.disconnect()
+                    except Exception:
+                        pass
+            self.root.after(0, self.disconnection_complete)
+        threading.Thread(target=_cleanup, daemon=True).start()
 
     def _record_packet_stat(self):
         """Record a sent speed packet timestamp for stats display."""

@@ -95,12 +95,19 @@ class BLEConnectionAdapter:
         """Send packet and receive decrypted response (sync interface)."""
         if not self.loop or not self.connected:
             return None
+        # Mirror underlying BT state: if device dropped, don't try to send.
+        if not getattr(self.bt, "connected", True):
+            self.connected = False
+            return None
 
         try:
             request_tid = self._telegram_id(spp_data)
             self._drain_notifications()
             ok = self._run(self.bt.send_packet(spp_data))
             if not ok:
+                # Propagate hard error state from BLE layer upward.
+                if not getattr(self.bt, "connected", True):
+                    self.connected = False
                 return None
 
             deadline = time.monotonic() + max(0.05, timeout)
