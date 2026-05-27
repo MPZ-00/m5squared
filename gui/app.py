@@ -1437,6 +1437,8 @@ class M25GUI:
         """Handle keyboard key-press events for driving."""
         if not self.connected or not self.keyboard_enabled:
             return
+        if not self._is_armed:
+            return  # Require manual arm; no spam log on every key
         # Don't intercept typing in text entry fields
         focused = self.root.focus_get()
         if isinstance(focused, (tk.Entry, tk.Text)):
@@ -1517,7 +1519,10 @@ class M25GUI:
         self._kb_stop_event.set()
 
     def _ensure_kb_thread_running(self):
-        """Start the keyboard drive thread if not already alive."""
+        """Start the keyboard drive thread if not already alive.
+
+        Wheels must be manually armed before calling. No auto-arm or auto-disarm here.
+        """
         if self._kb_thread and self._kb_thread.is_alive():
             return  # Running - desired speed already updated, nothing else to do
 
@@ -1533,43 +1538,27 @@ class M25GUI:
                     return
 
                 builder = ECSPacketBuilder()
-                self._set_arm_state("Arming...")
-                remote_armed, _, _ = self._ensure_remote_mode_both(builder, ui_log)
-                if not remote_armed:
-                    ui_log("warning", "Keyboard drive: could not arm remote mode")
-                    self._set_arm_state("Disarmed")
-                    return
 
-                self._set_arm_state("Armed")
-
-                # Key may have been released while arming was in progress
+                # Abort if key was released before the thread got scheduled
                 if stop_event.is_set() or (self._kb_desired_left == 0 and self._kb_desired_right == 0):
                     return
-
-                self._prime_remote_motion(builder)
 
                 # Pulse using the shared desired speed until stopped or zeroed
                 while not stop_event.is_set():
                     left = self._kb_desired_left
                     right = self._kb_desired_right
                     if left == 0 and right == 0:
-                        break  # Desired speed cleared by stop - exit loop
+                        break  # Speed cleared by stop/release - exit loop
                     self._write_remote_speed_both(builder, left, right)
                     stop_event.wait(self.pulse_interval_var.get() / 1000.0)
 
-                # Explicit zero packet before disarming
+                # Explicit zero packet on stop
                 self._write_remote_speed_both(builder, 0, 0)
                 time.sleep(self.REMOTE_STOP_DURATION_S)
 
             except Exception as exc:
                 ui_log("error", f"Keyboard drive error: {exc}")
-            finally:
-                try:
-                    builder2 = ECSPacketBuilder()
-                    self._set_remote_mode_both(builder2, False)
-                except Exception:
-                    pass
-                self._set_arm_state("Disarmed")
+            # No auto-disarm: arm state is managed by Arm/Disarm buttons only
 
         self._kb_thread = threading.Thread(target=_thread, daemon=True)
         self._kb_thread.start()
@@ -1579,6 +1568,9 @@ class M25GUI:
     def _dpad_press(self, direction: str):
         """Start driving in the given direction; called on mouse-button-down."""
         if not self.connected:
+            return
+        if not self._is_armed:
+            self.log("warning", "D-Pad: not armed - use Arm button first")
             return
         speed_mag = max(self.MOTION_SPEED_MIN, min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())))
         if direction == "fwd":
@@ -1593,6 +1585,7 @@ class M25GUI:
         elif direction == "right":
             self._kb_desired_left = speed_mag
             self._kb_desired_right = int(speed_mag * 0.3)
+        self.log("muted", f"D-Pad: {direction} (speed={speed_mag})")
         self._ensure_kb_thread_running()
 
     def _dpad_release(self):
@@ -1739,6 +1732,13 @@ class M25GUI:
         self.output.insert(tk.END, f"{message}\n", (lvl,))
         self.output.see(tk.END)
 
+        # Mirror all semantic log lines to the trace file when save is active
+        try:
+            if getattr(self, "raw_trace_save_var", None) and self.raw_trace_save_var.get():
+                self._write_trace_to_file(f"[{ts}] {prefix}: {message}")
+        except Exception:
+            pass
+
     def _raw_log_visible(self, message: str) -> bool:
         """Return True when message should be shown given current toggles."""
         is_spp = "SPP]" in message
@@ -1754,7 +1754,7 @@ class M25GUI:
         self.output.see(tk.END)
         try:
             if getattr(self, "raw_trace_save_var", None) and self.raw_trace_save_var.get():
-                self._write_trace_to_file(message)
+                self._write_trace_to_file(f"[{ts}] {message}")
         except Exception:
             pass
 
@@ -2322,17 +2322,22 @@ class M25GUI:
         if not self._is_armed:
             self.log("warning", "One-Shot: not armed - use Arm button first")
             return
-        self._one_shot_send(int(self.motion_speed_var.get()))
+        speed = int(self.motion_speed_var.get())
+        self.log("info", f"One-Shot: Start Fwd -> speed={speed}")
+        self._one_shot_send(speed)
 
     def run_just_start_bwd(self):
         """Send one backward speed packet; requires manual arm first."""
         if not self._is_armed:
             self.log("warning", "One-Shot: not armed - use Arm button first")
             return
-        self._one_shot_send(-int(self.motion_speed_var.get()))
+        speed = int(self.motion_speed_var.get())
+        self.log("info", f"One-Shot: Start Bwd -> speed={-speed}")
+        self._one_shot_send(-speed)
 
     def run_just_stop(self):
         """Send a stop (zero speed) packet; stays armed for further commands."""
+        self.log("info", "One-Shot: Stop -> speed=0 (stays armed)")
         self._one_shot_send(0)
 
     def _one_shot_send(self, speed: int):
