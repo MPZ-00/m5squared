@@ -45,6 +45,7 @@ class BLEConnectionAdapter:
     def _run(self, coro):
         """Run one coroutine on the shared loop, serialized across threads."""
         if not self.loop:
+            coro.close()  # suppress "coroutine never awaited" RuntimeWarning
             return None
         with self._loop_lock:
             return self.loop.run_until_complete(coro)

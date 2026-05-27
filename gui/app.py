@@ -2564,18 +2564,20 @@ class M25GUI:
         self._refresh_packet_stats_ui()
 
     def on_window_close(self):
-        """Ask whether to disconnect before closing."""
+        """Handle window close. With skip_disconnect_confirmation: disconnect silently."""
         if self.connected:
+            if self.skip_disconnect_confirmation:
+                self._close_after_disconnect = True
+                self.disconnect(skip_confirmation=True)
+                return
             result = messagebox.askyesno(
                 "Disconnect?",
                 "Disconnect from the wheels before closing?"
             )
             if result:
-                # Yes → send disconnect, then close when done
                 self._close_after_disconnect = True
                 self.disconnect(skip_confirmation=True)
             else:
-                # No → close immediately without sending disconnect
                 self.root.destroy()
             return
 
