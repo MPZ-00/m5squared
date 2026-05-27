@@ -195,6 +195,11 @@ class M25GUI:
         # One-Shot arm state (manual arm/disarm; Start buttons require this)
         self._is_armed: bool = False
 
+        # Continuous one-shot drive thread
+        self._oneshot_cont_stop_event = threading.Event()
+        self._oneshot_cont_stop_event.set()
+        self._oneshot_cont_thread: threading.Thread | None = None
+
         # Packet stats (rolling, last 20 intervals)
         self._stat_pkt_count: int = 0
         self._stat_intervals: list = []
@@ -579,9 +584,22 @@ class M25GUI:
         self.drive_test_btn = tk.Button(self.drive_left_frame, text="Run Drive Test", command=self.run_drive_test, state="disabled", cursor="hand2")
         self.drive_test_btn.grid(row=1, column=0, sticky=tk.W, pady=(0, 6))
 
+        # Drive test step indicators (Fwd / Bwd / L-Turn / R-Turn)
+        self.drive_test_steps_frame = tk.Frame(self.drive_left_frame)
+        self.drive_test_steps_frame.grid(row=2, column=0, sticky=tk.W, pady=(0, 4))
+
+        self.drive_step_labels = []
+        for _step in ("Fwd", "Bwd", "L-Turn", "R-Turn"):
+            _lbl = tk.Label(
+                self.drive_test_steps_frame, text=_step,
+                font=("TkDefaultFont", 8), relief=tk.RIDGE, padx=4, pady=1, width=6,
+            )
+            _lbl.pack(side=tk.LEFT, padx=2)
+            self.drive_step_labels.append(_lbl)
+
         # Single direction row
         self.single_dir_frame = tk.Frame(self.drive_left_frame)
-        self.single_dir_frame.grid(row=2, column=0, sticky=tk.W, pady=2)
+        self.single_dir_frame.grid(row=3, column=0, sticky=tk.W, pady=2)
 
         self.single_dir_label = tk.Label(self.single_dir_frame, text="Single dir:")
         self.single_dir_label.pack(side=tk.LEFT, padx=(0, 4))
@@ -612,7 +630,7 @@ class M25GUI:
 
         # Quick row
         self.quick_move_frame = tk.Frame(self.drive_left_frame)
-        self.quick_move_frame.grid(row=3, column=0, sticky=tk.W, pady=2)
+        self.quick_move_frame.grid(row=4, column=0, sticky=tk.W, pady=2)
 
         self.quick_label = tk.Label(self.quick_move_frame, text="Quick:")
         self.quick_label.pack(side=tk.LEFT, padx=(0, 4))
@@ -639,40 +657,54 @@ class M25GUI:
         self.quick_bwd_btn = tk.Button(self.quick_move_frame, text="Backward", command=lambda: self.run_short_movement("backward"), state="disabled", cursor="hand2", width=10)
         self.quick_bwd_btn.pack(side=tk.LEFT)
 
-        # One-Shot action row - sends single packet when armed
-        self.one_shot_drive_frame = tk.Frame(self.drive_left_frame)
-        self.one_shot_drive_frame.grid(row=4, column=0, sticky=tk.W, pady=(6, 2))
-
-        self.just_start_fwd_btn = tk.Button(self.one_shot_drive_frame, text="Start Fwd", command=self.run_just_start_fwd, state="disabled", cursor="hand2", width=10)
-        self.just_start_fwd_btn.pack(side=tk.LEFT, padx=(0, 5))
-
-        self.just_start_bwd_btn = tk.Button(self.one_shot_drive_frame, text="Start Bwd", command=self.run_just_start_bwd, state="disabled", cursor="hand2", width=10)
-        self.just_start_bwd_btn.pack(side=tk.LEFT, padx=(0, 5))
-
-        self.just_stop_btn = tk.Button(self.one_shot_drive_frame, text="Stop", command=self.run_just_stop, state="disabled", cursor="hand2", width=8)
-        self.just_stop_btn.pack(side=tk.LEFT)
-
         # --- Right panel: One-Shot & Drive ---
         self.one_shot_panel = tk.LabelFrame(self.drive_test_frame, text="One-Shot & Drive", padx=8, pady=8, font=("", 9, "bold"))
         self.one_shot_panel.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(4, 0))
+        self.one_shot_panel.columnconfigure(0, weight=1)
 
-        # Arm / Disarm buttons
+        # Row 0: [Arm][Disarm]  (spacer)  [Start Fwd][Start Bwd][Stop]
         self.one_shot_frame = tk.Frame(self.one_shot_panel)
-        self.one_shot_frame.grid(row=0, column=0, sticky=tk.W, pady=(0, 4))
+        self.one_shot_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 4))
+        self.one_shot_frame.columnconfigure(2, weight=1)
 
         self.arm_btn = tk.Button(self.one_shot_frame, text="Arm", command=self.run_arm, state="disabled", cursor="hand2", width=8)
-        self.arm_btn.pack(side=tk.LEFT, padx=(0, 5))
+        self.arm_btn.grid(row=0, column=0, padx=(0, 4))
 
         self.disarm_btn = tk.Button(self.one_shot_frame, text="Disarm", command=self.run_disarm, state="disabled", cursor="hand2", width=8)
-        self.disarm_btn.pack(side=tk.LEFT)
+        self.disarm_btn.grid(row=0, column=1)
 
-        # State label - larger font for at-a-glance readability
+        # column 2 = spacer (weight=1)
+
+        self.just_start_fwd_btn = tk.Button(self.one_shot_frame, text="Start Fwd", command=self.run_just_start_fwd, state="disabled", cursor="hand2", width=9)
+        self.just_start_fwd_btn.grid(row=0, column=3, padx=(0, 4))
+
+        self.just_start_bwd_btn = tk.Button(self.one_shot_frame, text="Start Bwd", command=self.run_just_start_bwd, state="disabled", cursor="hand2", width=9)
+        self.just_start_bwd_btn.grid(row=0, column=4, padx=(0, 4))
+
+        self.just_stop_btn = tk.Button(self.one_shot_frame, text="Stop", command=self.run_just_stop, state="disabled", cursor="hand2", width=7)
+        self.just_stop_btn.grid(row=0, column=5)
+
+        # Row 1: State label
         self.arm_state_lbl = tk.Label(self.one_shot_panel, text="State: --", font=("TkDefaultFont", 11, "bold"))
-        self.arm_state_lbl.grid(row=1, column=0, sticky=tk.W, pady=(0, 8))
+        self.arm_state_lbl.grid(row=1, column=0, sticky=tk.W, pady=(0, 4))
 
-        # D-Pad cross grid (3x3)
+        # Row 2: Continuous mode toggle
+        self.oneshot_mode_frame = tk.Frame(self.one_shot_panel)
+        self.oneshot_mode_frame.grid(row=2, column=0, sticky=tk.W, pady=(0, 6))
+
+        self.oneshot_mode_var = tk.BooleanVar(value=False)
+        tk.Label(self.oneshot_mode_frame, text="Mode:", font=("TkDefaultFont", 8)).pack(side=tk.LEFT, padx=(0, 4))
+        self.oneshot_continuous_check = tk.Checkbutton(
+            self.oneshot_mode_frame,
+            text="Continuous (pulse until Stop)",
+            variable=self.oneshot_mode_var,
+            font=("TkDefaultFont", 8),
+        )
+        self.oneshot_continuous_check.pack(side=tk.LEFT)
+
+        # Row 3: D-Pad cross grid (3x3)
         self.kb_drive_frame = tk.Frame(self.one_shot_panel)
-        self.kb_drive_frame.grid(row=2, column=0, sticky=tk.W, pady=(0, 6))
+        self.kb_drive_frame.grid(row=3, column=0, sticky=tk.W, pady=(0, 6))
         self.kb_drive_frame.columnconfigure(0, weight=1)
         self.kb_drive_frame.columnconfigure(1, weight=1)
         self.kb_drive_frame.columnconfigure(2, weight=1)
@@ -700,7 +732,7 @@ class M25GUI:
         self.kb_bwd_btn.bind("<ButtonPress-1>", lambda e: self._dpad_press("bwd"))
         self.kb_bwd_btn.bind("<ButtonRelease-1>", lambda e: self._dpad_release())
 
-        # Keyboard toggle (moved here from info panel)
+        # Row 4: Keyboard toggle
         self.keyboard_btn = tk.Button(
             self.one_shot_panel,
             text="Keyboard: OFF",
@@ -710,7 +742,7 @@ class M25GUI:
             cursor="hand2",
             command=self.toggle_keyboard,
         )
-        self.keyboard_btn.grid(row=3, column=0, sticky=tk.W, pady=(2, 0))
+        self.keyboard_btn.grid(row=4, column=0, sticky=tk.W, pady=(2, 0))
 
         # --- Bottom bar: Drive params (all modes) ---
         self.motion_tuning_outer = tk.LabelFrame(
@@ -1107,6 +1139,11 @@ class M25GUI:
                 self._theme_widget(self.drive_left_frame, "frame")
             self._theme_widget(self.drive_test_label, "label")
             self._theme_widget(self.drive_test_btn, "button")
+            # Step indicator chips
+            if hasattr(self, "drive_test_steps_frame"):
+                self._theme_widget(self.drive_test_steps_frame, "frame")
+                for _lbl in getattr(self, "drive_step_labels", []):
+                    _lbl.config(bg=theme["button_bg"], fg=theme["fg"])
             # Single direction row
             self._theme_widget(self.single_dir_frame, "frame")
             self._theme_widget(self.single_dir_label, "label")
@@ -1135,6 +1172,13 @@ class M25GUI:
             self._theme_widget(self.disarm_btn, "button")
             if hasattr(self, "arm_state_lbl"):
                 self._theme_widget(self.arm_state_lbl, "label")
+            if hasattr(self, "oneshot_mode_frame"):
+                self._theme_widget(self.oneshot_mode_frame, "frame")
+                for _w in self.oneshot_mode_frame.winfo_children():
+                    if isinstance(_w, tk.Label):
+                        self._theme_widget(_w, "label")
+            if hasattr(self, "oneshot_continuous_check"):
+                self._theme_widget(self.oneshot_continuous_check, "checkbox")
             if hasattr(self, "kb_drive_frame"):
                 self._theme_widget(self.kb_drive_frame, "frame")
             for _btn in ("kb_fwd_btn", "kb_left_btn", "kb_stop_btn", "kb_right_btn", "kb_bwd_btn"):
@@ -1479,20 +1523,32 @@ class M25GUI:
             self._update_kb_drive()
 
     def _update_kb_drive(self):
-        """Recompute desired speed from held keys; stop if no direction key is held."""
+        """Recompute desired speed from held keys and start/update the drive thread."""
         keys = self._keyboard_active_keys
+        speed_mag = max(
+            self.MOTION_SPEED_MIN,
+            min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())),
+        )
 
-        # Require an explicit forward or backward key
         if "w" in keys or "up" in keys:
             forward = True
         elif "s" in keys or "down" in keys:
             forward = False
         else:
-            # Only turn keys held - no drive (no turn-in-place)
-            self._kb_stop_drive()
+            # Only turn key(s) held: turn in-place (no auto-arm)
+            if "a" in keys or "left" in keys:
+                self._kb_desired_left = -speed_mag
+                self._kb_desired_right = speed_mag
+                self._ensure_kb_thread_running(with_arm=False)
+            elif "d" in keys or "right" in keys:
+                self._kb_desired_left = speed_mag
+                self._kb_desired_right = -speed_mag
+                self._ensure_kb_thread_running(with_arm=False)
+            else:
+                self._kb_stop_drive()
             return
 
-        # Asymmetric speed for turns
+        # Fwd/Bwd with optional arc turn (auto-arm)
         if "a" in keys or "left" in keys:
             left_pct, right_pct = 0.3, 1.0
         elif "d" in keys or "right" in keys:
@@ -1500,15 +1556,11 @@ class M25GUI:
         else:
             left_pct, right_pct = 1.0, 1.0
 
-        speed_mag = max(
-            self.MOTION_SPEED_MIN,
-            min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())),
-        )
         direction = 1 if forward else -1
         self._kb_desired_left = int(speed_mag * left_pct * direction)
         self._kb_desired_right = int(speed_mag * right_pct * direction)
 
-        self._ensure_kb_thread_running()
+        self._ensure_kb_thread_running(with_arm=True)
 
     def _kb_stop_drive(self):
         """Zero the desired speed and signal the drive thread to exit."""
@@ -1516,16 +1568,16 @@ class M25GUI:
         self._kb_desired_right = 0
         self._kb_stop_event.set()
 
-    def _ensure_kb_thread_running(self):
+    def _ensure_kb_thread_running(self, with_arm: bool = True):
         """Start the keyboard drive thread if not already alive.
 
-        D-Pad and keyboard drive auto-arm the wheels for the duration of the hold
-        and auto-disarm on release. This is independent of the One-Shot arm state.
+        with_arm=True (fwd/bwd): auto-arm before driving, auto-disarm on stop.
+        with_arm=False (turn-in-place): sends packets without arm/disarm; relies
+        on wheels already being in remote mode.
         """
         if self._kb_thread and self._kb_thread.is_alive():
-            return  # Running - desired speed already updated, nothing else to do
+            return  # Already running; desired speeds already updated
 
-        # Create a fresh stop event for this thread lifetime
         stop_event = threading.Event()
         self._kb_stop_event = stop_event
 
@@ -1537,43 +1589,42 @@ class M25GUI:
                     return
 
                 builder = ECSPacketBuilder()
-                self._set_arm_state("Arming...")
-                remote_armed, _, _ = self._ensure_remote_mode_both(builder, ui_log)
-                if not remote_armed:
-                    ui_log("warning", "Keyboard drive: could not arm remote mode")
-                    self._set_arm_state("Disarmed")
-                    return
 
-                self._set_arm_state("Armed")
+                if with_arm:
+                    self._set_arm_state("Arming...")
+                    remote_armed, _, _ = self._ensure_remote_mode_both(builder, ui_log)
+                    if not remote_armed:
+                        ui_log("warning", "Keyboard drive: could not arm remote mode")
+                        self._set_arm_state("Disarmed")
+                        return
+                    self._set_arm_state("Armed")
+                    if stop_event.is_set() or (self._kb_desired_left == 0 and self._kb_desired_right == 0):
+                        return
+                    self._prime_remote_motion(builder)
 
-                # Key may have been released while arming was in progress
-                if stop_event.is_set() or (self._kb_desired_left == 0 and self._kb_desired_right == 0):
-                    return
-
-                self._prime_remote_motion(builder)
-
-                # Pulse using the shared desired speed until stopped or zeroed
+                # Pulse desired speeds until stopped or zeroed
                 while not stop_event.is_set():
                     left = self._kb_desired_left
                     right = self._kb_desired_right
                     if left == 0 and right == 0:
-                        break  # Desired speed cleared by stop - exit loop
+                        break
                     self._write_remote_speed_both(builder, left, right)
                     stop_event.wait(self.pulse_interval_var.get() / 1000.0)
 
-                # Explicit zero packet before disarming
+                # Send explicit zero before handing off
                 self._write_remote_speed_both(builder, 0, 0)
                 time.sleep(self.REMOTE_STOP_DURATION_S)
 
             except Exception as exc:
                 ui_log("error", f"Keyboard drive error: {exc}")
             finally:
-                try:
-                    builder2 = ECSPacketBuilder()
-                    self._set_remote_mode_both(builder2, False)
-                except Exception:
-                    pass
-                self._set_arm_state("Disarmed")
+                if with_arm:
+                    try:
+                        builder2 = ECSPacketBuilder()
+                        self._set_remote_mode_both(builder2, False)
+                    except Exception:
+                        pass
+                    self._set_arm_state("Disarmed")
 
         self._kb_thread = threading.Thread(target=_thread, daemon=True)
         self._kb_thread.start()
@@ -1583,7 +1634,8 @@ class M25GUI:
     def _dpad_press(self, direction: str):
         """Start driving in the given direction; called on mouse-button-down.
 
-        D-Pad auto-arms for the duration of the hold and auto-disarms on release.
+        Fwd/Bwd: auto-arm for the duration of the hold, auto-disarm on release.
+        Left/Right: turn-in-place; no auto-arm (uses current wheel state).
         """
         if not self.connected:
             return
@@ -1595,13 +1647,14 @@ class M25GUI:
             self._kb_desired_left = -speed_mag
             self._kb_desired_right = -speed_mag
         elif direction == "left":
-            self._kb_desired_left = int(speed_mag * 0.3)
+            self._kb_desired_left = -speed_mag
             self._kb_desired_right = speed_mag
         elif direction == "right":
             self._kb_desired_left = speed_mag
-            self._kb_desired_right = int(speed_mag * 0.3)
+            self._kb_desired_right = -speed_mag
         self.log("muted", f"D-Pad: {direction} (speed={speed_mag})")
-        self._ensure_kb_thread_running()
+        with_arm = direction in ("fwd", "bwd")
+        self._ensure_kb_thread_running(with_arm=with_arm)
 
     def _dpad_release(self):
         """Stop driving; called on mouse-button-up."""
@@ -2088,6 +2141,7 @@ class M25GUI:
                 for i, (label, left_speed, right_speed) in enumerate(test_sequence):
                     ui_test_status(f"Step {i+1}/{len(test_sequence)}: {label}")
                     ui_log("info", f"  -> {label} (L:{left_speed}, R:{right_speed})")
+                    self.root.after(0, lambda s=label: self._set_drive_step_active(s))
 
                     # Stream speed commands during each movement window.
                     if label == "Stop":
@@ -2105,15 +2159,16 @@ class M25GUI:
                 ui_log("info", "  -> Final stop")
                 self._pulse_remote_speed(builder, 0, 0, self.REMOTE_STOP_DURATION_S)
                 
+                self.root.after(0, self._clear_drive_step_highlight)
                 ui_test_status("Drive test completed")
                 ui_log("success", "Drive test completed successfully")
                 ui_status("success", "Drive test completed")
-                
+
             except Exception as e:
                 ui_log("error", f"Drive test failed: {e}")
                 ui_status("error", "Drive test failed")
                 ui_test_status("Test failed")
-                
+                self.root.after(0, self._clear_drive_step_highlight)
                 # Emergency stop on error
                 try:
                     builder = ECSPacketBuilder()
@@ -2128,6 +2183,34 @@ class M25GUI:
                     pass
         
         threading.Thread(target=test_thread, daemon=True).start()
+
+    # Step label name -> drive_step_labels index
+    _STEP_LABEL_MAP = {
+        "Forward": 0,
+        "Backward": 1,
+        "Left Turn": 2,
+        "Right Turn": 3,
+    }
+
+    def _set_drive_step_active(self, step_name: str):
+        """Highlight the matching step chip; called from test thread via root.after."""
+        idx = self._STEP_LABEL_MAP.get(step_name)
+        if not hasattr(self, "drive_step_labels"):
+            return
+        theme = self.THEMES[self.current_theme]
+        for i, lbl in enumerate(self.drive_step_labels):
+            if i == idx:
+                lbl.config(bg=theme["text"]["success"], fg=theme["bg"], relief=tk.SUNKEN)
+            else:
+                lbl.config(bg=theme["button_bg"], fg=theme["fg"], relief=tk.RIDGE)
+
+    def _clear_drive_step_highlight(self):
+        """Reset all step chips to neutral appearance."""
+        if not hasattr(self, "drive_step_labels"):
+            return
+        theme = self.THEMES[self.current_theme]
+        for lbl in self.drive_step_labels:
+            lbl.config(bg=theme["button_bg"], fg=theme["fg"], relief=tk.RIDGE)
 
     def run_single_direction_test(self):
         """Run a single direction test (user-chosen: Forward or Backward)"""
@@ -2255,13 +2338,17 @@ class M25GUI:
         self.root.after(0, _apply)
 
     def _update_oneshot_drive_buttons(self):
-        """Enable Start Fwd/Bwd/Stop only when connected and manually armed."""
+        """Enable Start Fwd/Bwd when armed+connected; Stop enabled when connected."""
         armed_and_connected = self._is_armed and self.connected
-        state = "normal" if armed_and_connected else "disabled"
-        for attr in ("just_start_fwd_btn", "just_start_bwd_btn", "just_stop_btn"):
+        start_state = "normal" if armed_and_connected else "disabled"
+        stop_state = "normal" if self.connected else "disabled"
+        for attr in ("just_start_fwd_btn", "just_start_bwd_btn"):
             btn = getattr(self, attr, None)
             if btn:
-                btn.config(state=state)
+                btn.config(state=start_state)
+        stop_btn = getattr(self, "just_stop_btn", None)
+        if stop_btn:
+            stop_btn.config(state=stop_state)
 
     def run_arm(self):
         """Arm remote mode on both wheels without driving."""
@@ -2333,27 +2420,67 @@ class M25GUI:
         self._dpad_press("fwd")
 
     def run_just_start_fwd(self):
-        """Send one forward speed packet; requires manual arm first."""
+        """Start Fwd: one packet in one-shot mode, continuous pulses in continuous mode."""
         if not self._is_armed:
             self.log("warning", "One-Shot: not armed - use Arm button first")
             return
         speed = int(self.motion_speed_var.get())
-        self.log("info", f"One-Shot: Start Fwd -> speed={speed}")
-        self._one_shot_send(speed)
+        if getattr(self, "oneshot_mode_var", None) and self.oneshot_mode_var.get():
+            self.log("info", f"Continuous: Start Fwd -> speed={speed}")
+            self._start_oneshot_continuous(speed)
+        else:
+            self.log("info", f"One-Shot: Start Fwd -> speed={speed}")
+            self._one_shot_send(speed)
 
     def run_just_start_bwd(self):
-        """Send one backward speed packet; requires manual arm first."""
+        """Start Bwd: one packet in one-shot mode, continuous pulses in continuous mode."""
         if not self._is_armed:
             self.log("warning", "One-Shot: not armed - use Arm button first")
             return
         speed = int(self.motion_speed_var.get())
-        self.log("info", f"One-Shot: Start Bwd -> speed={-speed}")
-        self._one_shot_send(-speed)
+        if getattr(self, "oneshot_mode_var", None) and self.oneshot_mode_var.get():
+            self.log("info", f"Continuous: Start Bwd -> speed={-speed}")
+            self._start_oneshot_continuous(-speed)
+        else:
+            self.log("info", f"One-Shot: Start Bwd -> speed={-speed}")
+            self._one_shot_send(-speed)
 
     def run_just_stop(self):
-        """Send a stop (zero speed) packet; stays armed for further commands."""
+        """Stop: halts continuous mode and sends a zero-speed packet; stays armed."""
+        self._stop_oneshot_continuous()
         self.log("info", "One-Shot: Stop -> speed=0 (stays armed)")
         self._one_shot_send(0)
+
+    def _start_oneshot_continuous(self, speed: int):
+        """Begin continuous speed pulsing at the configured pulse interval."""
+        self._stop_oneshot_continuous()  # cancel any prior run
+        stop_event = threading.Event()
+        self._oneshot_cont_stop_event = stop_event
+
+        def _loop():
+            ui_log, _, ui_test_status = self._make_ui_callbacks(self.drive_test_status)
+            try:
+                if not self.ecs_remote or not self.left_conn or not self.right_conn:
+                    ui_log("error", "Continuous: not connected")
+                    return
+                builder = ECSPacketBuilder()
+                label = "Fwd" if speed > 0 else "Bwd"
+                ui_log("info", f"Continuous: {label} running (speed={speed})")
+                ui_test_status(f"Continuous {label}")
+                while not stop_event.is_set():
+                    self._write_remote_speed_both(builder, speed, speed)
+                    stop_event.wait(self.pulse_interval_var.get() / 1000.0)
+                ui_log("muted", "Continuous: stopped by Stop button")
+            except Exception as exc:
+                ui_log("error", f"Continuous drive error: {exc}")
+
+        self._oneshot_cont_thread = threading.Thread(target=_loop, daemon=True)
+        self._oneshot_cont_thread.start()
+
+    def _stop_oneshot_continuous(self):
+        """Signal the continuous drive loop to exit."""
+        self._oneshot_cont_stop_event.set()
+        self._oneshot_cont_thread = None
 
     def _one_shot_send(self, speed: int):
         """Send one speed packet without arming or disarming."""
