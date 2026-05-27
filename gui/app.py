@@ -192,6 +192,14 @@ class M25GUI:
         self._kb_desired_right: int = 0
         self._kb_thread: threading.Thread | None = None
 
+        # One-Shot arm state (manual arm/disarm; Start buttons require this)
+        self._is_armed: bool = False
+
+        # Packet stats (rolling, last 20 intervals)
+        self._stat_pkt_count: int = 0
+        self._stat_intervals: list = []
+        self._stat_last_sent: float = 0.0
+
         # Theme state
         self.current_theme = "dark"
 
@@ -554,26 +562,164 @@ class M25GUI:
         self.info_dump_btn = tk.Button(self.btn_frame, text="📋 Info Dump", command=self.info_dump, state="disabled", cursor="hand2")
         self.info_dump_btn.pack(side=tk.LEFT, padx=5)
         
-        # Drive Test Section - grid layout for aligned rows
+        # Drive Test Section - 2-column responsive layout
         self.drive_test_frame = tk.LabelFrame(self.control_frame, text="Quick Drive Test", padx=10, pady=10, font=("", 9, "bold"))
         self.drive_test_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0))
-        self.drive_test_frame.columnconfigure(0, weight=1)
-        self.drive_test_frame.columnconfigure(1, weight=1)
+        self.drive_test_frame.columnconfigure(0, weight=3)
+        self.drive_test_frame.columnconfigure(1, weight=2, minsize=220)
 
-        # Row 0: description spanning both columns, centered
-        self.drive_test_label = tk.Label(self.drive_test_frame, text="Test sequence: Forward → Backward → Left → Right")
-        self.drive_test_label.grid(row=0, column=0, columnspan=2, pady=(0, 5))
+        # --- Left content frame ---
+        self.drive_left_frame = tk.Frame(self.drive_test_frame)
+        self.drive_left_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N), padx=(0, 8))
 
-        # Row 1: Run Drive Test button centered
-        self.drive_test_btn = tk.Button(self.drive_test_frame, text="Run Drive Test", command=self.run_drive_test, state="disabled", cursor="hand2")
-        self.drive_test_btn.grid(row=1, column=0, columnspan=2, pady=5)
+        # Description + Run Drive Test
+        self.drive_test_label = tk.Label(self.drive_left_frame, text="Test sequence: Forward -> Backward -> Left -> Right")
+        self.drive_test_label.grid(row=0, column=0, sticky=tk.W, pady=(0, 4))
 
-        # Row 2: shared motion tuning controls
-        self.motion_tuning_label = tk.Label(self.drive_test_frame, text="Motion tuning:", anchor=tk.E)
-        self.motion_tuning_label.grid(row=2, column=0, sticky=tk.E, padx=(0, 8), pady=3)
+        self.drive_test_btn = tk.Button(self.drive_left_frame, text="Run Drive Test", command=self.run_drive_test, state="disabled", cursor="hand2")
+        self.drive_test_btn.grid(row=1, column=0, sticky=tk.W, pady=(0, 6))
 
-        self.motion_tuning_frame = tk.Frame(self.drive_test_frame)
-        self.motion_tuning_frame.grid(row=2, column=1, sticky=tk.W, pady=3)
+        # Single direction row
+        self.single_dir_frame = tk.Frame(self.drive_left_frame)
+        self.single_dir_frame.grid(row=2, column=0, sticky=tk.W, pady=2)
+
+        self.single_dir_label = tk.Label(self.single_dir_frame, text="Single dir:")
+        self.single_dir_label.pack(side=tk.LEFT, padx=(0, 4))
+
+        self.single_dir_var = tk.StringVar(value="Forward")
+        self.single_dir_menu = tk.OptionMenu(self.single_dir_frame, self.single_dir_var, "Forward", "Backward")
+        self.single_dir_menu.config(width=10)
+        self.single_dir_menu.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.single_duration_label = tk.Label(self.single_dir_frame, text="Time (s):")
+        self.single_duration_label.pack(side=tk.LEFT, padx=(4, 4))
+
+        self.single_duration_var = tk.DoubleVar(value=self.SINGLE_DURATION_DEFAULT)
+        self.single_duration_scale = tk.Scale(
+            self.single_dir_frame,
+            from_=self.SINGLE_DURATION_MIN,
+            to=self.SINGLE_DURATION_MAX,
+            resolution=0.1,
+            orient=tk.HORIZONTAL,
+            length=100,
+            variable=self.single_duration_var,
+            showvalue=True,
+        )
+        self.single_duration_scale.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.single_dir_btn = tk.Button(self.single_dir_frame, text="Run", command=self.run_single_direction_test, state="disabled", cursor="hand2", width=8)
+        self.single_dir_btn.pack(side=tk.LEFT)
+
+        # Quick row
+        self.quick_move_frame = tk.Frame(self.drive_left_frame)
+        self.quick_move_frame.grid(row=3, column=0, sticky=tk.W, pady=2)
+
+        self.quick_label = tk.Label(self.quick_move_frame, text="Quick:")
+        self.quick_label.pack(side=tk.LEFT, padx=(0, 4))
+
+        self.quick_duration_label = tk.Label(self.quick_move_frame, text="Time (s):")
+        self.quick_duration_label.pack(side=tk.LEFT, padx=(0, 4))
+
+        self.quick_duration_var = tk.DoubleVar(value=self.QUICK_DURATION_DEFAULT)
+        self.quick_duration_scale = tk.Scale(
+            self.quick_move_frame,
+            from_=self.QUICK_DURATION_MIN,
+            to=self.QUICK_DURATION_MAX,
+            resolution=0.1,
+            orient=tk.HORIZONTAL,
+            length=100,
+            variable=self.quick_duration_var,
+            showvalue=True,
+        )
+        self.quick_duration_scale.pack(side=tk.LEFT, padx=(0, 8))
+
+        self.quick_fwd_btn = tk.Button(self.quick_move_frame, text="Forward", command=lambda: self.run_short_movement("forward"), state="disabled", cursor="hand2", width=10)
+        self.quick_fwd_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.quick_bwd_btn = tk.Button(self.quick_move_frame, text="Backward", command=lambda: self.run_short_movement("backward"), state="disabled", cursor="hand2", width=10)
+        self.quick_bwd_btn.pack(side=tk.LEFT)
+
+        # One-Shot action row - sends single packet when armed
+        self.one_shot_drive_frame = tk.Frame(self.drive_left_frame)
+        self.one_shot_drive_frame.grid(row=4, column=0, sticky=tk.W, pady=(6, 2))
+
+        self.just_start_fwd_btn = tk.Button(self.one_shot_drive_frame, text="Start Fwd", command=self.run_just_start_fwd, state="disabled", cursor="hand2", width=10)
+        self.just_start_fwd_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.just_start_bwd_btn = tk.Button(self.one_shot_drive_frame, text="Start Bwd", command=self.run_just_start_bwd, state="disabled", cursor="hand2", width=10)
+        self.just_start_bwd_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.just_stop_btn = tk.Button(self.one_shot_drive_frame, text="Stop", command=self.run_just_stop, state="disabled", cursor="hand2", width=8)
+        self.just_stop_btn.pack(side=tk.LEFT)
+
+        # --- Right panel: One-Shot & Drive ---
+        self.one_shot_panel = tk.LabelFrame(self.drive_test_frame, text="One-Shot & Drive", padx=8, pady=8, font=("", 9, "bold"))
+        self.one_shot_panel.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(4, 0))
+
+        # Arm / Disarm buttons
+        self.one_shot_frame = tk.Frame(self.one_shot_panel)
+        self.one_shot_frame.grid(row=0, column=0, sticky=tk.W, pady=(0, 4))
+
+        self.arm_btn = tk.Button(self.one_shot_frame, text="Arm", command=self.run_arm, state="disabled", cursor="hand2", width=8)
+        self.arm_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.disarm_btn = tk.Button(self.one_shot_frame, text="Disarm", command=self.run_disarm, state="disabled", cursor="hand2", width=8)
+        self.disarm_btn.pack(side=tk.LEFT)
+
+        # State label - larger font for at-a-glance readability
+        self.arm_state_lbl = tk.Label(self.one_shot_panel, text="State: --", font=("TkDefaultFont", 11, "bold"))
+        self.arm_state_lbl.grid(row=1, column=0, sticky=tk.W, pady=(0, 8))
+
+        # D-Pad cross grid (3x3)
+        self.kb_drive_frame = tk.Frame(self.one_shot_panel)
+        self.kb_drive_frame.grid(row=2, column=0, sticky=tk.W, pady=(0, 6))
+        self.kb_drive_frame.columnconfigure(0, weight=1)
+        self.kb_drive_frame.columnconfigure(1, weight=1)
+        self.kb_drive_frame.columnconfigure(2, weight=1)
+
+        self.kb_fwd_btn = tk.Button(self.kb_drive_frame, text="Fwd", width=7, cursor="hand2", state="disabled")
+        self.kb_fwd_btn.grid(row=0, column=1, padx=2, pady=2)
+        self.kb_fwd_btn.bind("<ButtonPress-1>", lambda e: self._dpad_press("fwd"))
+        self.kb_fwd_btn.bind("<ButtonRelease-1>", lambda e: self._dpad_release())
+
+        self.kb_left_btn = tk.Button(self.kb_drive_frame, text="Left", width=7, cursor="hand2", state="disabled")
+        self.kb_left_btn.grid(row=1, column=0, padx=2, pady=2)
+        self.kb_left_btn.bind("<ButtonPress-1>", lambda e: self._dpad_press("left"))
+        self.kb_left_btn.bind("<ButtonRelease-1>", lambda e: self._dpad_release())
+
+        self.kb_stop_btn = tk.Button(self.kb_drive_frame, text="Stop", width=7, cursor="hand2", state="disabled", command=self._dpad_stop)
+        self.kb_stop_btn.grid(row=1, column=1, padx=2, pady=2)
+
+        self.kb_right_btn = tk.Button(self.kb_drive_frame, text="Right", width=7, cursor="hand2", state="disabled")
+        self.kb_right_btn.grid(row=1, column=2, padx=2, pady=2)
+        self.kb_right_btn.bind("<ButtonPress-1>", lambda e: self._dpad_press("right"))
+        self.kb_right_btn.bind("<ButtonRelease-1>", lambda e: self._dpad_release())
+
+        self.kb_bwd_btn = tk.Button(self.kb_drive_frame, text="Bwd", width=7, cursor="hand2", state="disabled")
+        self.kb_bwd_btn.grid(row=2, column=1, padx=2, pady=2)
+        self.kb_bwd_btn.bind("<ButtonPress-1>", lambda e: self._dpad_press("bwd"))
+        self.kb_bwd_btn.bind("<ButtonRelease-1>", lambda e: self._dpad_release())
+
+        # Keyboard toggle (moved here from info panel)
+        self.keyboard_btn = tk.Button(
+            self.one_shot_panel,
+            text="Keyboard: OFF",
+            font=("TkDefaultFont", 8),
+            relief=tk.RIDGE,
+            padx=4,
+            cursor="hand2",
+            command=self.toggle_keyboard,
+        )
+        self.keyboard_btn.grid(row=3, column=0, sticky=tk.W, pady=(2, 0))
+
+        # --- Bottom bar: Drive params (all modes) ---
+        self.motion_tuning_outer = tk.LabelFrame(
+            self.drive_test_frame, text="Drive params (all modes)", padx=6, pady=6, font=("", 9, "bold")
+        )
+        self.motion_tuning_outer.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(8, 0))
+
+        self.motion_tuning_frame = tk.Frame(self.motion_tuning_outer)
+        self.motion_tuning_frame.grid(row=0, column=0, sticky=tk.W)
 
         self.motion_speed_label = tk.Label(self.motion_tuning_frame, text="Speed:")
         self.motion_speed_label.pack(side=tk.LEFT, padx=(0, 4))
@@ -638,128 +784,29 @@ class M25GUI:
         )
         self.pulse_interval_scale.pack(side=tk.LEFT, padx=(0, 5))
 
-        # Row 3: single direction - label right, controls left
-        self.single_dir_label = tk.Label(self.drive_test_frame, text="Single direction:", anchor=tk.E)
-        self.single_dir_label.grid(row=3, column=0, sticky=tk.E, padx=(0, 8), pady=3)
+        # Packet stats row
+        self.packet_stats_frame = tk.Frame(self.motion_tuning_outer)
+        self.packet_stats_frame.grid(row=1, column=0, sticky=tk.W, pady=(4, 0))
 
-        self.single_dir_frame = tk.Frame(self.drive_test_frame)
-        self.single_dir_frame.grid(row=3, column=1, sticky=tk.W, pady=3)
+        self.stat_pkt_count_lbl = tk.Label(self.packet_stats_frame, text="Pkts: 0", font=("TkDefaultFont", 8))
+        self.stat_pkt_count_lbl.pack(side=tk.LEFT, padx=(0, 6))
 
-        self.single_dir_var = tk.StringVar(value="Forward")
-        self.single_dir_menu = tk.OptionMenu(self.single_dir_frame, self.single_dir_var, "Forward", "Backward")
-        self.single_dir_menu.config(width=10)
-        self.single_dir_menu.pack(side=tk.LEFT, padx=(0, 5))
+        tk.Label(self.packet_stats_frame, text="|", font=("TkDefaultFont", 8)).pack(side=tk.LEFT, padx=(0, 6))
 
-        self.single_duration_label = tk.Label(self.single_dir_frame, text="Time (s):")
-        self.single_duration_label.pack(side=tk.LEFT, padx=(4, 4))
+        self.stat_avg_interval_lbl = tk.Label(self.packet_stats_frame, text="Avg interval: --ms", font=("TkDefaultFont", 8))
+        self.stat_avg_interval_lbl.pack(side=tk.LEFT, padx=(0, 6))
 
-        self.single_duration_var = tk.DoubleVar(value=self.SINGLE_DURATION_DEFAULT)
-        self.single_duration_scale = tk.Scale(
-            self.single_dir_frame,
-            from_=self.SINGLE_DURATION_MIN,
-            to=self.SINGLE_DURATION_MAX,
-            resolution=0.1,
-            orient=tk.HORIZONTAL,
-            length=120,
-            variable=self.single_duration_var,
-            showvalue=True,
-        )
-        self.single_duration_scale.pack(side=tk.LEFT, padx=(0, 5))
+        tk.Label(self.packet_stats_frame, text="|", font=("TkDefaultFont", 8)).pack(side=tk.LEFT, padx=(0, 6))
 
-        self.single_dir_btn = tk.Button(self.single_dir_frame, text="Run", command=self.run_single_direction_test, state="disabled", cursor="hand2", width=8)
-        self.single_dir_btn.pack(side=tk.LEFT)
+        self.stat_last_ts_lbl = tk.Label(self.packet_stats_frame, text="Last: --:--:--", font=("TkDefaultFont", 8))
+        self.stat_last_ts_lbl.pack(side=tk.LEFT, padx=(0, 8))
 
-        # Row 4: quick buttons - label right, buttons left
-        self.quick_label = tk.Label(self.drive_test_frame, text="Quick:", anchor=tk.E)
-        self.quick_label.grid(row=4, column=0, sticky=tk.E, padx=(0, 8), pady=3)
+        self.stat_reset_btn = tk.Button(self.packet_stats_frame, text="Reset", command=self._reset_packet_stats, cursor="hand2", font=("TkDefaultFont", 8))
+        self.stat_reset_btn.pack(side=tk.LEFT)
 
-        self.quick_move_frame = tk.Frame(self.drive_test_frame)
-        self.quick_move_frame.grid(row=4, column=1, sticky=tk.W, pady=3)
-
-        self.quick_duration_label = tk.Label(self.quick_move_frame, text="Time (s):")
-        self.quick_duration_label.pack(side=tk.LEFT, padx=(0, 4))
-
-        self.quick_duration_var = tk.DoubleVar(value=self.QUICK_DURATION_DEFAULT)
-        self.quick_duration_scale = tk.Scale(
-            self.quick_move_frame,
-            from_=self.QUICK_DURATION_MIN,
-            to=self.QUICK_DURATION_MAX,
-            resolution=0.1,
-            orient=tk.HORIZONTAL,
-            length=120,
-            variable=self.quick_duration_var,
-            showvalue=True,
-        )
-        self.quick_duration_scale.pack(side=tk.LEFT, padx=(0, 8))
-
-        self.quick_fwd_btn = tk.Button(self.quick_move_frame, text="Forward", command=lambda: self.run_short_movement("forward"), state="disabled", cursor="hand2", width=10)
-        self.quick_fwd_btn.pack(side=tk.LEFT, padx=(0, 5))
-
-        self.quick_bwd_btn = tk.Button(self.quick_move_frame, text="Backward", command=lambda: self.run_short_movement("backward"), state="disabled", cursor="hand2", width=10)
-        self.quick_bwd_btn.pack(side=tk.LEFT)
-
-        # Row 5: one-shot - arm/disarm
-        self.one_shot_label = tk.Label(self.drive_test_frame, text="One-shot:", anchor=tk.E)
-        self.one_shot_label.grid(row=5, column=0, sticky=tk.E, padx=(0, 8), pady=(3, 0))
-
-        self.one_shot_frame = tk.Frame(self.drive_test_frame)
-        self.one_shot_frame.grid(row=5, column=1, sticky=tk.W, pady=(3, 0))
-
-        self.arm_btn = tk.Button(self.one_shot_frame, text="Arm", command=self.run_arm, state="disabled", cursor="hand2", width=8)
-        self.arm_btn.pack(side=tk.LEFT, padx=(0, 5))
-
-        self.disarm_btn = tk.Button(self.one_shot_frame, text="Disarm", command=self.run_disarm, state="disabled", cursor="hand2", width=8)
-        self.disarm_btn.pack(side=tk.LEFT, padx=(0, 10))
-
-        self.arm_state_lbl = tk.Label(self.one_shot_frame, text="State: --", font=("TkDefaultFont", 8))
-        self.arm_state_lbl.pack(side=tk.LEFT)
-
-        # Row 6: one-shot - start fwd/bwd/stop
-        self.one_shot_drive_frame = tk.Frame(self.drive_test_frame)
-        self.one_shot_drive_frame.grid(row=6, column=1, sticky=tk.W, pady=(0, 3))
-
-        self.just_start_fwd_btn = tk.Button(self.one_shot_drive_frame, text="Start Fwd", command=self.run_just_start_fwd, state="disabled", cursor="hand2", width=10)
-        self.just_start_fwd_btn.pack(side=tk.LEFT, padx=(0, 5))
-
-        self.just_start_bwd_btn = tk.Button(self.one_shot_drive_frame, text="Start Bwd", command=self.run_just_start_bwd, state="disabled", cursor="hand2", width=10)
-        self.just_start_bwd_btn.pack(side=tk.LEFT, padx=(0, 5))
-
-        self.just_stop_btn = tk.Button(self.one_shot_drive_frame, text="Stop", command=self.run_just_stop, state="disabled", cursor="hand2", width=8)
-        self.just_stop_btn.pack(side=tk.LEFT)
-
-        # Row 7: keyboard d-pad
-        self.kb_drive_label = tk.Label(self.drive_test_frame, text="Keyboard:", anchor=tk.E)
-        self.kb_drive_label.grid(row=7, column=0, sticky=tk.E, padx=(0, 8), pady=3)
-
-        self.kb_drive_frame = tk.Frame(self.drive_test_frame)
-        self.kb_drive_frame.grid(row=7, column=1, sticky=tk.W, pady=3)
-
-        self.kb_fwd_btn = tk.Button(self.kb_drive_frame, text="▲ Fwd", width=8, cursor="hand2", state="disabled")
-        self.kb_fwd_btn.pack(side=tk.LEFT, padx=(0, 3))
-        self.kb_fwd_btn.bind("<ButtonPress-1>", lambda e: self._dpad_press("fwd"))
-        self.kb_fwd_btn.bind("<ButtonRelease-1>", lambda e: self._dpad_release())
-
-        self.kb_left_btn = tk.Button(self.kb_drive_frame, text="◄ Left", width=8, cursor="hand2", state="disabled")
-        self.kb_left_btn.pack(side=tk.LEFT, padx=(0, 3))
-        self.kb_left_btn.bind("<ButtonPress-1>", lambda e: self._dpad_press("left"))
-        self.kb_left_btn.bind("<ButtonRelease-1>", lambda e: self._dpad_release())
-
-        self.kb_stop_btn = tk.Button(self.kb_drive_frame, text="Stop", width=6, cursor="hand2", state="disabled", command=self._dpad_stop)
-        self.kb_stop_btn.pack(side=tk.LEFT, padx=(0, 3))
-
-        self.kb_right_btn = tk.Button(self.kb_drive_frame, text="Right ►", width=8, cursor="hand2", state="disabled")
-        self.kb_right_btn.pack(side=tk.LEFT, padx=(0, 3))
-        self.kb_right_btn.bind("<ButtonPress-1>", lambda e: self._dpad_press("right"))
-        self.kb_right_btn.bind("<ButtonRelease-1>", lambda e: self._dpad_release())
-
-        self.kb_bwd_btn = tk.Button(self.kb_drive_frame, text="▼ Bwd", width=8, cursor="hand2", state="disabled")
-        self.kb_bwd_btn.pack(side=tk.LEFT)
-        self.kb_bwd_btn.bind("<ButtonPress-1>", lambda e: self._dpad_press("bwd"))
-        self.kb_bwd_btn.bind("<ButtonRelease-1>", lambda e: self._dpad_release())
-
-        # Row 8: status label centered
+        # Status label
         self.drive_test_status = tk.Label(self.drive_test_frame, text="")
-        self.drive_test_status.grid(row=8, column=0, columnspan=2, pady=(3, 0))
+        self.drive_test_status.grid(row=2, column=0, columnspan=2, pady=(4, 0))
 
         # Output Section
         self.output_frame = tk.LabelFrame(self.main_frame, text="Output", padx=10, pady=10, font=("", 9, "bold"))
@@ -839,15 +886,7 @@ class M25GUI:
         self.info_arch_lbl = tk.Label(self.info_frame, text="Mode: Legacy", anchor=tk.W, font=("TkDefaultFont", 8))
         self.info_arch_lbl.pack(side=tk.LEFT, padx=5)
 
-        self.keyboard_btn = tk.Button(
-            self.info_frame,
-            text="Keyboard: OFF",
-            font=("TkDefaultFont", 8),
-            relief=tk.RIDGE,
-            padx=4,
-            command=self.toggle_keyboard,
-        )
-        self.keyboard_btn.pack(side=tk.LEFT, padx=8)
+        # keyboard_btn is in the One-Shot & Drive panel (drive test section)
 
         # Configure row weights for resizing
         self.main_frame.rowconfigure(3, weight=1)
@@ -1064,50 +1103,68 @@ class M25GUI:
         # Drive Test Section
         if hasattr(self, "drive_test_frame"):
             self._theme_widget(self.drive_test_frame, "labelframe")
+            if hasattr(self, "drive_left_frame"):
+                self._theme_widget(self.drive_left_frame, "frame")
             self._theme_widget(self.drive_test_label, "label")
             self._theme_widget(self.drive_test_btn, "button")
-            self._theme_widget(self.motion_tuning_frame, "frame")
-            self._theme_widget(self.motion_tuning_label, "label")
-            self._theme_widget(self.motion_speed_label, "label")
-            self._theme_widget(self.motion_speed_scale, "scale")
-            self._theme_widget(self.drive_step_duration_label, "label")
-            self._theme_widget(self.drive_step_duration_scale, "scale")
-            self._theme_widget(self.turn_duration_label, "label")
-            self._theme_widget(self.turn_duration_scale, "scale")
+            # Single direction row
             self._theme_widget(self.single_dir_frame, "frame")
             self._theme_widget(self.single_dir_label, "label")
             self._theme_widget(self.single_dir_menu, "optionmenu")
             self._theme_widget(self.single_duration_label, "label")
             self._theme_widget(self.single_duration_scale, "scale")
             self._theme_widget(self.single_dir_btn, "button")
+            # Quick row
             self._theme_widget(self.quick_move_frame, "frame")
             self._theme_widget(self.quick_label, "label")
             self._theme_widget(self.quick_duration_label, "label")
             self._theme_widget(self.quick_duration_scale, "scale")
             self._theme_widget(self.quick_fwd_btn, "button")
             self._theme_widget(self.quick_bwd_btn, "button")
-            self._theme_widget(self.one_shot_frame, "frame")
-            self._theme_widget(self.one_shot_label, "label")
-            self._theme_widget(self.arm_btn, "button")
-            self._theme_widget(self.disarm_btn, "button")
-            if hasattr(self, "arm_state_lbl"):
-                self._theme_widget(self.arm_state_lbl, "label")
+            # One-Shot action row
             if hasattr(self, "one_shot_drive_frame"):
                 self._theme_widget(self.one_shot_drive_frame, "frame")
             self._theme_widget(self.just_start_fwd_btn, "button")
             self._theme_widget(self.just_start_bwd_btn, "button")
             self._theme_widget(self.just_stop_btn, "button")
-            if hasattr(self, "pulse_interval_label"):
-                self._theme_widget(self.pulse_interval_label, "label")
-            if hasattr(self, "pulse_interval_scale"):
-                self._theme_widget(self.pulse_interval_scale, "scale")
-            if hasattr(self, "kb_drive_label"):
-                self._theme_widget(self.kb_drive_label, "label")
+            # Right panel
+            if hasattr(self, "one_shot_panel"):
+                self._theme_widget(self.one_shot_panel, "labelframe")
+            self._theme_widget(self.one_shot_frame, "frame")
+            self._theme_widget(self.arm_btn, "button")
+            self._theme_widget(self.disarm_btn, "button")
+            if hasattr(self, "arm_state_lbl"):
+                self._theme_widget(self.arm_state_lbl, "label")
             if hasattr(self, "kb_drive_frame"):
                 self._theme_widget(self.kb_drive_frame, "frame")
             for _btn in ("kb_fwd_btn", "kb_left_btn", "kb_stop_btn", "kb_right_btn", "kb_bwd_btn"):
                 if hasattr(self, _btn):
                     self._theme_widget(getattr(self, _btn), "button")
+            if hasattr(self, "keyboard_btn"):
+                self._theme_widget(self.keyboard_btn, "button")
+            # Drive params bottom bar
+            if hasattr(self, "motion_tuning_outer"):
+                self._theme_widget(self.motion_tuning_outer, "labelframe")
+            if hasattr(self, "motion_tuning_frame"):
+                self._theme_widget(self.motion_tuning_frame, "frame")
+            self._theme_widget(self.motion_speed_label, "label")
+            self._theme_widget(self.motion_speed_scale, "scale")
+            self._theme_widget(self.drive_step_duration_label, "label")
+            self._theme_widget(self.drive_step_duration_scale, "scale")
+            self._theme_widget(self.turn_duration_label, "label")
+            self._theme_widget(self.turn_duration_scale, "scale")
+            if hasattr(self, "pulse_interval_label"):
+                self._theme_widget(self.pulse_interval_label, "label")
+            if hasattr(self, "pulse_interval_scale"):
+                self._theme_widget(self.pulse_interval_scale, "scale")
+            # Packet stats row
+            if hasattr(self, "packet_stats_frame"):
+                self._theme_widget(self.packet_stats_frame, "frame")
+                for _w in self.packet_stats_frame.winfo_children():
+                    if isinstance(_w, tk.Label):
+                        self._theme_widget(_w, "label")
+                    elif isinstance(_w, tk.Button):
+                        self._theme_widget(_w, "button")
             self._theme_widget(self.drive_test_status, "label")
         
         # Output
@@ -1692,7 +1749,8 @@ class M25GUI:
         """Append a [D] trace line filtered by the log-config checkboxes."""
         if not self._raw_log_visible(message):
             return
-        self.output.insert(tk.END, f"{message}\n", ("trace",))
+        ts = datetime.now().strftime("%H:%M:%S")
+        self.output.insert(tk.END, f"[{ts}] {message}\n", ("trace",))
         self.output.see(tk.END)
         try:
             if getattr(self, "raw_trace_save_var", None) and self.raw_trace_save_var.get():
@@ -2175,9 +2233,20 @@ class M25GUI:
         colors = {"Armed": "green", "Disarmed": "gray", "Arming...": "orange",
                   "Disarming...": "orange", "--": "gray"}
         color = colors.get(state, "gray")
-        self.root.after(0, lambda: self.arm_state_lbl.config(
-            text=f"State: {state}", foreground=color
-        ))
+        self._is_armed = (state == "Armed")
+        def _apply(state=state, color=color):
+            self.arm_state_lbl.config(text=f"State: {state}", foreground=color)
+            self._update_oneshot_drive_buttons()
+        self.root.after(0, _apply)
+
+    def _update_oneshot_drive_buttons(self):
+        """Enable Start Fwd/Bwd/Stop only when connected and manually armed."""
+        armed_and_connected = self._is_armed and self.connected
+        state = "normal" if armed_and_connected else "disabled"
+        for attr in ("just_start_fwd_btn", "just_start_bwd_btn", "just_stop_btn"):
+            btn = getattr(self, attr, None)
+            if btn:
+                btn.config(state=state)
 
     def run_arm(self):
         """Arm remote mode on both wheels without driving."""
@@ -2249,68 +2318,45 @@ class M25GUI:
         self._dpad_press("fwd")
 
     def run_just_start_fwd(self):
-        """Start continuous forward drive (same path as d-pad hold)."""
-        self._dpad_press("fwd")
+        """Send one forward speed packet; requires manual arm first."""
+        if not self._is_armed:
+            self.log("warning", "One-Shot: not armed - use Arm button first")
+            return
+        self._one_shot_send(int(self.motion_speed_var.get()))
 
     def run_just_start_bwd(self):
-        """Start continuous backward drive (same path as d-pad hold)."""
-        self._dpad_press("bwd")
+        """Send one backward speed packet; requires manual arm first."""
+        if not self._is_armed:
+            self.log("warning", "One-Shot: not armed - use Arm button first")
+            return
+        self._one_shot_send(-int(self.motion_speed_var.get()))
 
     def run_just_stop(self):
-        """Stop continuous drive and disarm."""
-        self._dpad_stop()
+        """Send a stop (zero speed) packet; stays armed for further commands."""
+        self._one_shot_send(0)
 
-    def _run_one_shot_drive(self, action: str):
-        """Send one remote-speed packet for an arm+drive or stop action."""
+    def _one_shot_send(self, speed: int):
+        """Send one speed packet without arming or disarming."""
         if self.demo_mode:
-            self.log("warning", f"Demo mode: one-shot {action} simulated")
+            label = "Fwd" if speed > 0 else ("Bwd" if speed < 0 else "Stop")
+            self.log("warning", f"Demo mode: one-shot {label} simulated")
             return
 
-        def action_thread():
-            ui_log, ui_status, ui_test_status = self._make_ui_callbacks(self.drive_test_status)
-
+        def _t():
+            ui_log, _ui_status, ui_test_status = self._make_ui_callbacks(self.drive_test_status)
             try:
                 if not self.ecs_remote or not self.left_conn or not self.right_conn:
-                    ui_log("error", "Not connected")
-                    ui_status("error", "One-shot: not connected")
+                    ui_log("error", "One-Shot: not connected")
                     return
-
                 builder = ECSPacketBuilder()
-                speed_mag = max(self.MOTION_SPEED_MIN, min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())))
-
-                if action == "start_fwd":
-                    speed, label = speed_mag, "Start Fwd"
-                elif action == "start_bwd":
-                    speed, label = -speed_mag, "Start Bwd"
-                else:
-                    speed, label = 0, "Stop"
-
-                remote_armed, left_mode, right_mode = self._ensure_remote_mode_both(builder, ui_log)
-                if not remote_armed:
-                    ui_log("error", "Remote arm failed")
-                    ui_log("warning", f"Drive mode flags: left={left_mode}, right={right_mode}")
-                    ui_status("error", "One-shot: remote arm failed")
-                    return
-
-                ui_test_status(label)
-                ui_log("info", f"  -> {label} (L:{speed}, R:{speed})")
                 self._write_remote_speed_both(builder, speed, speed)
-                ui_test_status(f"{label} sent")
-                ui_log("success", f"{label} command sent")
-                ui_status("success", f"{label} sent")
+                label = "Fwd" if speed > 0 else ("Bwd" if speed < 0 else "Stop")
+                ui_log("info", f"One-Shot: {label} speed={speed}")
+                ui_test_status(label)
+            except Exception as exc:
+                ui_log("error", f"One-Shot send error: {exc}")
 
-            except Exception as e:
-                ui_log("error", f"One-shot failed: {e}")
-                ui_status("error", "One-shot failed")
-                ui_test_status("One-shot failed")
-            finally:
-                try:
-                    builder = ECSPacketBuilder()
-                    self._set_remote_mode_both(builder, False)
-                except Exception:
-                    pass
-
-        threading.Thread(target=action_thread, daemon=True).start()
+        threading.Thread(target=_t, daemon=True).start()
 
     def _write_remote_speed_both(self, builder, left_speed, right_speed):
         """Send logical chair speeds to both wheels.
@@ -2322,7 +2368,42 @@ class M25GUI:
 
         left_ok = self.ecs_remote.write_remote_speed(self.left_conn, builder, -left_speed)
         right_ok = self.ecs_remote.write_remote_speed(self.right_conn, builder, right_speed)
+        self._record_packet_stat()
         return left_ok, right_ok
+
+    def _record_packet_stat(self):
+        """Record a sent speed packet timestamp for stats display."""
+        now = time.monotonic()
+        if self._stat_last_sent > 0:
+            interval_ms = (now - self._stat_last_sent) * 1000
+            self._stat_intervals.append(interval_ms)
+            if len(self._stat_intervals) > 20:
+                self._stat_intervals.pop(0)
+        self._stat_last_sent = now
+        self._stat_pkt_count += 1
+        self.root.after(0, self._refresh_packet_stats_ui)
+
+    def _refresh_packet_stats_ui(self):
+        """Update packet stats labels; called on the main thread."""
+        if not hasattr(self, "stat_pkt_count_lbl"):
+            return
+        avg_txt = "--ms"
+        if self._stat_intervals:
+            avg = sum(self._stat_intervals) / len(self._stat_intervals)
+            avg_txt = f"{avg:.0f}ms"
+        last_txt = "--:--:--"
+        if self._stat_last_sent > 0:
+            last_txt = datetime.now().strftime("%H:%M:%S")
+        self.stat_pkt_count_lbl.config(text=f"Pkts: {self._stat_pkt_count}")
+        self.stat_avg_interval_lbl.config(text=f"Avg interval: {avg_txt}")
+        self.stat_last_ts_lbl.config(text=f"Last: {last_txt}")
+
+    def _reset_packet_stats(self):
+        """Reset packet stats counters and clear labels."""
+        self._stat_pkt_count = 0
+        self._stat_intervals = []
+        self._stat_last_sent = 0.0
+        self._refresh_packet_stats_ui()
 
     def on_window_close(self):
         """Ask whether to disconnect before closing."""
@@ -2364,12 +2445,15 @@ class M25GUI:
         self.quick_bwd_btn.config(state=state)
         self.arm_btn.config(state=state)
         self.disarm_btn.config(state=state)
-        self.just_start_fwd_btn.config(state=state)
-        self.just_start_bwd_btn.config(state=state)
-        self.just_stop_btn.config(state=state)
         for _btn in ("kb_fwd_btn", "kb_left_btn", "kb_stop_btn", "kb_right_btn", "kb_bwd_btn"):
             if hasattr(self, _btn):
                 getattr(self, _btn).config(state=state)
+        if not enabled:
+            # Disconnect clears arm state; one-shot buttons follow arm state separately
+            self._is_armed = False
+            if hasattr(self, "arm_state_lbl"):
+                self.arm_state_lbl.config(text="State: --", foreground="gray")
+        self._update_oneshot_drive_buttons()
     
     def toggle_deadman_disable(self):
         """Toggle deadman requirement with confirmation"""
@@ -2504,8 +2588,6 @@ class M25GUI:
         self._left_transport = None
         self._right_transport = None
         self.update_system_info()
-        if hasattr(self, "arm_state_lbl"):
-            self.arm_state_lbl.config(text="State: --", foreground="gray")
 
         if self._close_after_disconnect:
             self._close_after_disconnect = False
