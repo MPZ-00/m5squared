@@ -143,6 +143,10 @@ class M25GUI:
     GAMEPAD_DEADZONE = 0.15
     GAMEPAD_POLL_MS = 50
 
+    # After all inputs go to zero, hold remote mode this long before disarming.
+    # New input within this window resumes without re-arming.
+    DRIVE_GRACE_S = 1.5
+
     def __init__(self, root, default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=False, keyboard=False, raw_trace=False, debug=False, log_file=""):
         self.root = root
         self.root.title("m5squared - Wheelchair Controller")
@@ -1568,8 +1572,10 @@ class M25GUI:
 
                 if left != 0 or right != 0:
                     self._ensure_kb_thread_running()
-                elif self._kb_thread and self._kb_thread.is_alive():
-                    self._kb_stop_drive()
+                else:
+                    # Zero speeds; grace period in kb thread handles disarm timing.
+                    self._kb_desired_left = 0
+                    self._kb_desired_right = 0
 
                 self._gamepad_stop_event.wait(self.GAMEPAD_POLL_MS / 1000.0)
 
@@ -1657,7 +1663,9 @@ class M25GUI:
         self._keyboard_active_keys.discard(key)
 
         if not (self._keyboard_active_keys & self._KB_MOVEMENT):
-            self._kb_stop_drive()
+            # Zero desired speeds; grace period in kb thread handles disarm timing.
+            self._kb_desired_left = 0
+            self._kb_desired_right = 0
         else:
             self._update_kb_drive()
 
@@ -1742,14 +1750,26 @@ class M25GUI:
                     return
                 self._prime_remote_motion(builder)
 
-                # Pulse desired speeds until stopped or zeroed
+                # Pulse desired speeds; on idle enter grace period before disarming.
+                pulse_s = self.pulse_interval_var.get() / 1000.0
                 while not stop_event.is_set():
                     left = self._kb_desired_left
                     right = self._kb_desired_right
                     if left == 0 and right == 0:
-                        break
+                        # Grace period: keep remote mode alive; resume if input arrives.
+                        grace_end = time.monotonic() + self.DRIVE_GRACE_S
+                        got_input = False
+                        while not stop_event.is_set() and time.monotonic() < grace_end:
+                            self._write_remote_speed_both(builder, 0, 0)  # heartbeat
+                            stop_event.wait(pulse_s)
+                            if self._kb_desired_left != 0 or self._kb_desired_right != 0:
+                                got_input = True
+                                break
+                        if not got_input or stop_event.is_set():
+                            break  # Grace expired or explicit stop -> proceed to disarm
+                        continue   # New input arrived -> resume driving
                     self._write_remote_speed_both(builder, left, right)
-                    stop_event.wait(self.pulse_interval_var.get() / 1000.0)
+                    stop_event.wait(pulse_s)
 
                 # Send explicit zero before handing off
                 self._write_remote_speed_both(builder, 0, 0)
@@ -1793,8 +1813,9 @@ class M25GUI:
         self._ensure_kb_thread_running()
 
     def _dpad_release(self):
-        """Stop driving; called on mouse-button-up."""
-        self._kb_stop_drive()
+        """Zero desired speeds on release; grace period in kb thread decides disarm."""
+        self._kb_desired_left = 0
+        self._kb_desired_right = 0
 
     def _dpad_stop(self):
         """Universal stop: halts kb/D-Pad thread, continuous One-Shot, and sends a zero packet."""
