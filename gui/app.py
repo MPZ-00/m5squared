@@ -133,7 +133,7 @@ class M25GUI:
     TURN_DURATION_FACTOR_MAX = 4.0
     TURN_DURATION_FACTOR_STEP = 0.1
 
-    def __init__(self, root, default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=False, keyboard=False, raw_trace=False):
+    def __init__(self, root, default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=False, keyboard=False, raw_trace=False, debug=False, log_file=""):
         self.root = root
         self.root.title("m5squared - Wheelchair Controller")
         self.root.resizable(True, True)
@@ -229,8 +229,15 @@ class M25GUI:
         # Apply startup overrides
         if keyboard:
             self.toggle_keyboard()
-        if raw_trace:
+        if raw_trace or debug:
             self.raw_trace_var.set(True)
+        if debug:
+            self.debug_log_var.set(True)
+        if log_file:
+            self.raw_trace_save_var.set(True)
+            self.raw_trace_file_path.set(log_file)
+            self.raw_trace_file_label.config(text=os.path.basename(log_file))
+            self._open_trace_file(log_file)
 
         self.log("info", "Ready.")
         self.status_message("info", "Ready")
@@ -1535,20 +1542,20 @@ class M25GUI:
         elif "s" in keys or "down" in keys:
             forward = False
         else:
-            # Only turn key(s) held: turn in-place (no auto-arm)
+            # Only turn key(s) held: turn in-place
             if "a" in keys or "left" in keys:
                 self._kb_desired_left = -speed_mag
                 self._kb_desired_right = speed_mag
-                self._ensure_kb_thread_running(with_arm=False)
+                self._ensure_kb_thread_running()
             elif "d" in keys or "right" in keys:
                 self._kb_desired_left = speed_mag
                 self._kb_desired_right = -speed_mag
-                self._ensure_kb_thread_running(with_arm=False)
+                self._ensure_kb_thread_running()
             else:
                 self._kb_stop_drive()
             return
 
-        # Fwd/Bwd with optional arc turn (auto-arm)
+        # Fwd/Bwd with optional arc turn
         if "a" in keys or "left" in keys:
             left_pct, right_pct = 0.3, 1.0
         elif "d" in keys or "right" in keys:
@@ -1560,7 +1567,7 @@ class M25GUI:
         self._kb_desired_left = int(speed_mag * left_pct * direction)
         self._kb_desired_right = int(speed_mag * right_pct * direction)
 
-        self._ensure_kb_thread_running(with_arm=True)
+        self._ensure_kb_thread_running()
 
     def _kb_stop_drive(self):
         """Zero the desired speed and signal the drive thread to exit."""
@@ -1568,12 +1575,12 @@ class M25GUI:
         self._kb_desired_right = 0
         self._kb_stop_event.set()
 
-    def _ensure_kb_thread_running(self, with_arm: bool = True):
-        """Start the keyboard drive thread if not already alive.
+    def _ensure_kb_thread_running(self):
+        """Start the keyboard/D-Pad drive thread if not already alive.
 
-        with_arm=True (fwd/bwd): auto-arm before driving, auto-disarm on stop.
-        with_arm=False (turn-in-place): sends packets without arm/disarm; relies
-        on wheels already being in remote mode.
+        Always arms before driving and disarms on exit, unless One-Shot
+        manual arm is active (_is_armed=True), in which case disarm is skipped
+        to preserve the One-Shot session.
         """
         if self._kb_thread and self._kb_thread.is_alive():
             return  # Already running; desired speeds already updated
@@ -1583,6 +1590,7 @@ class M25GUI:
 
         def _thread():
             ui_log, _ui_status, _ = self._make_ui_callbacks()
+            armed_here = False
             try:
                 if not self.ecs_remote or not self.left_conn or not self.right_conn:
                     ui_log("error", "Keyboard drive: not connected")
@@ -1590,17 +1598,14 @@ class M25GUI:
 
                 builder = ECSPacketBuilder()
 
-                if with_arm:
-                    self._set_arm_state("Arming...")
-                    remote_armed, _, _ = self._ensure_remote_mode_both(builder, ui_log)
-                    if not remote_armed:
-                        ui_log("warning", "Keyboard drive: could not arm remote mode")
-                        self._set_arm_state("Disarmed")
-                        return
-                    self._set_arm_state("Armed")
-                    if stop_event.is_set() or (self._kb_desired_left == 0 and self._kb_desired_right == 0):
-                        return
-                    self._prime_remote_motion(builder)
+                remote_armed, _, _ = self._ensure_remote_mode_both(builder, ui_log)
+                if not remote_armed:
+                    ui_log("warning", "Keyboard drive: could not arm remote mode")
+                    return
+                armed_here = True
+                if stop_event.is_set() or (self._kb_desired_left == 0 and self._kb_desired_right == 0):
+                    return
+                self._prime_remote_motion(builder)
 
                 # Pulse desired speeds until stopped or zeroed
                 while not stop_event.is_set():
@@ -1618,13 +1623,13 @@ class M25GUI:
             except Exception as exc:
                 ui_log("error", f"Keyboard drive error: {exc}")
             finally:
-                if with_arm:
+                # Only disarm if this thread armed AND One-Shot has not claimed arm state.
+                if armed_here and not self._is_armed:
                     try:
                         builder2 = ECSPacketBuilder()
                         self._set_remote_mode_both(builder2, False)
                     except Exception:
                         pass
-                    self._set_arm_state("Disarmed")
 
         self._kb_thread = threading.Thread(target=_thread, daemon=True)
         self._kb_thread.start()
@@ -1632,11 +1637,7 @@ class M25GUI:
     # --- Virtual d-pad (ButtonPress/ButtonRelease dead-man) ---
 
     def _dpad_press(self, direction: str):
-        """Start driving in the given direction; called on mouse-button-down.
-
-        Fwd/Bwd: auto-arm for the duration of the hold, auto-disarm on release.
-        Left/Right: turn-in-place; no auto-arm (uses current wheel state).
-        """
+        """Start driving in the given direction; called on mouse-button-down."""
         if not self.connected:
             return
         speed_mag = max(self.MOTION_SPEED_MIN, min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())))
@@ -1653,16 +1654,24 @@ class M25GUI:
             self._kb_desired_left = speed_mag
             self._kb_desired_right = -speed_mag
         self.log("muted", f"D-Pad: {direction} (speed={speed_mag})")
-        with_arm = direction in ("fwd", "bwd")
-        self._ensure_kb_thread_running(with_arm=with_arm)
+        self._ensure_kb_thread_running()
 
     def _dpad_release(self):
         """Stop driving; called on mouse-button-up."""
         self._kb_stop_drive()
 
     def _dpad_stop(self):
-        """Explicit stop button (no dead-man; just zeroes speed)."""
+        """Universal stop: halts kb/D-Pad thread, continuous One-Shot, and sends a zero packet."""
         self._kb_stop_drive()
+        self._stop_oneshot_continuous()
+        if self.connected and self.ecs_remote and self.left_conn and self.right_conn:
+            def _zero():
+                try:
+                    self._write_remote_speed_both(ECSPacketBuilder(), 0, 0)
+                except Exception:
+                    pass
+            threading.Thread(target=_zero, daemon=True).start()
+        self.log("muted", "D-Pad: Stop (all motion halted)")
 
     def _ensure_event_loop(self):
         """Create a private event loop for BLE tasks when needed."""
@@ -2467,6 +2476,8 @@ class M25GUI:
                 label = "Fwd" if speed > 0 else "Bwd"
                 ui_log("info", f"Continuous: {label} running (speed={speed})")
                 ui_test_status(f"Continuous {label}")
+                # Prime after arm to ensure firmware accepts speed commands
+                self._prime_remote_motion(builder)
                 while not stop_event.is_set():
                     self._write_remote_speed_both(builder, speed, speed)
                     stop_event.wait(self.pulse_interval_var.get() / 1000.0)
@@ -3564,7 +3575,7 @@ class M25GUI:
             self.status_message("info", "Right wheel selected")
 
 
-def main(default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=False, keyboard=False, raw_trace=False):
+def main(default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=False, keyboard=False, raw_trace=False, debug=False, log_file=""):
     """Launch the GUI application."""
 
     missing = []
@@ -3607,7 +3618,33 @@ def main(default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=Fals
         action="store_true",
         help="Enable raw SPP packet trace on startup",
     )
+    cli_parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable all debug flags in GUI on startup",
+    )
+    cli_parser.add_argument(
+        "--log",
+        metavar="FILE",
+        nargs="?",
+        const="",
+        default=None,
+        help="Log all output to FILE; omit FILE for auto-timestamped name",
+    )
     args, _ = cli_parser.parse_known_args()
+
+    # --debug implies raw-trace
+    if args.debug or debug:
+        args.raw_trace = True
+
+    # Resolve log file
+    resolved_log = log_file
+    if args.log is not None and not resolved_log:
+        if args.log:
+            resolved_log = args.log
+        else:
+            from datetime import datetime as _dt
+            resolved_log = _dt.now().strftime("m5squared_%Y%m%d_%H%M%S.log")
 
     root = tk.Tk()
     app = M25GUI(
@@ -3616,6 +3653,8 @@ def main(default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=Fals
         skip_disconnect_confirmation=(args.skip_disconnect_confirmation or skip_disconnect_confirmation),
         keyboard=(args.keyboard or keyboard),
         raw_trace=(args.raw_trace or raw_trace),
+        debug=(args.debug or debug),
+        log_file=resolved_log,
     )
     root.mainloop()
 

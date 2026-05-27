@@ -14,19 +14,35 @@ import sys
 import argparse
 import asyncio
 import logging
+from datetime import datetime
 from pathlib import Path
 
 
 def setup_logging(level: str = "INFO") -> None:
-    """Configure logging"""
+    """Configure logging.
+
+    Third-party libraries (bleak, asyncio) are held at WARNING to avoid noise.
+    Only m5squared modules follow the requested level.
+    """
     logging.basicConfig(
-        level=getattr(logging, level.upper()),
+        level=logging.WARNING,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         stream=sys.stdout
     )
+    app_level = getattr(logging, level.upper(), logging.INFO)
+    for mod in ("gui", "m25_ecs", "m25_spp", "m25_bluetooth_ble", "m25_transport",
+                "m25_utils", "m25_protocol_data", "core", "__main__"):
+        logging.getLogger(mod).setLevel(app_level)
 
 
-def launch_gui(m25_version: str = "auto", skip_disconnect_confirmation: bool = False, keyboard: bool = False, raw_trace: bool = False) -> None:
+def launch_gui(
+    m25_version: str = "auto",
+    skip_disconnect_confirmation: bool = False,
+    keyboard: bool = False,
+    raw_trace: bool = False,
+    debug: bool = False,
+    log_file: str = "",
+) -> None:
     """Launch the GUI application."""
     print("Starting m5squared GUI...")
     from m25_gui import main
@@ -35,6 +51,8 @@ def launch_gui(m25_version: str = "auto", skip_disconnect_confirmation: bool = F
         skip_disconnect_confirmation=skip_disconnect_confirmation,
         keyboard=keyboard,
         raw_trace=raw_trace,
+        debug=debug,
+        log_file=log_file,
     )
 
 
@@ -188,8 +206,37 @@ Examples:
         action="store_true",
         help="Enable raw SPP packet trace on startup",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable all debug flags in GUI (raw trace + debug log panel) on startup",
+    )
+    parser.add_argument(
+        "--log",
+        metavar="FILE",
+        nargs="?",
+        const="",
+        default=None,
+        help=(
+            "Log all output to FILE; omit FILE for auto-timestamped name "
+            "(e.g. --log or --log session.log)"
+        ),
+    )
 
     args = parser.parse_args()
+
+    # --debug implies raw-trace
+    if args.debug:
+        args.raw_trace = True
+
+    # Resolve auto log filename
+    log_file = ""
+    if args.log is not None:
+        if args.log:
+            log_file = args.log
+        else:
+            log_file = datetime.now().strftime("m5squared_%Y%m%d_%H%M%S.log")
+        print(f"Session log -> {log_file}")
 
     # Setup logging
     setup_logging(args.log_level)
@@ -206,6 +253,8 @@ Examples:
             skip_disconnect_confirmation=args.skip_disconnect_confirmation,
             keyboard=args.keyboard,
             raw_trace=args.raw_trace,
+            debug=args.debug,
+            log_file=log_file,
         )
 
 
