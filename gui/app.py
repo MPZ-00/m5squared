@@ -86,6 +86,13 @@ from m25_transport import (
 HAS_BLUETOOTH = HAS_M25_PROTOCOL and (HAS_BLE or HAS_RFCOMM)
 IS_WINDOWS = sys.platform.startswith("win")
 
+try:
+    import pygame as _pygame_probe
+    HAS_PYGAME = True
+    del _pygame_probe
+except ImportError:
+    HAS_PYGAME = False
+
 from gui.widgets import PlaceholderEntry
 from gui.theme import THEMES, LEVELS
 from gui.transport import BLEConnectionAdapter
@@ -132,6 +139,9 @@ class M25GUI:
     TURN_DURATION_FACTOR_MIN = 1.0
     TURN_DURATION_FACTOR_MAX = 4.0
     TURN_DURATION_FACTOR_STEP = 0.1
+
+    GAMEPAD_DEADZONE = 0.15
+    GAMEPAD_POLL_MS = 50
 
     def __init__(self, root, default_m25_version=M25_VERSION_AUTO, skip_disconnect_confirmation=False, keyboard=False, raw_trace=False, debug=False, log_file=""):
         self.root = root
@@ -194,6 +204,12 @@ class M25GUI:
 
         # One-Shot arm state (manual arm/disarm; Start buttons require this)
         self._is_armed: bool = False
+
+        # Gamepad driving state
+        self.gamepad_enabled = False
+        self._gamepad_stop_event = threading.Event()
+        self._gamepad_stop_event.set()
+        self._gamepad_thread: threading.Thread | None = None
 
         # Continuous one-shot drive thread
         self._oneshot_cont_stop_event = threading.Event()
@@ -282,6 +298,11 @@ class M25GUI:
             self.canvas.itemconfigure(self.main_window, width=event.width)
 
         def _on_mousewheel(event):
+            # Don't scroll the outer canvas when the pointer is over the log output widget
+            w = event.widget
+            if hasattr(self, "output") and (w is self.output or
+                    str(w).startswith(str(self.output) + ".")):
+                return
             if getattr(event, "num", None) == 4:
                 self.canvas.yview_scroll(-1, "units")
             elif getattr(event, "num", None) == 5:
@@ -740,8 +761,11 @@ class M25GUI:
         self.kb_bwd_btn.bind("<ButtonRelease-1>", lambda e: self._dpad_release())
 
         # Row 4: Keyboard toggle
+        self.kb_gp_frame = tk.Frame(self.one_shot_panel)
+        self.kb_gp_frame.grid(row=4, column=0, sticky=tk.W, pady=(2, 0))
+
         self.keyboard_btn = tk.Button(
-            self.one_shot_panel,
+            self.kb_gp_frame,
             text="Keyboard: OFF",
             font=("TkDefaultFont", 8),
             relief=tk.RIDGE,
@@ -749,7 +773,19 @@ class M25GUI:
             cursor="hand2",
             command=self.toggle_keyboard,
         )
-        self.keyboard_btn.grid(row=4, column=0, sticky=tk.W, pady=(2, 0))
+        self.keyboard_btn.pack(side=tk.LEFT, padx=(0, 6))
+
+        if HAS_PYGAME:
+            self.gamepad_btn = tk.Button(
+                self.kb_gp_frame,
+                text="Gamepad: OFF",
+                font=("TkDefaultFont", 8),
+                relief=tk.RIDGE,
+                padx=4,
+                cursor="hand2",
+                command=self.toggle_gamepad,
+            )
+            self.gamepad_btn.pack(side=tk.LEFT)
 
         # --- Bottom bar: Drive params (all modes) ---
         self.motion_tuning_outer = tk.LabelFrame(
@@ -1165,9 +1201,6 @@ class M25GUI:
             self._theme_widget(self.quick_duration_scale, "scale")
             self._theme_widget(self.quick_fwd_btn, "button")
             self._theme_widget(self.quick_bwd_btn, "button")
-            # One-Shot action row
-            if hasattr(self, "one_shot_drive_frame"):
-                self._theme_widget(self.one_shot_drive_frame, "frame")
             self._theme_widget(self.just_start_fwd_btn, "button")
             self._theme_widget(self.just_start_bwd_btn, "button")
             self._theme_widget(self.just_stop_btn, "button")
@@ -1191,8 +1224,12 @@ class M25GUI:
             for _btn in ("kb_fwd_btn", "kb_left_btn", "kb_stop_btn", "kb_right_btn", "kb_bwd_btn"):
                 if hasattr(self, _btn):
                     self._theme_widget(getattr(self, _btn), "button")
+            if hasattr(self, "kb_gp_frame"):
+                self._theme_widget(self.kb_gp_frame, "frame")
             if hasattr(self, "keyboard_btn"):
                 self._theme_widget(self.keyboard_btn, "button")
+            if hasattr(self, "gamepad_btn"):
+                self._theme_widget(self.gamepad_btn, "button")
             # Drive params bottom bar
             if hasattr(self, "motion_tuning_outer"):
                 self._theme_widget(self.motion_tuning_outer, "labelframe")
@@ -1448,6 +1485,101 @@ class M25GUI:
             self.keyboard_btn.config(text="Keyboard: OFF")
         self.update_system_info()
 
+    def toggle_gamepad(self):
+        """Toggle gamepad/joystick driving input on/off."""
+        if not HAS_PYGAME:
+            self.log("error", "Gamepad: pygame not installed (pip install pygame)")
+            return
+        if self.gamepad_enabled:
+            self.gamepad_enabled = False
+            self._gamepad_stop_event.set()
+            if hasattr(self, "gamepad_btn"):
+                self.gamepad_btn.config(text="Gamepad: OFF")
+            self.log("info", "Gamepad: disabled")
+        else:
+            self.gamepad_enabled = True
+            self._gamepad_stop_event.clear()
+            if hasattr(self, "gamepad_btn"):
+                self.gamepad_btn.config(text="Gamepad: ON")
+            self.log("info", "Gamepad: enabling...")
+            t = threading.Thread(target=self._gamepad_poll_loop, daemon=True)
+            self._gamepad_thread = t
+            t.start()
+
+    def _gamepad_poll_loop(self):
+        """Poll the first detected joystick and map it to wheel speeds.
+
+        Left-stick Y (axis 1): -1 = up = forward.
+        Left-stick X (axis 0): arcade turn differential.
+        D-Pad hat: cardinal directions at full speed.
+        """
+        try:
+            import pygame
+            if not pygame.get_init():
+                pygame.init()
+            pygame.joystick.init()
+            if pygame.joystick.get_count() == 0:
+                self.root.after(0, lambda: self.log("warning", "Gamepad: no joystick found"))
+                self.gamepad_enabled = False
+                if hasattr(self, "gamepad_btn"):
+                    self.root.after(0, lambda: self.gamepad_btn.config(text="Gamepad: OFF"))
+                return
+            joy = pygame.joystick.Joystick(0)
+            joy.init()
+            name = joy.get_name()
+            self.root.after(0, lambda: self.log("info", f"Gamepad: {name}"))
+
+            while self.gamepad_enabled and not self._gamepad_stop_event.is_set():
+                pygame.event.pump()
+                speed_mag = max(
+                    self.MOTION_SPEED_MIN,
+                    min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())),
+                )
+
+                # Read axes with deadzone
+                ax = joy.get_axis(0) if joy.get_numaxes() > 0 else 0.0
+                ay = joy.get_axis(1) if joy.get_numaxes() > 1 else 0.0
+                if abs(ax) < self.GAMEPAD_DEADZONE:
+                    ax = 0.0
+                if abs(ay) < self.GAMEPAD_DEADZONE:
+                    ay = 0.0
+
+                # D-Pad hat overrides stick when pressed
+                if joy.get_numhats() > 0:
+                    hx, hy = joy.get_hat(0)
+                    if hx != 0 or hy != 0:
+                        ax = float(hx)
+                        ay = float(-hy)  # hat up=+1 means forward -> invert to ay convention
+
+                # Arcade drive: forward component + turn differential
+                # ay: -1 = up = forward; flip sign so forward = positive base
+                base = -ay
+                turn = ax * self.TURN_SPEED_FACTOR
+                left_f = base - turn
+                right_f = base + turn
+
+                # Normalise and scale to speed_mag
+                scale = max(abs(left_f), abs(right_f), 1.0)
+                left = int((left_f / scale) * speed_mag)
+                right = int((right_f / scale) * speed_mag)
+
+                self._kb_desired_left = left
+                self._kb_desired_right = right
+
+                if left != 0 or right != 0:
+                    self._ensure_kb_thread_running()
+                elif self._kb_thread and self._kb_thread.is_alive():
+                    self._kb_stop_drive()
+
+                self._gamepad_stop_event.wait(self.GAMEPAD_POLL_MS / 1000.0)
+
+        except Exception as exc:
+            self.root.after(0, lambda: self.log("error", f"Gamepad error: {exc}"))
+        finally:
+            self.gamepad_enabled = False
+            if hasattr(self, "gamepad_btn"):
+                self.root.after(0, lambda: self.gamepad_btn.config(text="Gamepad: OFF"))
+
     def _bind_keyboard(self):
         """Bind driving keys to the root window."""
         press_seqs = (
@@ -1597,12 +1729,15 @@ class M25GUI:
                     return
 
                 builder = ECSPacketBuilder()
+                self._set_arm_state("Arming...")
 
                 remote_armed, _, _ = self._ensure_remote_mode_both(builder, ui_log)
                 if not remote_armed:
                     ui_log("warning", "Keyboard drive: could not arm remote mode")
+                    self._set_arm_state("--" if not self._is_armed else "Armed")
                     return
                 armed_here = True
+                self._set_arm_state("Armed")
                 if stop_event.is_set() or (self._kb_desired_left == 0 and self._kb_desired_right == 0):
                     return
                 self._prime_remote_motion(builder)
@@ -1630,6 +1765,7 @@ class M25GUI:
                         self._set_remote_mode_both(builder2, False)
                     except Exception:
                         pass
+                self._set_arm_state("Armed" if self._is_armed else "Disarmed")
 
         self._kb_thread = threading.Thread(target=_thread, daemon=True)
         self._kb_thread.start()
@@ -2122,14 +2258,17 @@ class M25GUI:
                     min(self.TURN_DURATION_FACTOR_MAX, float(self.turn_duration_factor_var.get())),
                 )
 
+                self._set_arm_state("Arming...")
                 remote_armed, left_mode, right_mode = self._ensure_remote_mode_both(builder, ui_log)
                 if not remote_armed:
+                    self._set_arm_state("--" if not self._is_armed else "Armed")
                     ui_log("error", "Failed to latch remote mode on both wheels after force re-arm attempts")
                     ui_log("warning", f"Final drive mode flags: left={left_mode}, right={right_mode}")
                     ui_status("error", "Drive test failed: remote bit not active")
                     return
+                self._set_arm_state("Armed")
                 self._prime_remote_motion(builder)
-                
+
                 # Test sequence in chair coordinates (left/right logical wheel speeds).
                 test_sequence = [
                     ("Forward", test_speed, test_speed),
@@ -2190,7 +2329,8 @@ class M25GUI:
                     self._set_remote_mode_both(builder, False)
                 except Exception:
                     pass
-        
+                self._set_arm_state("Armed" if self._is_armed else "Disarmed")
+
         threading.Thread(target=test_thread, daemon=True).start()
 
     # Step label name -> drive_step_labels index
@@ -2246,12 +2386,15 @@ class M25GUI:
                 test_speed = max(self.MOTION_SPEED_MIN, min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())))
                 speed = test_speed if direction == "Forward" else -test_speed
 
+                self._set_arm_state("Arming...")
                 remote_armed, left_mode, right_mode = self._ensure_remote_mode_both(builder, ui_log)
                 if not remote_armed:
+                    self._set_arm_state("--" if not self._is_armed else "Armed")
                     ui_log("error", "Failed to latch remote mode on both wheels after force re-arm attempts")
                     ui_log("warning", f"Final drive mode flags: left={left_mode}, right={right_mode}")
                     ui_status("error", "Test failed: remote bit not active")
                     return
+                self._set_arm_state("Armed")
                 self._prime_remote_motion(builder)
 
                 ui_test_status(f"{direction}...")
@@ -2279,6 +2422,7 @@ class M25GUI:
                     self._set_remote_mode_both(builder, False)
                 except Exception:
                     pass
+                self._set_arm_state("Armed" if self._is_armed else "Disarmed")
 
         threading.Thread(target=test_thread, daemon=True).start()
 
@@ -2303,11 +2447,14 @@ class M25GUI:
                 speed = speed_mag if direction == "forward" else -speed_mag
                 label = "Forward" if direction == "forward" else "Backward"
 
+                self._set_arm_state("Arming...")
                 remote_armed, left_mode, right_mode = self._ensure_remote_mode_both(builder, ui_log)
                 if not remote_armed:
+                    self._set_arm_state("--" if not self._is_armed else "Armed")
                     ui_log("error", "Failed to latch remote mode on both wheels after force re-arm attempts")
                     ui_log("warning", f"Final drive mode flags: left={left_mode}, right={right_mode}")
                     return
+                self._set_arm_state("Armed")
                 self._prime_remote_motion(builder)
 
                 ui_test_status(f"Quick {label}...")
@@ -2332,15 +2479,15 @@ class M25GUI:
                     self._set_remote_mode_both(builder, False)
                 except Exception:
                     pass
+                self._set_arm_state("Armed" if self._is_armed else "Disarmed")
 
         threading.Thread(target=move_thread, daemon=True).start()
 
     def _set_arm_state(self, state: str):
-        """Update the arm state indicator label (call from any thread)."""
+        """Update the arm state label (visual only; _is_armed managed by run_arm/run_disarm)."""
         colors = {"Armed": "green", "Disarmed": "gray", "Arming...": "orange",
                   "Disarming...": "orange", "--": "gray"}
         color = colors.get(state, "gray")
-        self._is_armed = (state == "Armed")
         def _apply(state=state, color=color):
             self.arm_state_lbl.config(text=f"State: {state}", foreground=color)
             self._update_oneshot_drive_buttons()
@@ -2376,19 +2523,20 @@ class M25GUI:
                 self._set_arm_state("Arming...")
                 ok, left_mode, right_mode = self._ensure_remote_mode_both(builder, ui_log)
                 if ok:
+                    self._is_armed = True
                     ui_test_status("Armed")
                     self._set_arm_state("Armed")
                     ui_log("success", "Remote mode armed")
                     ui_status("success", "Armed")
                 else:
                     ui_test_status("Arm failed")
-                    self._set_arm_state("Disarmed")
+                    self._set_arm_state("--")
                     ui_log("error", f"Arm failed: left={left_mode}, right={right_mode}")
                     ui_status("error", "Arm failed")
             except Exception as exc:
                 ui_log("error", f"Arm error: {exc}")
                 ui_test_status("Arm error")
-                self._set_arm_state("Disarmed")
+                self._set_arm_state("--")
 
         threading.Thread(target=arm_thread, daemon=True).start()
 
@@ -2408,6 +2556,7 @@ class M25GUI:
                 ui_test_status("Disarming...")
                 self._set_arm_state("Disarming...")
                 left_ok, right_ok = self._set_remote_mode_both(builder, False)
+                self._is_armed = False
                 if left_ok and right_ok:
                     ui_test_status("Disarmed")
                     self._set_arm_state("Disarmed")
@@ -2420,6 +2569,7 @@ class M25GUI:
             except Exception as exc:
                 ui_log("error", f"Disarm error: {exc}")
                 ui_test_status("Disarm error")
+                self._is_armed = False
                 self._set_arm_state("--")
 
         threading.Thread(target=disarm_thread, daemon=True).start()
@@ -2608,11 +2758,11 @@ class M25GUI:
         for _btn in ("kb_fwd_btn", "kb_left_btn", "kb_stop_btn", "kb_right_btn", "kb_bwd_btn"):
             if hasattr(self, _btn):
                 getattr(self, _btn).config(state=state)
+        if hasattr(self, "gamepad_btn"):
+            self.gamepad_btn.config(state=state)
         if not enabled:
-            # Disconnect clears arm state; one-shot buttons follow arm state separately
             self._is_armed = False
-            if hasattr(self, "arm_state_lbl"):
-                self.arm_state_lbl.config(text="State: --", foreground="gray")
+            self._set_arm_state("--")
         self._update_oneshot_drive_buttons()
     
     def toggle_deadman_disable(self):
