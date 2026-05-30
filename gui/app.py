@@ -11,7 +11,7 @@ import asyncio
 import time
 from pathlib import Path
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, Optional, cast
 
 try:
     from dotenv import load_dotenv
@@ -208,6 +208,9 @@ class M25GUI:
 
         # One-Shot arm state (manual arm/disarm; Start buttons require this)
         self._is_armed: bool = False
+
+        # Prevents concurrent arm sequences (drive test vs D-Pad/keyboard race)
+        self._arm_lock = threading.Lock()
 
         # Gamepad driving state
         self.gamepad_enabled = False
@@ -1010,7 +1013,7 @@ class M25GUI:
         self.check_input_devices_periodically()
 
     def _add_tooltip(self, widget, text):
-        tip = [None]
+        tip: list[Optional[tk.Toplevel]] = [None]
 
         def show(event):
             if tip[0]:
@@ -1876,9 +1879,11 @@ class M25GUI:
 
     def _dpad_stop(self):
         """Universal stop: halts kb/D-Pad thread, continuous One-Shot, and sends a zero packet."""
+        kb_was_alive = bool(self._kb_thread and self._kb_thread.is_alive())
         self._kb_stop_drive()
         self._stop_oneshot_continuous()
-        if self.connected and self.ecs_remote and self.left_conn and self.right_conn:
+        # Only send zero if something was actually driving; avoids sending to already-disarmed wheels.
+        if self.connected and self.ecs_remote and self.left_conn and self.right_conn and (kb_was_alive or self._is_armed):
             def _zero():
                 try:
                     self._write_remote_speed_both(ECSPacketBuilder(), 0, 0)
@@ -2211,6 +2216,18 @@ class M25GUI:
         if not self.ecs_remote or not self.left_conn or not self.right_conn:
             return False, None, None
 
+        if not self._arm_lock.acquire(timeout=12.0):
+            if ui_log:
+                ui_log("warning", "Arm timed out waiting for concurrent arm sequence")
+            return False, None, None
+
+        try:
+            return self._ensure_remote_mode_both_locked(builder, ui_log)
+        finally:
+            self._arm_lock.release()
+
+    def _ensure_remote_mode_both_locked(self, builder, ui_log=None):
+        """Inner arm logic; must only be called while _arm_lock is held."""
         left_mode = None
         right_mode = None
         mode_candidates = [DRIVE_MODE_BIT_REMOTE | DRIVE_MODE_BIT_CRUISE, DRIVE_MODE_BIT_REMOTE]
