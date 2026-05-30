@@ -106,10 +106,10 @@ class M25GUI:
     LEVELS = LEVELS
 
     # Motion tuning defaults and limits (single location for quick adjustments).
-    MOTION_SPEED_MIN = 10
-    MOTION_SPEED_MAX = 160
-    MOTION_SPEED_STEP = 5
-    MOTION_SPEED_DEFAULT = 30
+    MOTION_SPEED_MIN = 0.5      # km/h
+    MOTION_SPEED_MAX = 8.5      # km/h
+    MOTION_SPEED_STEP = 0.5     # km/h
+    MOTION_SPEED_DEFAULT = 1.0  # km/h
 
     DRIVE_STEP_DURATION_MIN = 0.3
     DRIVE_STEP_DURATION_MAX = 10.0
@@ -816,10 +816,10 @@ class M25GUI:
         self.motion_tuning_frame = tk.Frame(self.motion_tuning_outer)
         self.motion_tuning_frame.grid(row=0, column=0, sticky=tk.W)
 
-        self.motion_speed_label = tk.Label(self.motion_tuning_frame, text="Speed:")
+        self.motion_speed_label = tk.Label(self.motion_tuning_frame, text="Speed (km/h):")
         self.motion_speed_label.pack(side=tk.LEFT, padx=(0, 4))
 
-        self.motion_speed_var = tk.IntVar(value=self.MOTION_SPEED_DEFAULT)
+        self.motion_speed_var = tk.DoubleVar(value=self.MOTION_SPEED_DEFAULT)
         self.motion_speed_scale = tk.Scale(
             self.motion_tuning_frame,
             from_=self.MOTION_SPEED_MIN,
@@ -880,10 +880,10 @@ class M25GUI:
         self.pulse_interval_scale.pack(side=tk.LEFT, padx=(0, 5))
 
         self._add_tooltip(self.motion_speed_label,
-            "Raw speed value sent in every WRITE_REMOTE_SPEED packet (range 10-160).\n"
+            "Target speed in km/h, converted to mm/s before sending as WRITE_REMOTE_SPEED.\n"
+            "1.0 km/h = 278 mm/s, 4.0 km/h = 1111 mm/s, 8.5 km/h = 2361 mm/s.\n"
             "Applies to all modes: D-Pad, keyboard, and drive test.\n"
-            "This is a software cap - it does NOT write to wheel firmware.\n"
-            "Default: 30.")
+            "Wheel firmware max_speed (set in Assist section) acts as a hard cap.")
         self._add_tooltip(self.drive_step_duration_label,
             "Duration of each direction step in the drive test sequence (seconds).\n"
             "Higher = chair moves longer in each direction before stopping.\n"
@@ -1011,6 +1011,11 @@ class M25GUI:
         
         # Start periodic input device check
         self.check_input_devices_periodically()
+
+    def _speed_raw(self, kmh: float) -> int:
+        """Convert km/h slider value to mm/s for WRITE_REMOTE_SPEED."""
+        kmh = max(self.MOTION_SPEED_MIN, min(self.MOTION_SPEED_MAX, float(kmh)))
+        return int(kmh / 0.0036)
 
     def _add_tooltip(self, widget, text):
         tip: list[Optional[tk.Toplevel]] = [None]
@@ -1595,10 +1600,7 @@ class M25GUI:
 
             while self.gamepad_enabled and not self._gamepad_stop_event.is_set():
                 pygame.event.pump()
-                speed_mag = max(
-                    self.MOTION_SPEED_MIN,
-                    min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())),
-                )
+                speed_mag = self._speed_raw(self.motion_speed_var.get())
 
                 # Read axes with deadzone
                 ax = joy.get_axis(0) if joy.get_numaxes() > 0 else 0.0
@@ -1732,10 +1734,7 @@ class M25GUI:
     def _update_kb_drive(self):
         """Recompute desired speed from held keys and start/update the drive thread."""
         keys = self._keyboard_active_keys
-        speed_mag = max(
-            self.MOTION_SPEED_MIN,
-            min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())),
-        )
+        speed_mag = self._speed_raw(self.motion_speed_var.get())
 
         if "w" in keys or "up" in keys:
             forward = True
@@ -1856,7 +1855,7 @@ class M25GUI:
         """Start driving in the given direction; called on mouse-button-down."""
         if not self.connected:
             return
-        speed_mag = max(self.MOTION_SPEED_MIN, min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())))
+        speed_mag = self._speed_raw(self.motion_speed_var.get())
         if direction == "fwd":
             self._kb_desired_left = speed_mag
             self._kb_desired_right = speed_mag
@@ -1869,7 +1868,7 @@ class M25GUI:
         elif direction == "right":
             self._kb_desired_left = speed_mag
             self._kb_desired_right = -speed_mag
-        self.log("muted", f"D-Pad: {direction} (speed={speed_mag})")
+        self.log("muted", f"D-Pad: {direction} ({self.motion_speed_var.get():.1f} km/h)")
         self._ensure_kb_thread_running()
 
     def _dpad_release(self):
@@ -2345,7 +2344,7 @@ class M25GUI:
                     return
                 
                 builder = ECSPacketBuilder()
-                test_speed = max(self.MOTION_SPEED_MIN, min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())))
+                test_speed = self._speed_raw(self.motion_speed_var.get())
                 test_duration = max(self.DRIVE_STEP_DURATION_MIN, min(self.DRIVE_STEP_DURATION_MAX, float(self.drive_step_duration_var.get())))
                 turn_speed = max(self.TURN_SPEED_MIN, int(test_speed * self.TURN_SPEED_FACTOR))
                 turn_duration_factor = max(
@@ -2478,7 +2477,7 @@ class M25GUI:
                     return
 
                 builder = ECSPacketBuilder()
-                test_speed = max(self.MOTION_SPEED_MIN, min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())))
+                test_speed = self._speed_raw(self.motion_speed_var.get())
                 speed = test_speed if direction == "Forward" else -test_speed
 
                 self._set_arm_state("Arming...")
@@ -2538,7 +2537,7 @@ class M25GUI:
                     return
 
                 builder = ECSPacketBuilder()
-                speed_mag = max(self.MOTION_SPEED_MIN, min(self.MOTION_SPEED_MAX, int(self.motion_speed_var.get())))
+                speed_mag = self._speed_raw(self.motion_speed_var.get())
                 speed = speed_mag if direction == "forward" else -speed_mag
                 label = "Forward" if direction == "forward" else "Backward"
 
@@ -2678,12 +2677,13 @@ class M25GUI:
         if not self._is_armed:
             self.log("warning", "One-Shot: not armed - use Arm button first")
             return
-        speed = int(self.motion_speed_var.get())
+        speed = self._speed_raw(self.motion_speed_var.get())
+        kmh = self.motion_speed_var.get()
         if getattr(self, "oneshot_mode_var", None) and self.oneshot_mode_var.get():
-            self.log("info", f"Continuous: Start Fwd -> speed={speed}")
+            self.log("info", f"Continuous: Start Fwd -> {kmh:.1f} km/h ({speed} mm/s)")
             self._start_oneshot_continuous(speed)
         else:
-            self.log("info", f"One-Shot: Start Fwd -> speed={speed}")
+            self.log("info", f"One-Shot: Start Fwd -> {kmh:.1f} km/h ({speed} mm/s)")
             self._one_shot_send(speed)
 
     def run_just_start_bwd(self):
@@ -2691,12 +2691,13 @@ class M25GUI:
         if not self._is_armed:
             self.log("warning", "One-Shot: not armed - use Arm button first")
             return
-        speed = int(self.motion_speed_var.get())
+        speed = self._speed_raw(self.motion_speed_var.get())
+        kmh = self.motion_speed_var.get()
         if getattr(self, "oneshot_mode_var", None) and self.oneshot_mode_var.get():
-            self.log("info", f"Continuous: Start Bwd -> speed={-speed}")
+            self.log("info", f"Continuous: Start Bwd -> {kmh:.1f} km/h ({speed} mm/s)")
             self._start_oneshot_continuous(-speed)
         else:
-            self.log("info", f"One-Shot: Start Bwd -> speed={-speed}")
+            self.log("info", f"One-Shot: Start Bwd -> {kmh:.1f} km/h ({speed} mm/s)")
             self._one_shot_send(-speed)
 
     def run_just_stop(self):
