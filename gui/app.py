@@ -580,6 +580,19 @@ class M25GUI:
         self.set_max_speed_btn = tk.Button(self.max_speed_frame, text="Set Max Speed", command=self.set_max_speed, state="disabled", cursor="hand2")
         self.set_max_speed_btn.grid(row=0, column=8, padx=(10, 0))
 
+        self._add_tooltip(self.lbl_assist,
+            "Drive assistance profile stored on the wheel firmware.\n"
+            "Controls how the wheel responds to physical pushing by the user.\n"
+            "Level 1 = Normal, Level 2 = Outdoor (more power), Level 3 = Learning (reduced).\n"
+            "NOTE: has no effect during remote BLE drive - the wheel follows the\n"
+            "Speed slider directly and ignores the assist profile in remote mode.")
+        self._add_tooltip(self.lbl_max_speed,
+            "Firmware speed cap (km/h) per assist level, stored on the wheel.\n"
+            "Level 1 cap applies when assist level is set to Level 1, etc.\n"
+            "NOTE: may have no effect during remote BLE drive - in remote mode\n"
+            "the wheel follows the raw WRITE_REMOTE_SPEED value directly.\n"
+            "Use the Speed slider in Drive params to control actual drive speed.")
+
         # Status buttons
         self.btn_frame = tk.Frame(self.control_frame)
         self.btn_frame.grid(row=4, column=0, columnspan=3, pady=(10, 0))
@@ -863,6 +876,25 @@ class M25GUI:
         )
         self.pulse_interval_scale.pack(side=tk.LEFT, padx=(0, 5))
 
+        self._add_tooltip(self.motion_speed_label,
+            "Raw speed value sent in every WRITE_REMOTE_SPEED packet (range 10-160).\n"
+            "Applies to all modes: D-Pad, keyboard, and drive test.\n"
+            "This is a software cap - it does NOT write to wheel firmware.\n"
+            "Default: 30.")
+        self._add_tooltip(self.drive_step_duration_label,
+            "Duration of each direction step in the drive test sequence (seconds).\n"
+            "Higher = chair moves longer in each direction before stopping.\n"
+            "Default: 1.0 s.")
+        self._add_tooltip(self.turn_duration_label,
+            "Multiplier applied to Step duration for left/right turns.\n"
+            "Turn step duration = Step (s) * Turn x.\n"
+            "Turns need more time than straight moves to register on the wheels.\n"
+            "Default: 1.8")
+        self._add_tooltip(self.pulse_interval_label,
+            "Interval between repeated speed packets during continuous keyboard/D-Pad drive (milliseconds).\n"
+            "Lower = more frequent updates, smoother control.\n"
+            "Default: 100 ms.")
+
         # Packet stats row
         self.packet_stats_frame = tk.Frame(self.motion_tuning_outer)
         self.packet_stats_frame.grid(row=1, column=0, sticky=tk.W, pady=(4, 0))
@@ -976,6 +1008,31 @@ class M25GUI:
         
         # Start periodic input device check
         self.check_input_devices_periodically()
+
+    def _add_tooltip(self, widget, text):
+        tip = [None]
+
+        def show(event):
+            if tip[0]:
+                return
+            w = tk.Toplevel()
+            w.wm_overrideredirect(True)
+            w.wm_geometry(f"+{event.x_root + 12}+{event.y_root + 14}")
+            tk.Label(
+                w, text=text, background="#ffffe0", relief="solid",
+                borderwidth=1, font=("TkDefaultFont", 9), justify=tk.LEFT,
+                wraplength=300, padx=4, pady=2,
+            ).pack()
+            tip[0] = w
+
+        def hide(event=None):
+            if tip[0]:
+                tip[0].destroy()
+                tip[0] = None
+
+        widget.bind("<Enter>", show)
+        widget.bind("<Leave>", hide)
+        widget.bind("<ButtonPress>", hide)
 
     def _theme_widget(self, widget, widget_type="label", **kwargs):
         """
